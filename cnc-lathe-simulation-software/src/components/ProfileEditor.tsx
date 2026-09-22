@@ -265,7 +265,7 @@ function LayerMenu({
     <div ref={ref} className="anim-in relative">
       <button
         onClick={() => setOpen((o) => !o)}
-        title="لایه‌های نمایش مسیرها روی بوم"
+        title="لایه‌های نمایش مسیرها روی بوم — حالت «ویرایش مسیر» هم همین‌جاست، در کنار این دکمه"
         className="chip-toggle border-edge bg-panel/85 text-ink backdrop-blur-sm transition-all hover:border-edge2"
       >
         <IconLayers className="h-3.5 w-3.5 text-brass" />
