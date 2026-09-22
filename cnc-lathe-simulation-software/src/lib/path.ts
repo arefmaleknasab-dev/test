@@ -736,60 +736,72 @@ function touch(buf: PathBuf, ids: number[]) {
 }
 
 /** قوانین ۲ و ۳ — حذف رأس: قلم‌های مجاور حذف و یک قلم تازه بین رأسِ قبلی و بعدی */
+/**
+ * حذف رأس (قانون ۲) و حذف چند رأسِ پی‌درپی (قانون ۳).
+ * همه در یک‌پاس و روی همان آرایۀ قلم‌ها حساب می‌شود — چون finishPath رأس‌ها را
+ * شماره‌گذاری دوباره می‌کند، حلقه‌به‌حذف‌کردنِ «رأس‌به‌رأس» شناسه‌های کهنه را
+ * هدف می‌گیرد و رأسِ اشتباه را می‌برد.
+ */
 export function deleteVerts(buf: PathBuf, vids: number[]): PathBuf {
   if (!vids.length) return buf;
-  let next = cloneBuf(buf);
   const wanted = new Set(vids);
-  for (const vid of wanted) {
-    const inc = next.items.filter((it) => it.va === vid || it.vb === vid);
-    if (!inc.length) {
-      /* رأسِ دستهٔ منحنی → منحنی به خط تبدیل می‌شود */
-      let touched = false;
-      for (const it of next.items) {
-        if (it.ha === vid || it.hb === vid) {
-          it.curve = false;
-          it.ha = null;
-          it.hb = null;
-          it.dirty = true;
-          it.pts = null;
-          touched = true;
-        }
-      }
-      if (!touched) continue;
-      next = finishPath(next, false);
+  const next = cloneBuf(buf);
+
+  /* (الف) رأسِ دستۀ کنترلیِ منحنی → همان منحنی به خطِ راست برمی‌گردد */
+  let handleTouched = false;
+  for (const it of next.items) {
+    if (
+      (it.ha != null && wanted.has(it.ha)) ||
+      (it.hb != null && wanted.has(it.hb))
+    ) {
+      it.curve = false;
+      it.ha = null;
+      it.hb = null;
+      it.pts = null;
+      it.dirty = true;
+      handleTouched = true;
+    }
+  }
+
+  /* (ب) رأس‌های زنجیره: بلوک‌های پی‌درپی از قلم‌های «آلوده» → هر بلوک یک قلمِ پل */
+  const touched = next.items.map(
+    (it) => wanted.has(it.va) || wanted.has(it.vb),
+  );
+  if (!touched.some(Boolean)) return handleTouched ? finishPath(next) : buf;
+  const out: PathItem[] = [];
+  let i = 0;
+  while (i < next.items.length) {
+    if (!touched[i]) {
+      out.push(next.items[i++]);
       continue;
     }
-    if (next.items.length - inc.length < 1) return buf; // کل برنامه حذف نشود
-    const drop = new Set(inc.map((i) => i.id));
-    const kept: PathItem[] = [];
-    for (const it of next.items) {
-      if (drop.has(it.id)) {
-        /* یک قلمِ پل بین رأسِ معتبرِ قبل و بعد (قانون ۲) */
-        if (it === inc[0] && inc.length === 2 && inc[0].va !== inc[1].vb) {
-          kept.push({
-            ...inc[0],
-            id: next.nextI++,
-            va: inc[0].va,
-            vb: inc[1].vb,
-            ha: null,
-            hb: null,
-            curve: false,
-            pts: null,
-            dirty: true,
-            note: inc[0].note ?? inc[1].note,
-          });
-        }
-        continue;
-      }
-      kept.push(it);
+    let e = i;
+    while (e + 1 < next.items.length && touched[e + 1]) e++;
+    const first = next.items[i];
+    const last = next.items[e];
+    const head = wanted.has(first.va) ? null : first.va;
+    const tail = wanted.has(last.vb) ? null : last.vb;
+    if (head != null && tail != null && head !== tail) {
+      out.push({
+        ...first,
+        id: next.nextI++,
+        va: head,
+        vb: tail,
+        ha: null,
+        hb: null,
+        curve: false,
+        pts: null,
+        dirty: true,
+        note: first.note ?? last.note,
+      });
     }
-    next.items = kept;
-    next = finishPath(next, false);
+    i = e + 1;
   }
+  next.items = out;
+  /* نگهبان: زنجیره نباید به هیچ قلمِ برنده‌ای ختم شود */
+  if (!out.length || !out.some((it) => it.motion === 1)) return buf;
   return finishPath(next);
 }
-
-/** قانون ۴ — افزودن رأس روی یک قلم: قلم در همان‌جا به دو قلم تقسیم می‌شود */
 export function splitItem(
   buf: PathBuf,
   itemId: number,
