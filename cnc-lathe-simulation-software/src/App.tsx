@@ -7,7 +7,7 @@ import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
-import { PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, expandLines, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
+import { PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
 import type { EditBuf, GcodeOvrMap, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
@@ -22,7 +22,7 @@ interface Saved {
   settings?: Partial<EdSettings>;
   layout?: LayoutState;
   activePreset?: string | null;
-  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; del?: boolean }>;
+  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; del?: boolean }>;
   version?: number;
 }
 
@@ -52,7 +52,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
   if (!raw || typeof raw !== "object") return out;
   for (const [k, v] of Object.entries(raw)) {
     if (!v || typeof v !== "object") continue;
-    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; del?: boolean } = {};
+    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; del?: boolean } = {};
     const okPt = (q: unknown): q is { z: number; x: number } =>
       !!q &&
       typeof q === "object" &&
@@ -62,8 +62,9 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
       isFinite((q as { x: number }).x);
     if (okPt(v.s)) o.s = { z: v.s!.z, x: v.s!.x };
     if (okPt(v.e)) o.e = { z: v.e!.z, x: v.e!.x };
+    if (Array.isArray(v.via)) o.via = v.via.filter(okPt).map((q) => ({ z: q.z, x: q.x }));
     if (v.del === true) o.del = true;
-    if (o.s || o.e || o.del) out[k] = o;
+    if (o.s || o.e || o.via?.length || o.del) out[k] = o;
   }
   return out;
 }
@@ -101,7 +102,7 @@ export default function App() {
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "warn" } | null>(null);
   const [, setHistVer] = useState(0);
 
-  /* حالت ادیت جی‌کد: فایل = برنامهٔ پایه + اوررایدِ تأییدشده (پیش از «تأیید» فایل دست‌نخورده است) */
+  /* حالت ویرایش مسیر: فایل = برنامهٔ پایه + اوررایدِ تأییدشده (پیش از «تأیید» فایل دست‌نخورده است) */
   const [gcodeOvr, setGcodeOvr] = useState<GcodeOvrMap>(() => normGcodeOvr(SAVED?.gcodeOvr));
   const [editBuf, setEditBuf] = useState<EditBuf | null>(null);
   const editBufRef = useRef<EditBuf | null>(editBuf);
@@ -184,11 +185,11 @@ export default function App() {
     restore(future.current.pop()!);
   };
 
-  /* ---------- حالت ادیت جی‌کد ---------- */
+  /* ---------- حالت ویرایش مسیر ---------- */
   const openEdit = () => {
     if (editBufRef.current) return;
     pushPast(snap());
-    const seed = seedGcodeEdit(gen.segs);
+    const seed = seedGcodeEdit(gen.segs, params);
     setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {} });
     setHistVer((v) => v + 1);
   };
@@ -197,12 +198,12 @@ export default function App() {
     pushPast(snap());
     setEditBuf(null);
     setHistVer((v) => v + 1);
-    showToast("حالت ادیت جی‌کد بسته شد — فایل، آخرین وضعیتِ تأییدشده است", "warn");
+    showToast("حالت ویرایش مسیر بسته شد — فایل، آخرین وضعیتِ تأییدشده است", "warn");
   };
   const confirmEdit = () => {
     const eb = editBufRef.current;
     if (!eb) return;
-    const next = deriveGcodeOvr(eb.verts, eb.lines, gen.segs, gcodeOvr);
+    const next = deriveGcodeOvr(eb.verts, eb.lines, genBase.segs, gcodeOvr, params);
     const sketchChanged = eb.sketch !== sketch;
     if (!sketchChanged && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
       showToast("تغییری برای ثبت نیست", "warn");
@@ -215,7 +216,7 @@ export default function App() {
       setSketch(eb.sketch);
     }
     setHistVer((v) => v + 1);
-    showToast("جی‌کد به‌روز شد ✓ (حالت ادیت باز ماند)");
+    showToast("جی‌کد به‌روز شد ✓ (ویرایش مسیر باز ماند)");
   };
   /* تغییرات بافر (خطوط/پروفایل/افست) — یک‌گام تاریخچه برای هر ژست */
   const onEditBuf = (next: EditBuf | null, commit: boolean) => {
@@ -498,17 +499,9 @@ export default function App() {
               edit={editBuf}
               editChanges={(() => {
                 if (!editBuf) return 0;
-                let n = 0;
-                const byKey = new Map(gen.segs.map((sg) => [sg.ovrKey ?? "", sg]));
-                const live = new Set(editBuf.lines.map((l) => l.key));
-                for (const l of expandLines(editBuf.verts, editBuf.lines)) {
-                  const b = l.key.startsWith("#") ? undefined : byKey.get(l.key);
-                  if (!b) continue;
-                  if (Math.abs(b.z1 - l.z1) > 1e-6 || Math.abs(b.x1 - l.x1) > 1e-6 || Math.abs(b.z2 - l.z2) > 1e-6 || Math.abs(b.x2 - l.x2) > 1e-6) n++;
-                }
-                for (const sg of gen.segs) if (sg.ovrKey && !live.has(sg.ovrKey)) n++;
+                const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
+                let n = JSON.stringify(next) === JSON.stringify(gcodeOvr) ? 0 : 1;
                 if (editBuf.sketch !== sketch) n++;
-                n += Object.keys(editBuf.off).length;
                 return n;
               })()}
               onEditToggle={(open) => (open ? openEdit() : closeEdit())}

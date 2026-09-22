@@ -569,7 +569,7 @@ export interface Seg {
   note?: string[]; // کامنت‌های قبل از این حرکت (فقط فرمت استاندارد)
   fan?: number; // گسترش G0 این حرکت در جی‌کد (+قطر، فقط حرکت سریع طولی در/بالای رترکت؛ پیش‌فرض ۰)
   fanU?: number; // گسترش G0 در راستای محور (+طول، فقط بیرون قطعه یا رانش داخل‌خط تراورس؛ پیش‌فرض ۰)
-  ovrKey?: string; // کلید پایدار خط برای «ادیت جی‌کد» (عملیات:شماره‌خط در عملیات)
+  ovrKey?: string; // کلید پایدار خط برای «ویرایش مسیر» (عملیات:شماره‌خط در عملیات)
 }
 
 export interface GenResult {
@@ -1469,7 +1469,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     });
   }
 
-  /* کلید پایدار هر خط (برای ادیت جی‌کد): عملیات:شماره در آن عملیات */
+  /* کلید پایدار هر خط (برای ویرایش مسیر): عملیات:شماره در آن عملیات */
   {
     const ctr = new Map<string, number>();
     for (const sg of segs) {
@@ -1991,7 +1991,7 @@ export function fmtTime(sec: number): string {
   return m > 0 ? `${m}د و ${s}ث` : `${s} ثانیه`;
 }
 
-/* ================= ویرایشِ خطوط جی‌کد (حالت ادیت جی‌کد) =================
+/* ================= ویرایشِ خطوط جی‌کد (حالت ویرایش مسیر) =================
    هر خطِ خروجی کلیدِ ovrKey دارد؛ ویرایش‌ها به‌صورتِ مطلق (مختصات کارِ
    z/r با X قطری) روی همان کلید ذخیره و برنامه از نو ساخته می‌شود:
    - خطِ حذف‌شده (del) از برنامه بیرون می‌رود؛
@@ -2006,60 +2006,51 @@ export interface GcodeOvrPt {
 export interface GcodeOvr {
   s?: GcodeOvrPt;
   e?: GcodeOvrPt;
+  /** نقاط میانی برای شکستن یک حرکت به چند Segment پیوسته */
+  via?: GcodeOvrPt[];
   del?: boolean;
 }
 export type GcodeOvrMap = Record<string, GcodeOvr>;
 
 export function applyGcodeOvr(base: GenResult, ovr: GcodeOvrMap, p: Params): GenResult {
   if (!Object.keys(ovr).length) return base;
-  const kept: Seg[] = [];
+  const expanded: Seg[] = [];
   for (const sg0 of base.segs) {
     const o = sg0.ovrKey ? ovr[sg0.ovrKey] : undefined;
     if (o?.del) continue;
-    const sg = { ...sg0 };
-    if (o && (o.s || o.e)) {
-      if (o.s) {
-        sg.z1 = o.s.z;
-        sg.x1 = o.s.x;
-      }
-      if (o.e) {
-        sg.z2 = o.e.z;
-        sg.x2 = o.e.x;
-      }
+    const points = [o?.s ?? { z: sg0.z1, x: sg0.x1 }, ...(o?.via ?? []), o?.e ?? { z: sg0.z2, x: sg0.x2 }];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i];
+      if (Math.hypot(b.z - a.z, b.x - a.x) < 1e-6) continue;
+      expanded.push({ ...sg0, z1: a.z, x1: a.x, z2: b.z, x2: b.x, note: i === 1 ? sg0.note : undefined });
     }
-    if (Math.abs(sg.z2 - sg.z1) < 1e-6 && Math.abs(sg.x2 - sg.x1) < 1e-6) continue; // صفرطول
+  }
+  const kept: Seg[] = [];
+  for (const sg0 of expanded) {
+    const sg = { ...sg0 };
     const prev = kept[kept.length - 1];
     if (prev && sg.motion === 1 && (Math.abs(sg.z1 - prev.z2) > 1e-6 || Math.abs(sg.x1 - prev.x2) > 1e-6)) {
       if (prev.motion === 0) {
-        /* حرکتِ سریعِ پیشین خودش جابه‌جا می‌شود تا سرِ بُرش را بگیرد (بی‌درز) */
         prev.z2 = sg.z1;
         prev.x2 = sg.x1;
-        if (Math.abs(prev.z2 - prev.z1) < 1e-6 && Math.abs(prev.x2 - prev.x1) < 1e-6) kept.pop();
+        if (Math.hypot(prev.z2 - prev.z1, prev.x2 - prev.x1) < 1e-6) kept.pop();
       } else {
-        /* اتصالِ ناقص: حرکتِ سریعِ لازم قبل از بُرش تزریق می‌شود */
         kept.push({ ...sg, motion: 0, feed: RAPID_RATE, kind: "rapid", opId: -1, op: "sys", note: undefined, fan: undefined, fanU: undefined, z1: prev.z2, x1: prev.x2, z2: sg.z1, x2: sg.x1, line: -1, holder: sg.holder, ovrKey: undefined });
       }
     }
     kept.push(sg);
   }
   const lines = p.format === "modal" ? buildModalLines(kept, p) : buildStdLines(kept, p);
-  let cutLen = 0;
-  let rapidLen = 0;
-  let timeSec = 0;
-  for (const s of kept) {
-    const d = Math.hypot(s.x2 - s.x1, s.z2 - s.z1);
-    if (s.motion === 1) {
-      cutLen += d;
-      timeSec += (d / Math.max(1, s.feed)) * 60;
-    } else {
-      rapidLen += d;
-      timeSec += (d / RAPID_RATE) * 60;
-    }
+  let cutLen = 0, rapidLen = 0, timeSec = 0;
+  for (const sg of kept) {
+    const d = Math.hypot(sg.x2 - sg.x1, sg.z2 - sg.z1);
+    if (sg.motion === 1) { cutLen += d; timeSec += (d / Math.max(1, sg.feed)) * 60; }
+    else { rapidLen += d; timeSec += (d / RAPID_RATE) * 60; }
   }
   return { ...base, segs: kept, lines, cutLen, rapidLen, timeSec };
 }
 
-/* ---------- بافرِ «ادیت جی‌کد» — پلی‌لاینِ پیوسته با رأس‌های مشترک ----------
+/* ---------- بافرِ «ویرایش مسیر» — پلی‌لاینِ پیوسته با رأس‌های مشترک ----------
    مدل مثل بک‌پلات CIMCO: کل مسیر، یک زنجیرۀ یکپارچه است. نقاط (verts)
    موجودیت‌های مستقل‌اند و هر خط به دو رأس ارجاع می‌دهد؛ جابه‌جایی یک رأس
    خودبه‌خود همهٔ خطوطِ متصل را با خود می‌برد (بدای نقطهٔ دوم و بدون گسست)
@@ -2117,42 +2108,31 @@ export function expandLines(verts: EVert[], lines: ELine[]): ELineXY[] {
 
 /* زنجیره‌سازی: سرِ هر خط = انتهای خطِ پیشین اگر «تقریباً» یکی بودند → رأسِ مشترک؛
    وگرنه رأسِ تازه (شکافِ واقعی همان‌طور که در سیمکو هم خطِ وصل دیده می‌شود). */
-export function seedGcodeEdit(segs: Seg[]): Pick<EditBuf, "verts" | "lines"> {
+export function seedGcodeEdit(segs: Seg[], p: Params): Pick<EditBuf, "verts" | "lines"> {
   const verts: EVert[] = [];
   const lines: ELine[] = [];
-  let lastV = -1;
-  const EQ = 1e-6;
-  const addV = (z: number, x: number): number => {
-    const v: EVert = { id: verts.length, z, x };
-    verts.push(v);
-    return v.id;
-  };
-  segs.forEach((sg, i) => {
-    let va: number;
-    if (lastV < 0) va = addV(sg.z1, sg.x1);
-    else {
-      const pv = verts[lastV];
-      va = Math.abs(pv.z - sg.z1) < EQ && Math.abs(pv.x - sg.x1) < EQ ? lastV : addV(sg.z1, sg.x1);
-    }
-    const pv = verts[va];
-    const vb = Math.abs(pv.z - sg.z2) < EQ && Math.abs(pv.x - sg.x2) < EQ ? va : addV(sg.z2, sg.x2);
-    lines.push({
-      id: i + 1,
-      key: sg.ovrKey ?? `#bridge:${i}`,
-      va,
-      vb,
-      motion: sg.motion,
-      feed: sg.feed,
-      opId: sg.opId,
-      kind: sg.kind,
-      holder: sg.holder,
-      note: sg.note,
-      fan: sg.fan,
-      fanU: sg.fanU,
-    });
+  const plan = planBridges(segs, p);
+  const bridgeAt = new Map(plan.bridges.map((b) => [b.atIndex, b]));
+  let current = { ...plan.home };
+  let nextLineId = 1;
+  const addV = (u: number, v: number) => { const id = verts.length; verts.push({ id, z: u, x: 2 * v }); return id; };
+  let lastV = addV(current.u, current.v);
+  const addLine = (to: { u: number; v: number }, meta: Omit<ELine, "id" | "va" | "vb">) => {
+    if (Math.hypot(to.u - current.u, to.v - current.v) < 1e-7) return;
+    const vb = addV(to.u, to.v);
+    lines.push({ ...meta, id: nextLineId++, va: lastV, vb });
     lastV = vb;
+    current = { ...to };
+  };
+  const bridgeMeta = (n: number): Omit<ELine, "id" | "va" | "vb"> => ({ key: `#bridge:${n}`, motion: 0, feed: RAPID_RATE, opId: -1, kind: "rapid", holder: 1 });
+  segs.forEach((sg, i) => {
+    const e1 = execUV(sg, false, p), e2 = execUV(sg, true, p);
+    const br = bridgeAt.get(i);
+    if (br) for (let j = 0; j < br.legs.length; j++) addLine(br.legs[j], bridgeMeta(i * 10 + j));
+    if (!(br && br.absorbed)) addLine(e1, bridgeMeta(i * 10 + 8));
+    addLine(e2, { key: sg.ovrKey ?? `#move:${i}`, motion: sg.motion, feed: sg.feed, opId: sg.opId, kind: sg.kind, holder: sg.holder, note: sg.note, fan: sg.fan, fanU: sg.fanU });
   });
-  return { verts, lines };
+  return normalizeEditBuf(verts, lines);
 }
 
 /* نرمال‌سازیِ بافر بعد از هر تغییر (اعتبارسنجی خواستهٔ ۹):
@@ -2160,59 +2140,103 @@ export function seedGcodeEdit(segs: Seg[]): Pick<EditBuf, "verts" | "lines"> {
    - خط‌هایِ تکراریِ چسبیده یکی می‌شوند؛
    - رأس‌های بی‌استفاده (یتیم) پاک می‌شوند تا «نقطهٔ اضافی» نماند. */
 export function normalizeEditBuf(verts: EVert[], lines: ELine[]): { verts: EVert[]; lines: ELine[]; dropped: number } {
+  const byId = new Map(verts.map((v) => [v.id, v]));
+  const kept: ELine[] = [];
   let dropped = 0;
-  const out: ELine[] = [];
-  for (const l of lines) {
-    if (l.va === l.vb) {
-      dropped++;
-      continue; // صفرطول
-    }
-    const p = out[out.length - 1];
-    if (p && ((p.va === l.va && p.vb === l.vb) || (p.va === l.vb && p.vb === l.va))) {
-      dropped++; // تکراریِ چسبیده
-      continue;
-    }
-    out.push(l);
+  for (const original of lines) {
+    const a = byId.get(original.va), b = byId.get(original.vb);
+    if (!a || !b || Math.hypot(a.z - b.z, a.x - b.x) < 1e-7) { dropped++; continue; }
+    const prev = kept[kept.length - 1];
+    const line = prev ? { ...original, va: prev.vb } : { ...original };
+    const aa = byId.get(line.va);
+    if (!aa || Math.hypot(aa.z - b.z, aa.x - b.x) < 1e-7) { dropped++; continue; }
+    kept.push(line);
   }
-  const used = new Set<number>();
-  for (const l of out) {
-    used.add(l.va);
-    used.add(l.vb);
-  }
+  const order: number[] = [];
+  if (kept.length) { order.push(kept[0].va); for (const l of kept) order.push(l.vb); }
   const remap = new Map<number, number>();
   const vs: EVert[] = [];
-  for (const v of verts) {
-    if (!used.has(v.id)) {
-      dropped++;
-      continue;
-    }
-    remap.set(v.id, vs.length);
-    vs.push({ ...v, id: vs.length });
+  for (const old of order) if (!remap.has(old)) { remap.set(old, vs.length); vs.push({ ...byId.get(old)!, id: vs.length }); }
+  const ls = kept.map((l, i) => ({ ...l, id: i + 1, va: remap.get(l.va)!, vb: remap.get(l.vb)! }));
+  dropped += verts.length - vs.length;
+  return { verts: vs, lines: ls, dropped };
+}
+
+/** حذف رأس‌های منفرد یا متوالی و اتصال مستقیم اولین همسایه معتبر به آخرین همسایه معتبر. */
+export function deleteEditVertices(verts: EVert[], lines: ELine[], ids: number[]) {
+  const remove = new Set(ids);
+  if (!remove.size) return normalizeEditBuf(verts, lines);
+  const keptVerts = verts.filter((v) => !remove.has(v.id));
+  const keptLines: ELine[] = [];
+  let pending: ELine | null = null;
+  for (const l of lines) {
+    const aGone = remove.has(l.va), bGone = remove.has(l.vb);
+    if (!aGone && !bGone) { keptLines.push(l); pending = null; }
+    else if (!aGone && bGone) pending = l;
+    else if (aGone && !bGone && pending) { keptLines.push({ ...pending, vb: l.vb }); pending = null; }
   }
-  return { verts: vs, lines: out.map((l) => ({ ...l, va: remap.get(l.va) ?? l.va, vb: remap.get(l.vb) ?? l.vb })), dropped };
+  return normalizeEditBuf(keptVerts, keptLines);
+}
+
+/** حذف Segment با ادغام دو سر آن در مرکز هندسی، بدون شکستن زنجیره. */
+export function deleteEditLines(verts: EVert[], lines: ELine[], ids: number[]) {
+  const remove = new Set(ids);
+  const vs = verts.map((v) => ({ ...v }));
+  const vm = new Map(vs.map((v) => [v.id, v]));
+  const ls = lines.map((l) => ({ ...l }));
+  for (let i = 0; i < ls.length; i++) {
+    if (!remove.has(ls[i].id)) continue;
+    let j = i;
+    while (j + 1 < ls.length && remove.has(ls[j + 1].id)) j++;
+    const first = ls[i], last = ls[j], a = vm.get(first.va), b = vm.get(last.vb);
+    if (a && b) {
+      const mz = (a.z + b.z) / 2, mx = (a.x + b.x) / 2;
+      a.z = mz; a.x = mx; b.z = mz; b.x = mx;
+      if (i > 0) ls[i - 1].vb = a.id;
+      if (j + 1 < ls.length) ls[j + 1].va = a.id;
+    }
+    ls.splice(i, j - i + 1); i--;
+  }
+  return normalizeEditBuf(vs, ls);
+}
+
+/** درج رأس روی Segment و تقسیم آن به دو Segment با حفظ ترتیب و مشخصات حرکت. */
+export function insertEditVertex(verts: EVert[], lines: ELine[], lineId: number, z: number, x: number) {
+  const i = lines.findIndex((l) => l.id === lineId);
+  if (i < 0) return normalizeEditBuf(verts, lines);
+  const l = lines[i], a = verts.find((v) => v.id === l.va), b = verts.find((v) => v.id === l.vb);
+  if (!a || !b || Math.hypot(z - a.z, x - a.x) < 1e-6 || Math.hypot(z - b.z, x - b.x) < 1e-6) return normalizeEditBuf(verts, lines);
+  const id = Math.max(-1, ...verts.map((v) => v.id)) + 1;
+  const nextVerts = [...verts, { id, z, x }];
+  const nextLines = [...lines.slice(0, i), { ...l, vb: id }, { ...l, id: Math.max(0, ...lines.map((q) => q.id)) + 1, va: id }, ...lines.slice(i + 1)];
+  return normalizeEditBuf(nextVerts, nextLines);
 }
 
 /* patches مطلق روی برنامهٔ پایه + حذف‌ها؛ کلیدهای پل (شروع #) نادیده (مجدداً تزریق می‌شوند) */
-export function deriveGcodeOvr(verts: EVert[], lines: ELine[], baseSegs: Seg[], prev: GcodeOvrMap): GcodeOvrMap {
+export function deriveGcodeOvr(verts: EVert[], lines: ELine[], baseSegs: Seg[], prev: GcodeOvrMap, p: Params): GcodeOvrMap {
   const exp = expandLines(verts, lines);
   const next: GcodeOvrMap = { ...prev };
   const byKey = new Map<string, Seg>();
   for (const sg of baseSegs) if (sg.ovrKey) byKey.set(sg.ovrKey, sg);
-  const live = new Set<string>();
-  for (const L of exp) {
-    if (L.key.startsWith("#")) continue;
-    live.add(L.key);
-    const b = byKey.get(L.key);
-    if (!b) continue;
+  const groups = new Map<string, ELineXY[]>();
+  for (const l of exp) if (!l.key.startsWith("#")) {
+    const g = groups.get(l.key); if (g) g.push(l); else groups.set(l.key, [l]);
+  }
+  const toWorld = (z: number, x: number, sg: Seg) => {
+    const u = z - (sg.fanU ?? 0), v = x / 2 - (sg.fan ?? 0);
+    return sg.holder === 2 ? { z: u - p.holder2.xOff, x: 2 * (v + p.holder2.yOff) } : { z: u, x: 2 * v };
+  };
+  for (const [key, group] of groups) {
+    const b = byKey.get(key); if (!b) continue;
+    const s0 = toWorld(group[0].z1, group[0].x1, b);
+    const e0 = toWorld(group[group.length - 1].z2, group[group.length - 1].x2, b);
+    const via = group.slice(0, -1).map((l) => toWorld(l.z2, l.x2, b));
     const o: GcodeOvr = {};
-    if (Math.abs(b.z1 - L.z1) > 1e-9 || Math.abs(b.x1 - L.x1) > 1e-9) o.s = { z: L.z1, x: L.x1 };
-    if (Math.abs(b.z2 - L.z2) > 1e-9 || Math.abs(b.x2 - L.x2) > 1e-9) o.e = { z: L.z2, x: L.x2 };
-    if (o.s || o.e) next[L.key] = o;
-    else if (!prev[L.key]) delete next[L.key];
+    if (Math.hypot(b.z1 - s0.z, b.x1 - s0.x) > 1e-8) o.s = s0;
+    if (Math.hypot(b.z2 - e0.z, b.x2 - e0.x) > 1e-8) o.e = e0;
+    if (via.length) o.via = via;
+    if (o.s || o.e || o.via) next[key] = o; else delete next[key];
   }
-  for (const sg of baseSegs) {
-    const k = sg.ovrKey;
-    if (k && !live.has(k)) next[k] = { ...next[k], del: true };
-  }
+  for (const sg of baseSegs) if (sg.ovrKey && !groups.has(sg.ovrKey)) next[sg.ovrKey] = { del: true };
   return next;
 }
