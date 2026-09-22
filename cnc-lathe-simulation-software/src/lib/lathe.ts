@@ -1811,6 +1811,28 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
   return lines;
 }
 
+/* ---------------- بازسازی برنامه از آرایهٔ حرکت‌ها ---------------- */
+/* «ویرایش مسیر» هندسه را عوض می‌کند و همین‌جا برنامه + آمار از نو ساخته می‌شود:  */
+/* همان پس‌پردازندهٔ استاندارد/مودال، همان پل‌های امن هلدر و همان فیدر بهینه.     */
+
+export function buildProgram(segs: Seg[], p: Params): { lines: string[]; cutLen: number; rapidLen: number; timeSec: number } {
+  const lines = p.format === "modal" ? buildModalLines(segs, p) : buildStdLines(segs, p);
+  let cutLen = 0;
+  let rapidLen = 0;
+  let timeSec = 0;
+  for (const s of segs) {
+    const d = Math.hypot(s.x2 - s.x1, s.z2 - s.z1);
+    if (s.motion === 1) {
+      cutLen += d;
+      timeSec += (d / Math.max(1, s.feed)) * 60;
+    } else {
+      rapidLen += d;
+      timeSec += (d / RAPID_RATE) * 60;
+    }
+  }
+  return { lines, cutLen, rapidLen, timeSec };
+}
+
 /* ---------------- پیش‌تنظیم‌ها ---------------- */
 
 export interface Preset {

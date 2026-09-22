@@ -1,6 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { GenResult, Op, Params, SegKind, SplitState } from "../lib/lathe";
 import { OP_INFO } from "../lib/lathe";
+import type { PathBuf, PathItem, XY } from "../lib/path";
+import {
+  deleteItems,
+  deleteVerts,
+  itemPoints,
+  itemSvgData,
+  moveVerts,
+  pathIssues,
+  pathStats,
+  splitItem,
+  straightenItems,
+  weldGaps,
+} from "../lib/path";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
 import {
   arcRadius,
@@ -40,6 +53,7 @@ import {
   IconMagnet,
   IconMagnetSm,
   IconMinus,
+  IconPen,
   IconPlus,
   IconQuad,
   IconRedo,
@@ -65,22 +79,76 @@ export interface EdSettings {
 
 type Tool = "select" | "line" | "quad" | "cubic" | "arc" | "split";
 
-const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
-  { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "کلیک تکی، باکس انتخابگر چپ‌به‌راست (فقط داخل) و راست‌به‌چپ (متقاطع)، Shift افزودن، Ctrl حذف، دابل‌کلیک زنجیره" },
-  { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
-  { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
-  { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
-  { id: "arc", name: "کمان", key: "A", icon: <IconArc3 className="h-4 w-4" />, hint: "کمان سه‌نقطه‌ای: شروع، پایان، نقطه‌ای روی کمان" },
-  { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
+const TOOLS: {
+  id: Tool;
+  name: string;
+  key: string;
+  icon: React.ReactNode;
+  hint: string;
+}[] = [
+  {
+    id: "select",
+    name: "انتخاب",
+    key: "V",
+    icon: <IconCursor className="h-4 w-4" />,
+    hint: "کلیک تکی، باکس انتخابگر چپ‌به‌راست (فقط داخل) و راست‌به‌چپ (متقاطع)، Shift افزودن، Ctrl حذف، دابل‌کلیک زنجیره",
+  },
+  {
+    id: "line",
+    name: "خط",
+    key: "L",
+    icon: <IconLine className="h-4 w-4" />,
+    hint: "خط مستقیم: نقطهٔ شروع و پایان",
+  },
+  {
+    id: "quad",
+    name: "منحنی",
+    key: "C",
+    icon: <IconQuad className="h-4 w-4" />,
+    hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل",
+  },
+  {
+    id: "cubic",
+    name: "منحنی کنترلی",
+    key: "B",
+    icon: <IconCubic className="h-4 w-4" />,
+    hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع",
+  },
+  {
+    id: "arc",
+    name: "کمان",
+    key: "A",
+    icon: <IconArc3 className="h-4 w-4" />,
+    hint: "کمان سه‌نقطه‌ای: شروع، پایان، نقطه‌ای روی کمان",
+  },
+  {
+    id: "split",
+    name: "نقطه Split",
+    key: "S",
+    icon: <IconSplit className="h-4 w-4" />,
+    hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل",
+  },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = {
+  select: 0,
+  line: 2,
+  quad: 3,
+  cubic: 4,
+  arc: 3,
+  split: 1,
+};
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
   quad: ["نقطهٔ شروع", "نقطهٔ پایان", "نقطهٔ کنترل منحنی"],
-  cubic: ["نقطهٔ شروع", "نقطهٔ پایان", "دستهٔ خروج از پایان", "دستهٔ ورود به شروع"],
+  cubic: [
+    "نقطهٔ شروع",
+    "نقطهٔ پایان",
+    "دستهٔ خروج از پایان",
+    "دستهٔ ورود به شروع",
+  ],
   arc: ["نقطهٔ شروع کمان", "نقطهٔ پایان کمان", "نقطه‌ای روی کمان"],
   split: ["کلیک روی پروفیل برای قرار دادن نقطه Split"],
 };
@@ -103,12 +171,30 @@ interface Props {
   onRedo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  /* حالت «ویرایش مسیر» — بافرِ Polylineِ یکپارچۀ جی‌کد */
+  path: PathBuf | null;
+  pathOverride: boolean;
+  pathChanged: boolean;
+  onPathToggle: (open: boolean) => void;
+  onPathBuf: (next: PathBuf, commit: boolean) => void;
+  onPathConfirm: () => void;
+  onPathCancel: () => void;
+  onPathClear: () => void;
 }
 
 interface Cam {
   s: number;
   ox: number;
   oy: number;
+}
+
+/* گزینه‌های کادر «روی‌افتاده‌ها» — خط یا نقطه‌ای که زیر نشانگر روی هم افتاده‌اند */
+interface PickRow {
+  kind: "item" | "vert";
+  id: number;
+  d: number;
+  t: string;
+  sub: string;
 }
 
 const SEG_COLOR: Record<SegKind, string> = {
@@ -125,7 +211,16 @@ const SEG_COLOR: Record<SegKind, string> = {
   bottom: "#ffd166",
 };
 
-type LayerKey = "showRough" | "showFinish" | "showOffset" | "showBore" | "showRound" | "showFace" | "showBottom" | "showRapids" | "showGhost";
+type LayerKey =
+  | "showRough"
+  | "showFinish"
+  | "showOffset"
+  | "showBore"
+  | "showRound"
+  | "showFace"
+  | "showBottom"
+  | "showRapids"
+  | "showGhost";
 
 const CHIPS: { key: LayerKey; label: string; color: string }[] = [
   { key: "showRound", label: "گرد کردن", color: "#b48ee0" },
@@ -140,13 +235,20 @@ const CHIPS: { key: LayerKey; label: string; color: string }[] = [
 ];
 
 /* منوی کرکره‌ای لایه‌های نمایش — جایگزین نوار چیپ‌های افقی */
-function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings: (p: Partial<EdSettings>) => void }) {
+function LayerMenu({
+  settings,
+  onSettings,
+}: {
+  settings: EdSettings;
+  onSettings: (p: Partial<EdSettings>) => void;
+}) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -168,12 +270,22 @@ function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings:
       >
         <IconLayers className="h-3.5 w-3.5 text-brass" />
         لایه‌ها
-        <span className={cn("rounded-full border px-1 font-mono text-[9px] font-bold", activeN === CHIPS.length ? "border-teal/50 text-teal" : "border-edge2 text-mute")}>
+        <span
+          className={cn(
+            "rounded-full border px-1 font-mono text-[9px] font-bold",
+            activeN === CHIPS.length
+              ? "border-teal/50 text-teal"
+              : "border-edge2 text-mute",
+          )}
+        >
           {activeN}/{CHIPS.length}
         </span>
         <svg
           viewBox="0 0 12 12"
-          className={cn("h-2 w-2 text-dim transition-transform", open && "-rotate-180")}
+          className={cn(
+            "h-2 w-2 text-dim transition-transform",
+            open && "-rotate-180",
+          )}
           fill="none"
           stroke="currentColor"
           strokeWidth={1.8}
@@ -185,15 +297,32 @@ function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings:
       </button>
       {open && (
         <div className="absolute top-[calc(100%+6px)] right-0 w-52 rounded-lg border border-edge bg-panel/95 p-1.5 shadow-xl shadow-black/50 backdrop-blur">
-          <div className="px-2 pt-0.5 pb-1 text-[10px] font-bold text-dim">نمایش مسیرهای عملیات روی بوم</div>
+          <div className="px-2 pt-0.5 pb-1 text-[10px] font-bold text-dim">
+            نمایش مسیرهای عملیات روی بوم
+          </div>
           {CHIPS.map((c) => (
             <button
               key={c.key}
-              onClick={() => onSettings({ [c.key]: !settings[c.key] } as Partial<EdSettings>)}
+              onClick={() =>
+                onSettings({ [c.key]: !settings[c.key] } as Partial<EdSettings>)
+              }
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-right text-[11.5px] transition-colors hover:bg-panel3"
             >
-              <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: c.color, opacity: settings[c.key] ? 1 : 0.25 }} />
-              <span className={cn("flex-1 truncate", settings[c.key] ? "text-ink/85" : "text-dim")}>{c.label}</span>
+              <span
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{
+                  background: c.color,
+                  opacity: settings[c.key] ? 1 : 0.25,
+                }}
+              />
+              <span
+                className={cn(
+                  "flex-1 truncate",
+                  settings[c.key] ? "text-ink/85" : "text-dim",
+                )}
+              >
+                {c.label}
+              </span>
               {settings[c.key] ? (
                 <IconCheck className="h-3.5 w-3.5 shrink-0 text-teal" />
               ) : (
@@ -250,6 +379,14 @@ export default function ProfileEditor({
   onRedo,
   canUndo,
   canRedo,
+  path,
+  pathOverride,
+  pathChanged,
+  onPathToggle,
+  onPathBuf,
+  onPathConfirm,
+  onPathCancel,
+  onPathClear,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -269,6 +406,36 @@ export default function ProfileEditor({
   const [snapHit, setSnapHit] = useState<SnapPoint | null>(null);
   const [hoverId, setHoverId] = useState<number | null>(null);
 
+  /* ---------- حالت «ویرایش مسیر» — Polyline یکپارچۀ جی‌کد ---------- */
+  const pathOpen = !!path;
+  const [pTool, setPTool] = useState<"select" | "add">("select"); // انتخاب / افزودن نقطه روی خط
+  const [selPI, setSelPI] = useState<number[]>([]); // قلم‌های انتخابی
+  const [selPV, setSelPV] = useState<number[]>([]); // رأس‌های انتخابی
+  const [hoverPI, setHoverPI] = useState<number | null>(null);
+  const [hoverPV, setHoverPV] = useState<number | null>(null);
+  const [picker, setPicker] = useState<{
+    x: number;
+    y: number;
+    rows: PickRow[];
+    act: number;
+  } | null>(null);
+  const [marqP, setMarqP] = useState<{ ids: number[]; vids: number[] } | null>(
+    null,
+  );
+  const [delta, setDelta] = useState<{ z: string; x: string }>({
+    z: "",
+    x: "",
+  });
+  useEffect(() => {
+    if (pathOpen) return;
+    setSelPI([]);
+    setSelPV([]);
+    setHoverPI(null);
+    setHoverPV(null);
+    setPicker(null);
+    setMarqP(null);
+  }, [pathOpen]);
+
   /* نقاط جداشده (unjoined) — به‌صورت پیش‌فرض همهٔ نقاطِ هم‌مکان متصل‌اند */
   const [separated, setSeparated] = useState<Set<string>>(new Set());
   /* منوی راست‌کلیک برای اتصال/جداسازی نقطه */
@@ -281,7 +448,9 @@ export default function ProfileEditor({
     clusterSize: number;
   } | null>(null);
   /* انتخاب مستقل نقاط (جدا از انتخاب المان) */
-  const [selPoints, setSelPoints] = useState<{ segId: number; part: "a" | "b" | "c1" | "c2" | "via" }[]>([]);
+  const [selPoints, setSelPoints] = useState<
+    { segId: number; part: "a" | "b" | "c1" | "c2" | "via" }[]
+  >([]);
   /* انتخاب باکسی (باکس انتخابگر) */
   const [marquee, setMarquee] = useState<{
     x0: number;
@@ -293,7 +462,9 @@ export default function ProfileEditor({
   } | null>(null);
   const [marqueeHits, setMarqueeHits] = useState<number[]>([]);
   /* نقاط نامزدِ داخل باکس انتخاب */
-  const [marqueePointHits, setMarqueePointHits] = useState<{ segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[]>([]);
+  const [marqueePointHits, setMarqueePointHits] = useState<
+    { segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[]
+  >([]);
   const [panMode, setPanMode] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
   const spaceRef = useRef(false);
@@ -307,13 +478,411 @@ export default function ProfileEditor({
   const camRef = useRef(cam);
   camRef.current = cam;
 
+  /* ================= ویرایش مسیر — هندسه، برخوردها و عملیات ================= */
+  const pxOf = (c: Cam, p: XY): [number, number] => [
+    c.ox + p.z * c.s,
+    c.oy - (p.x / 2) * c.s,
+  ];
+  const wOf = (c: Cam, sx: number, sy: number): XY => ({
+    z: (sx - c.ox) / c.s,
+    x: ((c.oy - sy) / c.s) * 2,
+  });
+
+  /* نقاطِ هندسیِ یک قلم — منحنی‌ها واقعی (بازیه) نه نقاطِ فشردۀ خط‌شکست */
+  const itemGeo = (buf: PathBuf, it: PathItem): XY[] => {
+    const A = buf.verts[it.va];
+    const B = buf.verts[it.vb];
+    if (it.curve && it.ha != null && it.hb != null) {
+      const H1 = buf.verts[it.ha];
+      const H2 = buf.verts[it.hb];
+      const out: XY[] = [];
+      for (let k = 0; k <= 24; k++) {
+        const t = k / 24;
+        const u = 1 - t;
+        out.push({
+          z:
+            u * u * u * A.z +
+            3 * u * u * t * H1.z +
+            3 * u * t * t * H2.z +
+            t * t * t * B.z,
+          x:
+            u * u * u * A.x +
+            3 * u * u * t * H1.x +
+            3 * u * t * t * H2.x +
+            t * t * t * B.x,
+        });
+      }
+      return out;
+    }
+    return itemPoints(buf, it);
+  };
+  const pathVisible = (it: PathItem) =>
+    settings[KIND_VISIBLE[it.motion === 0 ? "rapid" : it.kind]];
+  const itemPx = (c: Cam, buf: PathBuf, it: PathItem): [number, number][] =>
+    itemGeo(buf, it).map((q) => pxOf(c, q));
+
+  const distPxPoly = (
+    px: number,
+    py: number,
+    poly: [number, number][],
+  ): number => {
+    let best = Infinity;
+    for (let i = 0; i + 1 < poly.length; i++) {
+      const [x1, y1] = poly[i];
+      const [x2, y2] = poly[i + 1];
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const l2 = dx * dx + dy * dy;
+      const t =
+        l2 < 1e-9
+          ? 0
+          : Math.min(1, Math.max(0, ((px - x1) * dx + (py - y1) * dy) / l2));
+      best = Math.min(best, Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t)));
+    }
+    return best;
+  };
+
+  /* همهٔ کاندیداها برگردانده می‌شوند تا «روی‌افتاده‌ها» قابل انتخاب باشند */
+  const itemsAtPx = (c: Cam, buf: PathBuf, px: number, py: number) => {
+    const out: { id: number; d: number }[] = [];
+    for (const it of buf.items) {
+      if (!pathVisible(it)) continue;
+      const d = distPxPoly(px, py, itemPx(c, buf, it));
+      const tol = selPI.includes(it.id) ? 8.5 : 6;
+      if (d <= tol) out.push({ id: it.id, d });
+    }
+    return out.sort((a, b) => a.d - b.d);
+  };
+  const pathKnots = (buf: PathBuf) => {
+    const knots = new Set<number>();
+    const handleOwner = new Map<number, number>();
+    for (const it of buf.items) {
+      knots.add(it.va);
+      knots.add(it.vb);
+      if (it.ha != null) handleOwner.set(it.ha, it.id);
+      if (it.hb != null) handleOwner.set(it.hb, it.id);
+    }
+    return { knots, handleOwner };
+  };
+  const vertsAtPx = (c: Cam, buf: PathBuf, px: number, py: number) => {
+    const { knots, handleOwner } = pathKnots(buf);
+    const out: { id: number; d: number }[] = [];
+    for (const v of buf.verts) {
+      if (!knots.has(v.id)) {
+        const own = handleOwner.get(v.id);
+        if (own == null || !selPI.includes(own)) continue; // دسته‌ها فقط برای منحنیِ انتخابی
+      }
+      const [x, y] = pxOf(c, v);
+      const d = Math.hypot(px - x, py - y);
+      if (d <= (selPV.includes(v.id) ? 11.5 : 8.5)) out.push({ id: v.id, d });
+    }
+    return out.sort((a, b) => a.d - b.d);
+  };
+
+  /* مغناطیسِ دقت: هم‌راستایی با رأسِ دیگر، چسبیدن به پروفایل و محورِ دوران */
+  const pathSnap = (buf: PathBuf, raw: XY, skip: number[]): XY => {
+    const c = camRef.current;
+    if (!c) return raw;
+    const tol = 5 / c.s;
+    const out = { ...raw };
+    let bz: number | null = null;
+    let bx: number | null = null;
+    let bdz = tol;
+    let bdx = tol;
+    for (const v of buf.verts) {
+      if (skip.includes(v.id)) continue;
+      const dz = Math.abs(v.z - raw.z);
+      if (dz < bdz) {
+        bdz = dz;
+        bz = v.z;
+      }
+      const dx = Math.abs(v.x - raw.x);
+      if (dx < bdx) {
+        bdx = dx;
+        bx = v.x;
+      }
+    }
+    if (bz != null) out.z = bz;
+    if (bx != null) out.x = bx;
+    /* نزدیک‌ترین نقطهٔ پروفایل — برای اینکه بُرش دقیقاً روی طرح بنشیند */
+    let bp: XY | null = null;
+    let bpd = 6 / c.s;
+    for (const sg of segs) {
+      for (const q of sg.kind === "line" ? [sg.a, sg.b] : segPoints(sg, 24)) {
+        const d = Math.hypot(q.z - raw.z, q.r - raw.x / 2);
+        if (d < bpd) {
+          bpd = d;
+          bp = { z: q.z, x: q.r * 2 };
+        }
+      }
+    }
+    if (bp) {
+      out.z = bp.z;
+      out.x = bp.x;
+    }
+    if (Math.abs(out.x) < 2 * tol) out.x = 0;
+    return out;
+  };
+
+  /* برچسبِ خوانای هر قلم/رأس برای کادر «روی‌افتاده‌ها» */
+  const itemLabel = (
+    buf: PathBuf,
+    it: PathItem,
+  ): { t: string; sub: string } => {
+    const idx = buf.items.indexOf(it);
+    const opName =
+      it.opId < 0
+        ? "سیستمی"
+        : (OP_INFO[it.op === "sys" ? "copy" : it.op]?.name ?? "عملیات");
+    const geo = itemGeo(buf, it);
+    const len = geo.reduce(
+      (a, q, k) =>
+        k ? a + Math.hypot(geo[k - 1].z - q.z, geo[k - 1].x - q.x) : 0,
+      0,
+    );
+    const t = `قلم ${idx + 1}${it.curve ? " (منحنی)" : ""} • ${it.motion === 0 ? "G0 سریع" : "G1 بُرش"}`;
+    return {
+      t,
+      sub: `${opName} • F${Math.round(it.feed)} • طول ${len.toFixed(3)} mm`,
+    };
+  };
+  const vertLabel = (buf: PathBuf, id: number): { t: string; sub: string } => {
+    const v = buf.verts[id];
+    const { knots } = pathKnots(buf);
+    const inc = buf.items.filter((i) => i.va === id || i.vb === id).length;
+    return {
+      t: knots.has(id)
+        ? `نقطه ${id + 1} — ${inc} قلم`
+        : `دستۀ کنترل رأس ${id + 1}`,
+      sub: `X ${v.z.toFixed(3)}  •  ⌀ ${v.x.toFixed(3)} mm`,
+    };
+  };
+
+  /* فاصلۀ عمودِ قلمِ انتخابی تا نزدیک‌ترین قلم هم‌جهت — کنترلِ دقتِ گام‌ها */
+  const parallelGap = useMemo(() => {
+    if (!path || selPI.length !== 1) return null;
+    const me = path.items.find((i) => i.id === selPI[0]);
+    if (!me) return null;
+    const mp = itemGeo(path, me);
+    const a0 = mp[0];
+    const a1 = mp[mp.length - 1];
+    const la = Math.hypot(a1.z - a0.z, a1.x - a0.x);
+    if (la < 1e-6) return null;
+    const na = { z: -(a1.x - a0.x) / la, x: (a1.z - a0.z) / la };
+    let best: { d: number; id: number } | null = null;
+    for (const it of path.items) {
+      if (it.id === me.id) continue;
+      const q = itemGeo(path, it);
+      const b0 = q[0];
+      const b1 = q[q.length - 1];
+      const lb = Math.hypot(b1.z - b0.z, b1.x - b0.x);
+      if (lb < 1e-6) continue;
+      const cos =
+        Math.abs(
+          (a1.z - a0.z) * (b1.z - b0.z) + (a1.x - a0.x) * (b1.x - b0.x),
+        ) /
+        (la * lb);
+      if (cos < 0.99995) continue;
+      for (const p of q) {
+        const d = Math.abs((p.z - a0.z) * na.z + (p.x - a0.x) * na.x);
+        if (d < 1e-6) continue;
+        if (!best || d < best.d) best = { d, id: it.id };
+      }
+    }
+    return best;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, selPI]);
+
+  /* عملیات‌ها — همه از توابعِ خالصِ lib/path با اعتبارسنجیِ پس از ویرایش */
+  const pRef = useRef<{ msg: string; at: number } | null>(null);
+  const [pMsg, setPMsg] = useState<string | null>(null);
+  const note = (m: string) => {
+    pRef.current = { msg: m, at: Date.now() };
+    setPMsg(m);
+  };
+  const applyPath = (next: PathBuf) => {
+    if (!path) return;
+    onPathBuf(next, true);
+    const iss = pathIssues(next);
+    if (iss.gaps.length)
+      note(
+        `${iss.gaps.length} شکاف در زنجیره ماند — با «اتصال شکاف‌ها» ببندیدشان`,
+      );
+  };
+  const delSelItems = () => {
+    if (!path) return;
+    if (!selPI.length) {
+      note("اول یک خط را انتخاب کنید");
+      return;
+    }
+    /* نگهبان: برنامه نباید به هیچ قلمِ برنده‌ای ختم شود (قلم‌های سریع شمرده نمی‌شوند) */
+    const cutLeft = path.items.filter(
+      (i) => i.motion === 1 && !selPI.includes(i.id),
+    ).length;
+    if (!cutLeft) {
+      note(
+        "حذفِ همهٔ قلم‌های برنده مجاز نیست — دست‌کم یک قلم برنده باید بماند",
+      );
+      return;
+    }
+    const nb = deleteItems(path, selPI);
+    if (nb.items.length === path.items.length) {
+      note("چیزی حذف نشد — این خط‌ها را نمی‌توان از زنجیره بیرون کشید");
+      return;
+    }
+    setSelPI([]);
+    setSelPV([]);
+    applyPath(nb);
+  };
+  const delSelVerts = () => {
+    if (!path || !selPV.length) return;
+    const nb = deleteVerts(path, selPV);
+    setSelPV([]);
+    setSelPI([]);
+    applyPath(nb);
+  };
+  const addPointOn = (buf: PathBuf, itemId: number, at: XY) => {
+    const r = splitItem(buf, itemId, at);
+    if (!r.added) {
+      note("نقطه روی سرِ همین خط بود — لازم به افزودن نیست");
+      return;
+    }
+    onPathBuf(r.buf, true);
+    setSelPI([]);
+    setSelPV([r.vid]);
+    note("نقطه افزوده شد ✓ خط به دو خط تقسیم گردید — حالا بکشید جابه‌ایش کنید");
+  };
+  const weldNow = () => {
+    if (!path) return;
+    const iss = pathIssues(path);
+    if (!iss.gaps.length) {
+      note("شکافی نیست — مسیر پیوسته است");
+      return;
+    }
+    applyPath(weldGaps(path));
+    note("شکاف‌ها بسته شد ✓ مسیر پیوسته است");
+  };
+  const straightenNow = () => {
+    if (!path || !selPI.length) return;
+    applyPath(straightenItems(path, selPI));
+    note("منحنی‌های انتخابی به خطِ راست تبدیل شدند");
+  };
+  const applyDelta = () => {
+    if (!path) return;
+    const dz = parseFloat(
+      delta.z.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))),
+    );
+    const dx = parseFloat(
+      delta.x.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))),
+    );
+    if (!Number.isFinite(dz) && !Number.isFinite(dx)) {
+      note("مقدار جابه‌جایی را وارد کنید (مثلاً 0.5-)");
+      return;
+    }
+    const ids = selPV.length ? selPV : [];
+    if (!ids.length) {
+      note("اول نقطه‌ها را انتخاب کنید");
+      return;
+    }
+    const pos: Record<number, XY> = {};
+    for (const id of ids) {
+      const v = path.verts[id];
+      pos[id] = {
+        z: v.z + (Number.isFinite(dz) ? dz : 0),
+        x: Math.max(0, v.x + (Number.isFinite(dx) ? dx : 0)),
+      };
+    }
+    applyPath(moveVerts(path, pos));
+    setDelta({ z: "", x: "" });
+  };
+  const setVertExact = (id: number, p: Partial<XY>) => {
+    if (!path) return;
+    const v = path.verts[id];
+    if (!v) return;
+    applyPath(
+      moveVerts(path, { [id]: { z: p.z ?? v.z, x: Math.max(0, p.x ?? v.x) } }),
+    );
+  };
+  const choosePick = (row: PickRow | undefined) => {
+    if (!row || !path) return;
+    setPicker(null);
+    if (row.kind === "item") {
+      const it = path.items.find((i) => i.id === row.id);
+      setSelPI([row.id]);
+      setSelPV(
+        it ? [it.va, it.vb].filter((v, kk, arr) => arr.indexOf(v) === kk) : [],
+      );
+    } else {
+      setSelPV([row.id]);
+      setSelPI([]);
+    }
+  };
+  /* گزینه‌های «روی‌افتاده» زیر نشانگر. روی رأسِ معمولیِ یک Polyline دقیقاً دو
+     قلم به هم می‌رسند و این ابهام نیست (کلیک همان رأس را می‌گیرد)؛ کادر انتخاب
+     فقط وقتی باز می‌شود که چند رأس روی هم افتاده باشند یا قلمِ دیگری هم از همان
+     نقطه بگذرد (مثلاً پاسِ همپوشان). */
+  const pickRowsFor = (buf: PathBuf, c: Cam, loc: { x: number; y: number }) => {
+    const vs = vertsAtPx(c, buf, loc.x, loc.y);
+    const is = itemsAtPx(c, buf, loc.x, loc.y);
+    const rows: PickRow[] = vs.map((q) => ({
+      kind: "vert" as const,
+      id: q.id,
+      d: q.d,
+      ...vertLabel(buf, q.id),
+    }));
+    for (const q of is) {
+      const it = buf.items.find((i) => i.id === q.id);
+      if (vs.length === 1 && it && (it.va === vs[0].id || it.vb === vs[0].id))
+        continue;
+      rows.push({
+        kind: "item" as const,
+        id: q.id,
+        d: q.d,
+        ...(it ? itemLabel(buf, it) : { t: "قلم", sub: "" }),
+      });
+    }
+    return rows.sort((a, b) => a.d - b.d).slice(0, 6);
+  };
+  /** رأس‌های درگ‌شدۀ یک قلم: دو سرِ خط + دسته‌های منحنی */
+  const itemVertIds = (it: PathItem): number[] =>
+    [it.va, it.vb, it.ha, it.hb].filter((v): v is number => v != null);
+  const pathMarqHits = (
+    buf: PathBuf,
+    r: { z0: number; z1: number; r0: number; r1: number },
+  ) => {
+    const ids: number[] = [];
+    const vids: number[] = [];
+    const inR = (p: XY) =>
+      p.z >= r.z0 - 1e-9 &&
+      p.z <= r.z1 + 1e-9 &&
+      p.x / 2 >= r.r0 - 1e-9 &&
+      p.x / 2 <= r.r1 + 1e-9;
+    const { knots } = pathKnots(buf);
+    for (const v of buf.verts) if (knots.has(v.id) && inR(v)) vids.push(v.id);
+    for (const it of buf.items) {
+      if (!pathVisible(it)) continue;
+      const poly = itemGeo(buf, it);
+      if (poly.every(inR) || poly.some(inR)) ids.push(it.id);
+    }
+    return { ids, vids };
+  };
+
+  const pathIssuesNow = path ? pathIssues(path) : null;
+  const pathStatsNow = path ? pathStats(path) : null;
+
   const L = params.blankL;
   const R = params.blankD / 2;
 
   const handleKey = (segId: number, part: "a" | "b") => `${segId}:${part}`;
 
-  const screenPt = (c: Cam, z: number, r: number): [number, number] => [c.ox + z * c.s, c.oy - r * c.s];
-  const worldPt = (c: Cam, sx: number, sy: number): SPoint => ({ z: (sx - c.ox) / c.s, r: (c.oy - sy) / c.s });
+  const screenPt = (c: Cam, z: number, r: number): [number, number] => [
+    c.ox + z * c.s,
+    c.oy - r * c.s,
+  ];
+  const worldPt = (c: Cam, sx: number, sy: number): SPoint => ({
+    z: (sx - c.ox) / c.s,
+    r: (c.oy - sy) / c.s,
+  });
 
   const fit = (w: number, h: number): Cam => {
     const pad = 60;
@@ -327,7 +896,8 @@ export default function ProfileEditor({
     const ro = new ResizeObserver(() => {
       const r = el.getBoundingClientRect();
       setSize({ w: r.width, h: r.height });
-      if (r.width > 40 && r.height > 40) setCam((c) => c ?? fit(r.width, r.height));
+      if (r.width > 40 && r.height > 40)
+        setCam((c) => c ?? fit(r.width, r.height));
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -361,6 +931,8 @@ export default function ProfileEditor({
     const onKey = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
+      /* در حالت ویرایش مسیر، میانبرهای ویرایشگر پروفایل کار نمی‌کنند */
+      if (pathOpen) return;
 
       const k = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && k === "z" && !e.shiftKey) {
@@ -368,7 +940,10 @@ export default function ProfileEditor({
         onUndo();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && (k === "y" || (e.shiftKey && k === "z"))) {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (k === "y" || (e.shiftKey && k === "z"))
+      ) {
         e.preventDefault();
         onRedo();
         return;
@@ -430,7 +1005,17 @@ export default function ProfileEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, marquee]);
+  }, [
+    draft,
+    selected,
+    tool,
+    isolatedOpId,
+    segs,
+    selFilter,
+    selPoints,
+    marquee,
+    pathOpen,
+  ]);
 
   /* نگه‌داشتن Space برای پن موقت */
   useEffect(() => {
@@ -457,11 +1042,104 @@ export default function ProfileEditor({
     };
   }, []);
 
+  /* میانبرهای اختصاصیِ حالت ویرایش مسیر */
+  useEffect(() => {
+    if (!pathOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      const tgt = e.target as HTMLElement;
+      if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
+      const k = e.key.toLowerCase();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        if (picker) {
+          setPicker(null);
+          return;
+        }
+        if (marquee) {
+          drag.current = null;
+          setMarquee(null);
+          return;
+        }
+        if (selPI.length || selPV.length) {
+          setSelPI([]);
+          setSelPV([]);
+          return;
+        }
+        onPathConfirm();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && k === "z") {
+        e.preventDefault();
+        if (e.shiftKey) onRedo();
+        else onUndo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && k === "y") {
+        e.preventDefault();
+        onRedo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && k === "a") {
+        e.preventDefault();
+        const ids = path
+          ? path.items.filter((i) => i.motion === 1).map((i) => i.id)
+          : [];
+        setSelPI(ids);
+        setSelPV([]);
+        return;
+      }
+      if (e.key === "Tab" && picker) {
+        e.preventDefault();
+        setPicker((pk) =>
+          pk
+            ? {
+                ...pk,
+                act:
+                  (pk.act + (e.shiftKey ? pk.rows.length - 1 : 1)) %
+                  pk.rows.length,
+              }
+            : pk,
+        );
+        return;
+      }
+      if (e.key === "Enter" && picker) {
+        e.preventDefault();
+        choosePick(picker.rows[picker.act]);
+        return;
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        if (selPI.length) delSelItems();
+        else if (selPV.length) delSelVerts();
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (k === "n") {
+        setPTool((t) => (t === "add" ? "select" : "add"));
+        return;
+      }
+      if (k === "v") {
+        setPTool("select");
+        return;
+      }
+      if (k === "e") weldNow();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathOpen, path, picker, marquee, selPI, selPV]);
+
   /* ---------- اسنپ ---------- */
   const snapPts = useMemo(() => snapCandidates(segs), [segs]);
-  const crossPts = useMemo(() => (settings.smartSnap ? intersectionPoints(segs) : []), [segs, settings.smartSnap]);
+  const crossPts = useMemo(
+    () => (settings.smartSnap ? intersectionPoints(segs) : []),
+    [segs, settings.smartSnap],
+  );
 
-  const applySnap = (raw: SPoint, skipIds: number[] = []): { p: SPoint; hit: SnapPoint | null } => {
+  const applySnap = (
+    raw: SPoint,
+    skipIds: number[] = [],
+  ): { p: SPoint; hit: SnapPoint | null } => {
     const c = camRef.current;
     if (!c) return { p: raw, hit: null };
     const tolW = 11 / c.s; // ۱۱ پیکسل
@@ -478,14 +1156,21 @@ export default function ProfileEditor({
       }
       if (best) return { p: { ...best.p }, hit: best };
       /* چسبیدن به محور دوران */
-      if (Math.abs(raw.r) < tolW) return { p: { z: raw.z, r: 0 }, hit: { p: { z: raw.z, r: 0 }, type: "axis" } };
+      if (Math.abs(raw.r) < tolW)
+        return {
+          p: { z: raw.z, r: 0 },
+          hit: { p: { z: raw.z, r: 0 }, type: "axis" },
+        };
     }
     const g = settings.snap;
     if (g > 0) {
       const p = { z: Math.round(raw.z / g) * g, r: Math.round(raw.r / g) * g };
       return { p, hit: { p, type: "grid" } };
     }
-    return { p: { z: Math.round(raw.z * 10) / 10, r: Math.round(raw.r * 10) / 10 }, hit: null };
+    return {
+      p: { z: Math.round(raw.z * 10) / 10, r: Math.round(raw.r * 10) / 10 },
+      hit: null,
+    };
   };
 
   const toWorld = (clientX: number, clientY: number): SPoint => {
@@ -494,7 +1179,10 @@ export default function ProfileEditor({
     return worldPt(camRef.current!, clientX - rect.left, clientY - rect.top);
   };
 
-  const clampPt = (p: SPoint): SPoint => ({ z: Math.min(L, Math.max(0, p.z)), r: Math.min(R, Math.max(0, p.r)) });
+  const clampPt = (p: SPoint): SPoint => ({
+    z: Math.min(L, Math.max(0, p.z)),
+    r: Math.min(R, Math.max(0, p.r)),
+  });
 
   /* ---------- تشخیص برخورد ---------- */
   const hitSeg = (w: SPoint): SketchSeg | null => {
@@ -592,7 +1280,10 @@ export default function ProfileEditor({
    * یعنی «اتصال» = همان مختصاتِ مشترک (Join)؛ اگر کاربر با راست‌کلیک نقطه را جدا
    * کند یا المان همسایه را جابه‌جا کند (تا دیگر هم‌مختصات نمانند)، از خوشه خارج می‌شود.
    */
-  const clusterOf = (segId: number, part: "a" | "b"): { segId: number; part: "a" | "b" }[] => {
+  const clusterOf = (
+    segId: number,
+    part: "a" | "b",
+  ): { segId: number; part: "a" | "b" }[] => {
     if (separated.has(handleKey(segId, part))) return [{ segId, part }];
     const seg = segs.find((s) => s.id === segId);
     if (!seg) return [{ segId, part }];
@@ -601,7 +1292,8 @@ export default function ProfileEditor({
     for (const s of segs) {
       for (const pp of ["a", "b"] as const) {
         if (separated.has(handleKey(s.id, pp))) continue;
-        if (s[pp].z === origin.z && s[pp].r === origin.r) out.push({ segId: s.id, part: pp });
+        if (s[pp].z === origin.z && s[pp].r === origin.r)
+          out.push({ segId: s.id, part: pp });
       }
     }
     return out.length ? out : [{ segId, part }];
@@ -612,29 +1304,46 @@ export default function ProfileEditor({
    * باشد، نباید با کشیدن بدنه جابه‌جا شود تا اتصال پاره نشود. ویرایش نقاط و
    * دسته‌ها همچنان آزاد است. برای جابه‌جایی باید کل زنجیرهٔ متصل با هم انتخاب شود.
    */
-  const endAttachedOutside = (segId: number, part: "a" | "b", allowed: number[]): boolean => {
+  const endAttachedOutside = (
+    segId: number,
+    part: "a" | "b",
+    allowed: number[],
+  ): boolean => {
     if (separated.has(handleKey(segId, part))) return false;
     const cluster = clusterOf(segId, part);
     return cluster.some((c) => c.segId !== segId && !allowed.includes(c.segId));
   };
   const segLocked = (segId: number, allowed: number[]): boolean =>
-    endAttachedOutside(segId, "a", allowed) || endAttachedOutside(segId, "b", allowed);
+    endAttachedOutside(segId, "a", allowed) ||
+    endAttachedOutside(segId, "b", allowed);
 
   /* ---------- انتخاب ---------- */
   const filterAllows = (kind: SketchKind) => selFilter[kind];
 
-  const pointInRectW = (p: SPoint, r: { z0: number; z1: number; r0: number; r1: number }) =>
-    p.z >= r.z0 - 1e-9 && p.z <= r.z1 + 1e-9 && p.r >= r.r0 - 1e-9 && p.r <= r.r1 + 1e-9;
+  const pointInRectW = (
+    p: SPoint,
+    r: { z0: number; z1: number; r0: number; r1: number },
+  ) =>
+    p.z >= r.z0 - 1e-9 &&
+    p.z <= r.z1 + 1e-9 &&
+    p.r >= r.r0 - 1e-9 &&
+    p.r <= r.r1 + 1e-9;
 
   const segSegInt = (p1: SPoint, p2: SPoint, p3: SPoint, p4: SPoint) => {
     const d = (p2.z - p1.z) * (p4.r - p3.r) - (p2.r - p1.r) * (p4.z - p3.z);
     if (Math.abs(d) < 1e-12) return false;
-    const t = ((p3.z - p1.z) * (p4.r - p3.r) - (p3.r - p1.r) * (p4.z - p3.z)) / d;
-    const u = ((p3.z - p1.z) * (p2.r - p1.r) - (p3.r - p1.r) * (p2.z - p1.z)) / d;
+    const t =
+      ((p3.z - p1.z) * (p4.r - p3.r) - (p3.r - p1.r) * (p4.z - p3.z)) / d;
+    const u =
+      ((p3.z - p1.z) * (p2.r - p1.r) - (p3.r - p1.r) * (p2.z - p1.z)) / d;
     return t >= -1e-9 && t <= 1 + 1e-9 && u >= -1e-9 && u <= 1 + 1e-9;
   };
 
-  const segHitsRect = (s: SketchSeg, r: { z0: number; z1: number; r0: number; r1: number }, mode: "window" | "crossing") => {
+  const segHitsRect = (
+    s: SketchSeg,
+    r: { z0: number; z1: number; r0: number; r1: number },
+    mode: "window" | "crossing",
+  ) => {
     const poly = s.kind === "line" ? [s.a, s.b] : segPoints(s, 48);
     if (mode === "window") return poly.every((p) => pointInRectW(p, r));
     if (poly.some((p) => pointInRectW(p, r))) return true;
@@ -654,7 +1363,7 @@ export default function ProfileEditor({
 
   const marqueeHitIds = (
     rectW: { z0: number; z1: number; r0: number; r1: number },
-    mode: "window" | "crossing"
+    mode: "window" | "crossing",
   ): number[] => {
     const out: number[] = [];
     for (const s of segs) {
@@ -667,9 +1376,12 @@ export default function ProfileEditor({
   /* نقاط انتهایی، نقطهٔ کمان و دسته‌های کنترلِ داخل باکس.
      دسته‌های کنترل فقط برای المان‌هایی گزینش می‌شوند که فعال‌اند (نقطه‌شان قبلاً
      انتخاب شده یا خود المان انتخاب شده است). */
-  const marqueeHitPoints = (
-    rectW: { z0: number; z1: number; r0: number; r1: number }
-  ): { segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[] => {
+  const marqueeHitPoints = (rectW: {
+    z0: number;
+    z1: number;
+    r0: number;
+    r1: number;
+  }): { segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[] => {
     const out: { segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[] = [];
     for (const s of segs) {
       if (!filterAllows(s.kind)) continue;
@@ -680,7 +1392,8 @@ export default function ProfileEditor({
       if (selPointSegIds.includes(s.id) || selected.includes(s.id)) {
         for (const pp of ["c1", "c2"] as const) {
           const pt = s[pp];
-          if (pt && pointInRectW(pt, rectW)) out.push({ segId: s.id, part: pp });
+          if (pt && pointInRectW(pt, rectW))
+            out.push({ segId: s.id, part: pp });
         }
       }
     }
@@ -722,7 +1435,8 @@ export default function ProfileEditor({
     });
   };
 
-  const eligibleIds = () => segs.filter((s) => filterAllows(s.kind)).map((s) => s.id);
+  const eligibleIds = () =>
+    segs.filter((s) => filterAllows(s.kind)).map((s) => s.id);
   const selectAllEligible = () => onSelected(eligibleIds());
   const invertSelection = () => {
     const elig = eligibleIds();
@@ -757,14 +1471,22 @@ export default function ProfileEditor({
     for (const sp of viaPoints) {
       const seg = next.find((s) => s.id === sp.segId);
       if (seg && seg.kind === "arc" && !removedSegIds.has(seg.id)) {
-        next = next.map((s) => (s.id === seg.id ? ({ id: s.id, kind: "line", a: s.a, b: s.b } as SketchSeg) : s));
-        nextSelPoints = nextSelPoints.filter((p) => !(p.segId === seg.id && p.part === "via"));
+        next = next.map((s) =>
+          s.id === seg.id
+            ? ({ id: s.id, kind: "line", a: s.a, b: s.b } as SketchSeg)
+            : s,
+        );
+        nextSelPoints = nextSelPoints.filter(
+          (p) => !(p.segId === seg.id && p.part === "via"),
+        );
       }
     }
 
     /* حذف نقاط انتهایی با ادغام المان‌های همسایه */
     for (const sp of endPoints) {
-      const refSeg = next.find((s) => s.id === sp.segId && !removedSegIds.has(s.id));
+      const refSeg = next.find(
+        (s) => s.id === sp.segId && !removedSegIds.has(s.id),
+      );
       if (!refSeg) continue;
       const origin = refSeg[sp.part];
       if (!origin) continue;
@@ -774,7 +1496,8 @@ export default function ProfileEditor({
         if (removedSegIds.has(s.id)) continue;
         for (const pp of ["a", "b"] as const) {
           if (separated.has(handleKey(s.id, pp))) continue;
-          if (s[pp].z === origin.z && s[pp].r === origin.r) owners.push({ seg: s, part: pp });
+          if (s[pp].z === origin.z && s[pp].r === origin.r)
+            owners.push({ seg: s, part: pp });
         }
       }
 
@@ -788,18 +1511,29 @@ export default function ProfileEditor({
           newSeg = { id: newSegId(), kind: "line", a: free1, b: free2 };
         } else {
           const [h1, h2] = defaultCubicHandles(free1, free2);
-          newSeg = { id: newSegId(), kind: "cubic", a: free1, b: free2, c1: h1, c2: h2 };
+          newSeg = {
+            id: newSegId(),
+            kind: "cubic",
+            a: free1,
+            b: free2,
+            c1: h1,
+            c2: h2,
+          };
         }
         next = next.filter((s) => s.id !== o1.seg.id && s.id !== o2.seg.id);
         removedSegIds.add(o1.seg.id);
         removedSegIds.add(o2.seg.id);
         next.push(newSeg);
-        nextSelPoints = nextSelPoints.filter((p) => p.segId !== o1.seg.id && p.segId !== o2.seg.id);
+        nextSelPoints = nextSelPoints.filter(
+          (p) => p.segId !== o1.seg.id && p.segId !== o2.seg.id,
+        );
       } else if (owners.length === 1) {
         /* نقطه فقط متعلق به یک المان — حذف همان المان */
         next = next.filter((s) => s.id !== owners[0].seg.id);
         removedSegIds.add(owners[0].seg.id);
-        nextSelPoints = nextSelPoints.filter((p) => p.segId !== owners[0].seg.id);
+        nextSelPoints = nextSelPoints.filter(
+          (p) => p.segId !== owners[0].seg.id,
+        );
       }
     }
 
@@ -809,7 +1543,9 @@ export default function ProfileEditor({
 
   const duplicateSelected = () => {
     if (!selected.length) return;
-    const copies = segs.filter((s) => selected.includes(s.id)).map((s) => cloneSeg(s, 0, Math.min(6, R * 0.12)));
+    const copies = segs
+      .filter((s) => selected.includes(s.id))
+      .map((s) => cloneSeg(s, 0, Math.min(6, R * 0.12)));
     commit([...segs, ...copies]);
     onSelected(copies.map((c) => c.id));
   };
@@ -820,7 +1556,11 @@ export default function ProfileEditor({
   };
 
   /* ویرایش مختصات یک نقطهٔ مستقل */
-  const patchPoint = (segId: number, part: "a" | "b" | "c1" | "c2" | "via", patch: Partial<SPoint>) => {
+  const patchPoint = (
+    segId: number,
+    part: "a" | "b" | "c1" | "c2" | "via",
+    patch: Partial<SPoint>,
+  ) => {
     const next = segs.map((s) => {
       if (s.id !== segId) return s;
       const cur = s[part];
@@ -831,7 +1571,10 @@ export default function ProfileEditor({
   };
 
   /* المان‌هایی که حداقل یک نقطه‌شان مستقل انتخاب شده — برای هایلایت منحنی‌های متصل */
-  const selPointSegIds = useMemo(() => [...new Set(selPoints.map((p) => p.segId))], [selPoints]);
+  const selPointSegIds = useMemo(
+    () => [...new Set(selPoints.map((p) => p.segId))],
+    [selPoints],
+  );
 
   /* با حذف المان یا تغییر نوع، نقاط انتخابیِ نامعتبر پاک شوند */
   useEffect(() => {
@@ -871,7 +1614,12 @@ export default function ProfileEditor({
     }
     if (nearest) {
       const target = nearest;
-      onSegs(segs.map((s) => (s.id === segId ? ({ ...s, [part]: { ...target } } as SketchSeg) : s)), true);
+      onSegs(
+        segs.map((s) =>
+          s.id === segId ? ({ ...s, [part]: { ...target } } as SketchSeg) : s,
+        ),
+        true,
+      );
     }
     setSeparated((prev) => {
       const n = new Set(prev);
@@ -887,19 +1635,67 @@ export default function ProfileEditor({
 
   /* ---------- تعامل ماوس ---------- */
   const drag = useRef<
-    | { mode: "pan"; sx: number; sy: number; cam0: Cam; moved: boolean; btn: number }
-    | { mode: "handle"; ref: HandleRef; cluster: { segId: number; part: HandleRef["part"] }[]; moved: boolean }
-    | { mode: "move"; ids: number[]; clicked: number; last: SPoint; sx: number; sy: number; moved: boolean }
+    | {
+        mode: "pan";
+        sx: number;
+        sy: number;
+        cam0: Cam;
+        moved: boolean;
+        btn: number;
+      }
+    | {
+        mode: "handle";
+        ref: HandleRef;
+        cluster: { segId: number; part: HandleRef["part"] }[];
+        moved: boolean;
+      }
+    | {
+        mode: "move";
+        ids: number[];
+        clicked: number;
+        last: SPoint;
+        sx: number;
+        sy: number;
+        moved: boolean;
+      }
     | { mode: "draw"; sx: number; sy: number; cam0: Cam; moved: boolean }
-    | { mode: "marquee"; sx: number; sy: number; base: number[]; moved: boolean }
+    | {
+        mode: "marquee";
+        sx: number;
+        sy: number;
+        base: number[];
+        moved: boolean;
+      }
     | { mode: "rwait"; sx: number; sy: number; cam0: Cam; moved: boolean }
+    | {
+        mode: "pmove";
+        vids: number[];
+        prim: number;
+        start: XY;
+        base: Map<number, XY>;
+        sx: number;
+        sy: number;
+        moved: boolean;
+      }
+    | {
+        mode: "pmarq";
+        sx: number;
+        sy: number;
+        base: number[];
+        baseV: number[];
+        moved: boolean;
+      }
     | null
   >(null);
 
-  const toLocal = (clientX: number, clientY: number): { x: number; y: number } => {
+  const toLocal = (
+    clientX: number,
+    clientY: number,
+  ): { x: number; y: number } => {
     const rect = svgRef.current!.getBoundingClientRect();
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
+  const loc0 = (clientX: number, clientY: number) => toLocal(clientX, clientY);
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!camRef.current) return;
@@ -911,31 +1707,146 @@ export default function ProfileEditor({
     /* دکمهٔ وسط همیشه پن است (هر ابزاری) */
     if (e.button === 1) {
       e.preventDefault();
-      drag.current = { mode: "pan", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false, btn: 1 };
+      drag.current = {
+        mode: "pan",
+        sx: e.clientX,
+        sy: e.clientY,
+        cam0: camRef.current,
+        moved: false,
+        btn: 1,
+      };
       return;
     }
     /* دکمهٔ راست: درگ = پن، کلیک بدون حرکت = منو/لغو (در pointerup تصمیم گرفته می‌شود) */
     if (e.button === 2) {
-      drag.current = { mode: "rwait", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false };
+      drag.current = {
+        mode: "rwait",
+        sx: e.clientX,
+        sy: e.clientY,
+        cam0: camRef.current,
+        moved: false,
+      };
       return;
     }
 
     if (tool !== "select") {
       /* حالت ترسیم — کلیک بدون حرکت نقطه ثبت می‌کند، کشیدن نما را جابه‌جا می‌کند */
-      drag.current = { mode: "draw", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false };
+      drag.current = {
+        mode: "draw",
+        sx: e.clientX,
+        sy: e.clientY,
+        cam0: camRef.current,
+        moved: false,
+      };
       return;
     }
 
     /* پن صریح (دکمهٔ دست یا Space) بر باکس انتخاب اولویت دارد */
     if (panMode || spaceRef.current) {
-      drag.current = { mode: "pan", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false, btn: 0 };
+      drag.current = {
+        mode: "pan",
+        sx: e.clientX,
+        sy: e.clientY,
+        cam0: camRef.current,
+        moved: false,
+        btn: 0,
+      };
+      return;
+    }
+
+    /* ---------- حالت ویرایش مسیر: انتخاب/درگ/افزودن نقطه روی Polyline ---------- */
+    if (pathOpen && path) {
+      const c = camRef.current;
+      if (!c) return;
+      const loc = toLocal(e.clientX, e.clientY);
+      const buf = path;
+      if (pTool === "add") {
+        const is = itemsAtPx(c, buf, loc.x, loc.y);
+        if (!is.length) {
+          note("روی یک خط کلیک کنید تا نقطه‌ای رویش افزوده شود");
+          return;
+        }
+        if (is.length > 1) {
+          setPicker({
+            x: loc.x,
+            y: loc.y,
+            rows: is.map((q) => {
+              const it = buf.items.find((i) => i.id === q.id);
+              return {
+                kind: "item" as const,
+                id: q.id,
+                d: q.d,
+                ...(it ? itemLabel(buf, it) : { t: "قلم", sub: "" }),
+              };
+            }),
+            act: 0,
+          });
+        }
+        addPointOn(buf, is[0].id, wOf(c, loc.x, loc.y));
+        return;
+      }
+      const rows = pickRowsFor(buf, c, loc);
+      if (!rows.length) {
+        drag.current = {
+          mode: "pmarq",
+          sx: loc.x,
+          sy: loc.y,
+          base: [...selPI],
+          baseV: [...selPV],
+          moved: false,
+        };
+        setMarquee({
+          x0: loc.x,
+          y0: loc.y,
+          x1: loc.x,
+          y1: loc.y,
+          add: e.shiftKey,
+          remove: e.ctrlKey || e.metaKey,
+        });
+        setMarqP(null);
+        return;
+      }
+      /* چند خط/نقطه روی هم → کادر انتخاب؛ نزدیک‌ترین فعلاً انتخاب می‌شود */
+      if (rows.length > 1) setPicker({ x: loc.x, y: loc.y, rows, act: 0 });
+      const top = rows[0];
+      let vids: number[] = [];
+      if (top.kind === "vert") {
+        vids = e.shiftKey ? [...new Set([...selPV, top.id])] : [top.id];
+        if (!picker) {
+          setSelPV(vids);
+          setSelPI([]);
+        }
+      } else {
+        const it = buf.items.find((i) => i.id === top.id);
+        if (!it) return;
+        vids = itemVertIds(it);
+        if (!picker) {
+          setSelPI(e.shiftKey ? [...new Set([...selPI, it.id])] : [it.id]);
+          setSelPV(top.d > 4 ? vids : []);
+        }
+      }
+      const base = new Map<number, XY>();
+      for (const id of vids)
+        if (buf.verts[id])
+          base.set(id, { z: buf.verts[id].z, x: buf.verts[id].x });
+      drag.current = {
+        mode: "pmove",
+        vids,
+        prim: top.kind === "vert" ? top.id : vids[0],
+        start: wOf(c, loc.x, loc.y),
+        base,
+        sx: loc.x,
+        sy: loc.y,
+        moved: false,
+      };
       return;
     }
 
     const h = hitHandle(raw);
     if (h) {
       /* نقاط انتهاییِ هم‌مکان به‌صورت یک خوشه با هم جابه‌جا می‌شوند؛ انتخاب نقطه در pointerup */
-      const cluster = h.part === "a" || h.part === "b" ? clusterOf(h.segId, h.part) : [h];
+      const cluster =
+        h.part === "a" || h.part === "b" ? clusterOf(h.segId, h.part) : [h];
       drag.current = { mode: "handle", ref: h, cluster, moved: false };
       return;
     }
@@ -945,28 +1856,75 @@ export default function ProfileEditor({
       /* المانِ متصل (از یک یا هر دو سر به المان خارج از گروه) قفل است و درگ نمی‌شود */
       const allowed = selected.includes(s.id) ? [...selected] : [s.id];
       if (allowed.some((id) => segLocked(id, allowed))) {
-        if (e.shiftKey) onSelected(selected.includes(s.id) ? selected.filter((x) => x !== s.id) : [...selected, s.id]);
-        else if (e.ctrlKey || e.metaKey) onSelected(selected.filter((x) => x !== s.id));
+        if (e.shiftKey)
+          onSelected(
+            selected.includes(s.id)
+              ? selected.filter((x) => x !== s.id)
+              : [...selected, s.id],
+          );
+        else if (e.ctrlKey || e.metaKey)
+          onSelected(selected.filter((x) => x !== s.id));
         else if (!selected.includes(s.id)) onSelected([s.id]);
         return;
       }
       /* تصمیم نهایی کلیک در pointerup گرفته می‌شود تا درگ گروهی ممکن باشد */
-      drag.current = { mode: "move", ids: [...selected], clicked: s.id, last: raw, sx: e.clientX, sy: e.clientY, moved: false };
+      drag.current = {
+        mode: "move",
+        ids: [...selected],
+        clicked: s.id,
+        last: raw,
+        sx: e.clientX,
+        sy: e.clientY,
+        moved: false,
+      };
       return;
     }
     /* فضای خالی: شروع باکس انتخابگر (پاک‌سازی در pointerup اگر کلیک بود) */
     const loc = toLocal(e.clientX, e.clientY);
-    drag.current = { mode: "marquee", sx: loc.x, sy: loc.y, base: [...selected], moved: false };
-    setMarquee({ x0: loc.x, y0: loc.y, x1: loc.x, y1: loc.y, add: e.shiftKey, remove: e.ctrlKey || e.metaKey });
+    drag.current = {
+      mode: "marquee",
+      sx: loc.x,
+      sy: loc.y,
+      base: [...selected],
+      moved: false,
+    };
+    setMarquee({
+      x0: loc.x,
+      y0: loc.y,
+      x1: loc.x,
+      y1: loc.y,
+      add: e.shiftKey,
+      remove: e.ctrlKey || e.metaKey,
+    });
     setMarqueeHits([]);
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const raw = toWorld(e.clientX, e.clientY);
-    if (readoutRef.current) readoutRef.current.textContent = `X ${raw.z.toFixed(1)}   Y⌀ ${(raw.r * 2).toFixed(1)}`;
+    if (readoutRef.current)
+      readoutRef.current.textContent = `X ${raw.z.toFixed(1)}   Y⌀ ${(raw.r * 2).toFixed(1)}`;
 
     const d = drag.current;
     if (!d) {
+      /* حالت ویرایش مسیر: هاور روی خط/نقطهٔ مسیر */
+      if (pathOpen && path) {
+        const c = camRef.current;
+        if (c) {
+          const loc = toLocal(e.clientX, e.clientY);
+          const vs = vertsAtPx(c, path, loc.x, loc.y);
+          if (vs.length) {
+            setHoverPV(vs[0].id);
+            setHoverPI(null);
+          } else {
+            const is = itemsAtPx(c, path, loc.x, loc.y);
+            setHoverPI(is.length ? is[0].id : null);
+            setHoverPV(null);
+          }
+        }
+        setHoverId(null);
+        setSnapHit(null);
+        return;
+      }
       if (tool === "select") {
         /* اگر نشانگر روی خودِ نقطه باشد، المان زیرین hover نشود تا فقط نقطه سفید شود */
         const onHandle = hitHandle(raw) != null;
@@ -987,7 +1945,11 @@ export default function ProfileEditor({
 
     if (d.mode === "pan") {
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
-      setCam({ s: d.cam0.s, ox: d.cam0.ox + (e.clientX - d.sx), oy: d.cam0.oy + (e.clientY - d.sy) });
+      setCam({
+        s: d.cam0.s,
+        ox: d.cam0.ox + (e.clientX - d.sx),
+        oy: d.cam0.oy + (e.clientY - d.sy),
+      });
       return;
     }
 
@@ -995,8 +1957,81 @@ export default function ProfileEditor({
       /* راست‌درگ = پن؛ اگر حرکت نکرد، در pointerup به‌عنوان کلیک‌راست عمل می‌شود */
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4) {
         d.moved = true;
-        drag.current = { mode: "pan", sx: d.sx, sy: d.sy, cam0: d.cam0, moved: true, btn: 2 };
-        setCam({ s: d.cam0.s, ox: d.cam0.ox + (e.clientX - d.sx), oy: d.cam0.oy + (e.clientY - d.sy) });
+        drag.current = {
+          mode: "pan",
+          sx: d.sx,
+          sy: d.sy,
+          cam0: d.cam0,
+          moved: true,
+          btn: 2,
+        };
+        setCam({
+          s: d.cam0.s,
+          ox: d.cam0.ox + (e.clientX - d.sx),
+          oy: d.cam0.oy + (e.clientY - d.sy),
+        });
+      }
+      return;
+    }
+
+    if (d.mode === "pmove") {
+      if (
+        Math.hypot(
+          loc0(e.clientX, e.clientY).x - d.sx,
+          loc0(e.clientX, e.clientY).y - d.sy,
+        ) > 3
+      )
+        d.moved = true;
+      if (!d.moved || !path) return;
+      const c = camRef.current!;
+      const loc = loc0(e.clientX, e.clientY);
+      const w = wOf(c, loc.x, loc.y);
+      const b0 = d.base.get(d.prim);
+      if (!b0) return;
+      let dz = w.z - d.start.z;
+      let dx = w.x - d.start.x;
+      /* مغناطیسِ دقت: هم‌راستایی با رأسِ دیگر / چسبیدن به پروفایل / محورِ دوران */
+      if (!e.altKey) {
+        const snapped = pathSnap(
+          path,
+          { z: b0.z + dz, x: Math.max(0, b0.x + dx) },
+          d.vids,
+        );
+        dz = snapped.z - b0.z;
+        dx = snapped.x - b0.x;
+      }
+      const pos: Record<number, XY> = {};
+      for (const id of d.vids) {
+        const b = d.base.get(id);
+        if (b) pos[id] = { z: b.z + dz, x: Math.max(0, b.x + dx) };
+      }
+      onPathBuf(moveVerts(path, pos), false);
+      return;
+    }
+
+    if (d.mode === "pmarq") {
+      const loc = loc0(e.clientX, e.clientY);
+      if (!d.moved && Math.hypot(loc.x - d.sx, loc.y - d.sy) < 4) return;
+      d.moved = true;
+      const c = camRef.current!;
+      setMarquee({
+        x0: d.sx,
+        y0: d.sy,
+        x1: loc.x,
+        y1: loc.y,
+        add: e.shiftKey,
+        remove: e.ctrlKey || e.metaKey,
+      });
+      if (path) {
+        const w0 = wOf(c, d.sx, d.sy);
+        const w1 = wOf(c, loc.x, loc.y);
+        const rectW = {
+          z0: Math.min(w0.z, w1.z),
+          z1: Math.max(w0.z, w1.z),
+          r0: Math.min(w0.x, w1.x) / 2,
+          r1: Math.max(w0.x, w1.x) / 2,
+        };
+        setMarqP(pathMarqHits(path, rectW));
       }
       return;
     }
@@ -1015,7 +2050,14 @@ export default function ProfileEditor({
         r1: Math.max(w0.r, w1.r),
       };
       const mode: "window" | "crossing" = loc.x >= d.sx ? "window" : "crossing";
-      setMarquee({ x0: d.sx, y0: d.sy, x1: loc.x, y1: loc.y, add: e.shiftKey, remove: e.ctrlKey || e.metaKey });
+      setMarquee({
+        x0: d.sx,
+        y0: d.sy,
+        x1: loc.x,
+        y1: loc.y,
+        add: e.shiftKey,
+        remove: e.ctrlKey || e.metaKey,
+      });
       setMarqueeHits(marqueeHitIds(rectW, mode));
       setMarqueePointHits(marqueeHitPoints(rectW));
       return;
@@ -1025,7 +2067,11 @@ export default function ProfileEditor({
       /* تا وقتی کاربر واقعاً نکشیده، فقط پیش‌نمایش به‌روز می‌شود */
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4) {
         d.moved = true;
-        setCam({ s: d.cam0.s, ox: d.cam0.ox + (e.clientX - d.sx), oy: d.cam0.oy + (e.clientY - d.sy) });
+        setCam({
+          s: d.cam0.s,
+          ox: d.cam0.ox + (e.clientX - d.sx),
+          oy: d.cam0.oy + (e.clientY - d.sy),
+        });
       } else if (tool === "split") {
         setCursor(nearestOnSketch(raw));
         setSnapHit(null);
@@ -1042,7 +2088,9 @@ export default function ProfileEditor({
       /* اگر نقطهٔ درگ‌شده جزو چند نقطهٔ مستقلِ انتخاب‌شده است، همه با هم جابه‌جا می‌شوند */
       const inMulti =
         selPoints.length > 1 &&
-        selPoints.some((sp) => sp.segId === d.ref.segId && sp.part === d.ref.part);
+        selPoints.some(
+          (sp) => sp.segId === d.ref.segId && sp.part === d.ref.part,
+        );
       const skipIds = inMulti
         ? [...new Set(selPoints.map((sp) => sp.segId))]
         : d.cluster.map((c) => c.segId);
@@ -1058,10 +2106,14 @@ export default function ProfileEditor({
           const dz = pt.z - refPt.z;
           const dr = pt.r - refPt.r;
           /* خوشهٔ هر نقطهٔ انتخابی جابه‌جا می‌شود تا اتصالِ نقاط هم‌مکان پاره نشود */
-          const toMove = new Map<string, { segId: number; part: "a" | "b" | "c1" | "c2" | "via" }>();
+          const toMove = new Map<
+            string,
+            { segId: number; part: "a" | "b" | "c1" | "c2" | "via" }
+          >();
           for (const sp of selPoints) {
             if (sp.part === "a" || sp.part === "b") {
-              for (const c of clusterOf(sp.segId, sp.part)) toMove.set(`${c.segId}:${c.part}`, c);
+              for (const c of clusterOf(sp.segId, sp.part))
+                toMove.set(`${c.segId}:${c.part}`, c);
             } else {
               toMove.set(`${sp.segId}:${sp.part}`, sp);
             }
@@ -1071,14 +2123,19 @@ export default function ProfileEditor({
               if (s.id !== m.segId) return s;
               const cur = s[m.part];
               if (!cur) return s;
-              return { ...s, [m.part]: { z: cur.z + dz, r: cur.r + dr } } as SketchSeg;
+              return {
+                ...s,
+                [m.part]: { z: cur.z + dz, r: cur.r + dr },
+              } as SketchSeg;
             });
           }
         }
       } else {
         /* جابه‌جایی هم‌زمان همهٔ نقاطِ خوشه تا اتصال حفظ شود */
         for (const h of d.cluster) {
-          next = next.map((s) => (s.id === h.segId ? ({ ...s, [h.part]: pt } as SketchSeg) : s));
+          next = next.map((s) =>
+            s.id === h.segId ? ({ ...s, [h.part]: pt } as SketchSeg) : s,
+          );
         }
       }
       onSegs(next, false);
@@ -1086,7 +2143,8 @@ export default function ProfileEditor({
     }
 
     if (d.mode === "move") {
-      if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 3) return;
+      if (!d.moved && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 3)
+        return;
       if (!d.moved) {
         /* شروع درگ: انتخابِ در حال حرکت مشخص می‌شود */
         d.moved = true;
@@ -1110,14 +2168,14 @@ export default function ProfileEditor({
       d.last = raw;
       onSegs(
         segs.map((s) => (d.ids.includes(s.id) ? moveSeg(s, dz, dr) : s)),
-        false
+        false,
       );
     }
   };
 
   /* بازکردن منوی اتصال/جداسازی نقطه در موقعیت صفحه */
   const openJoinMenu = (clientX: number, clientY: number) => {
-    if (tool !== "select") return;
+    if (tool !== "select" || pathOpen) return;
     const raw = toWorld(clientX, clientY);
     const h = hitHandle(raw);
     if (h && (h.part === "a" || h.part === "b")) {
@@ -1139,6 +2197,40 @@ export default function ProfileEditor({
     const d = drag.current;
     drag.current = null;
     setSnapHit(null);
+
+    /* --- حالت ویرایش مسیر: پایان درگ/باکس --- */
+    if (d?.mode === "pmove") {
+      if (d.moved && path) onPathBuf(path, true); // ثبت ژست در تاریخچۀ یکپارچه
+      return;
+    }
+    if (d?.mode === "pmarq") {
+      const loc = toLocal(e.clientX, e.clientY);
+      const wasClick = !d.moved && Math.hypot(loc.x - d.sx, loc.y - d.sy) < 4;
+      setMarquee(null);
+      if (wasClick) {
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          setSelPI([]);
+          setSelPV([]);
+        }
+        setMarqP(null);
+        return;
+      }
+      const hits = marqP ?? { ids: [], vids: [] };
+      const remove = e.ctrlKey || e.metaKey;
+      const add = e.shiftKey;
+      if (remove) {
+        setSelPI(d.base.filter((id) => !hits.ids.includes(id)));
+        setSelPV(d.baseV.filter((id) => !hits.vids.includes(id)));
+      } else if (add) {
+        setSelPI([...new Set([...d.base, ...hits.ids])]);
+        setSelPV([...new Set([...d.baseV, ...hits.vids])]);
+      } else {
+        setSelPI(hits.ids);
+        setSelPV(hits.vids);
+      }
+      setMarqP(null);
+      return;
+    }
 
     /* کلیک‌راست بدون درگ: در حالت ترسیم لغو پیش‌نویس، در انتخاب منوی اتصال */
     if (d?.mode === "rwait") {
@@ -1178,12 +2270,23 @@ export default function ProfileEditor({
       const remove = e.ctrlKey || e.metaKey;
       const add = e.shiftKey;
       if (remove) onSelected(d.base.filter((id) => !hits.includes(id)));
-      else if (add) onSelected([...d.base, ...hits.filter((id) => !d.base.includes(id))]);
+      else if (add)
+        onSelected([...d.base, ...hits.filter((id) => !d.base.includes(id))]);
       else onSelected(hits);
       /* انتخاب نقاط داخل باکس (با همان اصلاح‌کننده‌ها) */
-      const pkey = (p: { segId: number; part: string }) => `${p.segId}:${p.part}`;
-      if (remove) setSelPoints(selPoints.filter((p) => !pointHits.some((h) => pkey(h) === pkey(p))));
-      else if (add) setSelPoints([...selPoints, ...pointHits.filter((h) => !selPoints.some((p) => pkey(p) === pkey(h)))]);
+      const pkey = (p: { segId: number; part: string }) =>
+        `${p.segId}:${p.part}`;
+      if (remove)
+        setSelPoints(
+          selPoints.filter((p) => !pointHits.some((h) => pkey(h) === pkey(p))),
+        );
+      else if (add)
+        setSelPoints([
+          ...selPoints,
+          ...pointHits.filter(
+            (h) => !selPoints.some((p) => pkey(p) === pkey(h)),
+          ),
+        ]);
       else setSelPoints(pointHits);
       return;
     }
@@ -1191,13 +2294,18 @@ export default function ProfileEditor({
     if (d && (d.mode === "handle" || d.mode === "move")) {
       if (d.mode === "handle") {
         const ref = d.ref;
-        const pkey = (p: { segId: number; part: string }) => `${p.segId}:${p.part}`;
+        const pkey = (p: { segId: number; part: string }) =>
+          `${p.segId}:${p.part}`;
         const exists = selPoints.some((p) => pkey(p) === pkey(ref));
         if (d.moved) {
           onSegs(segs, true); // ثبت در تاریخچه
           if (!e.shiftKey && !exists) setSelPoints([ref]); // نقطهٔ درگ‌شده انتخاب بماند
         } else if (e.shiftKey) {
-          setSelPoints(exists ? selPoints.filter((p) => pkey(p) !== pkey(ref)) : [...selPoints, ref]);
+          setSelPoints(
+            exists
+              ? selPoints.filter((p) => pkey(p) !== pkey(ref))
+              : [...selPoints, ref],
+          );
         } else if (e.ctrlKey || e.metaKey) {
           setSelPoints(selPoints.filter((p) => pkey(p) !== pkey(ref)));
         } else {
@@ -1212,7 +2320,11 @@ export default function ProfileEditor({
       /* کلیک بدون درگ روی المان */
       const id = d.clicked;
       if (e.shiftKey) {
-        onSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+        onSelected(
+          selected.includes(id)
+            ? selected.filter((x) => x !== id)
+            : [...selected, id],
+        );
       } else if (e.ctrlKey || e.metaKey) {
         onSelected(selected.filter((x) => x !== id));
       } else {
@@ -1221,11 +2333,19 @@ export default function ProfileEditor({
       return;
     }
 
-    if (tool !== "select" && (!d || ((d.mode === "draw" || d.mode === "pan") && !d.moved))) {
+    if (
+      tool !== "select" &&
+      (!d || ((d.mode === "draw" || d.mode === "pan") && !d.moved))
+    ) {
       /* ابزار Split: قرار دادن نقطه تعیین‌کننده روی پروفیل */
       if (tool === "split") {
         const hit = nearestOnSketch(toWorld(e.clientX, e.clientY));
-        if (hit) onSplit({ enabled: true, z: Math.round(hit.z * 10) / 10, r: Math.round(hit.r * 10) / 10 });
+        if (hit)
+          onSplit({
+            enabled: true,
+            z: Math.round(hit.z * 10) / 10,
+            r: Math.round(hit.r * 10) / 10,
+          });
         return;
       }
       /* افزودن نقطهٔ جدید به ترسیم در حال انجام */
@@ -1279,6 +2399,14 @@ export default function ProfileEditor({
   };
 
   const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (pathOpen && path) {
+      const c = camRef.current;
+      if (!c) return;
+      const loc = toLocal(e.clientX, e.clientY);
+      const is = itemsAtPx(c, path, loc.x, loc.y);
+      if (is.length) addPointOn(path, is[0].id, wOf(c, loc.x, loc.y));
+      return;
+    }
     if (draft.length) {
       cancelDraft();
       return;
@@ -1289,7 +2417,11 @@ export default function ProfileEditor({
     const s = hitSeg(raw);
     if (s) {
       const chain = chainIds(s.id);
-      if (e.shiftKey) onSelected([...selected, ...chain.filter((id) => !selected.includes(id))]);
+      if (e.shiftKey)
+        onSelected([
+          ...selected,
+          ...chain.filter((id) => !selected.includes(id)),
+        ]);
       else onSelected(chain);
     }
   };
@@ -1307,8 +2439,25 @@ export default function ProfileEditor({
 
   /* ---------- مسیر ابزار ---------- */
   const runs = useMemo(() => {
-    if (!cam) return [] as { kind: SegKind; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[];
-    const out: { kind: SegKind; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[] = [];
+    if (!cam)
+      return [] as {
+        kind: SegKind;
+        opId: number;
+        holder: 1 | 2;
+        d: string;
+        arrows: string;
+        sx: number;
+        sy: number;
+      }[];
+    const out: {
+      kind: SegKind;
+      opId: number;
+      holder: 1 | 2;
+      d: string;
+      arrows: string;
+      sx: number;
+      sy: number;
+    }[] = [];
     let curKind: SegKind | null = null;
     let curOpId = -2;
     let curHolder: 1 | 2 = 1;
@@ -1325,19 +2474,38 @@ export default function ProfileEditor({
     const flush = () => {
       if (curKind && pts.length > 1) {
         let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
-        for (let i = 1; i < pts.length; i++) d += ` L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
+        for (let i = 1; i < pts.length; i++)
+          d += ` L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
         let arrows = "";
         if (curKind !== "rapid") {
           const step = Math.max(1, Math.ceil((pts.length - 1) / 6));
           for (let i = step; i < pts.length - 1; i += step) {
-            arrows += arrowHead(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+            arrows += arrowHead(
+              pts[i - 1][0],
+              pts[i - 1][1],
+              pts[i][0],
+              pts[i][1],
+            );
           }
         } else if ((curFan > 0 || curFanU !== 0) && pts.length >= 2) {
           /* حرکت سریعِ گسترده‌شده در جی‌کد: پیکان جهت در انتها */
           const n = pts.length;
-          arrows = arrowHead(pts[n - 2][0], pts[n - 2][1], pts[n - 1][0], pts[n - 1][1]);
+          arrows = arrowHead(
+            pts[n - 2][0],
+            pts[n - 2][1],
+            pts[n - 1][0],
+            pts[n - 1][1],
+          );
         }
-        out.push({ kind: curKind, opId: curOpId, holder: curHolder, d, arrows, sx: pts[0][0], sy: pts[0][1] });
+        out.push({
+          kind: curKind,
+          opId: curOpId,
+          holder: curHolder,
+          d,
+          arrows,
+          sx: pts[0][0],
+          sy: pts[0][1],
+        });
       }
       curKind = null;
       curFan = -1;
@@ -1347,9 +2515,15 @@ export default function ProfileEditor({
     for (const sg of gen.segs) {
       const kind: SegKind = sg.motion === 0 ? "rapid" : sg.kind;
       /* آفست نمایشی = همان گسترش جی‌کد (فقط قطر، فقط حرکت سریع) */
-      const fan = kind === "rapid" ? sg.fan ?? 0 : 0;
-      const fanU = kind === "rapid" ? sg.fanU ?? 0 : 0;
-      if (kind !== curKind || sg.opId !== curOpId || sg.holder !== curHolder || fan !== curFan || fanU !== curFanU) {
+      const fan = kind === "rapid" ? (sg.fan ?? 0) : 0;
+      const fanU = kind === "rapid" ? (sg.fanU ?? 0) : 0;
+      if (
+        kind !== curKind ||
+        sg.opId !== curOpId ||
+        sg.holder !== curHolder ||
+        fan !== curFan ||
+        fanU !== curFanU
+      ) {
         flush();
         curKind = kind;
         curOpId = sg.opId;
@@ -1388,7 +2562,11 @@ export default function ProfileEditor({
       d += `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)} `;
     });
     for (let i = gen.innerSamples.length - 1; i >= 0; i--) {
-      const [x, y] = screenPt(cam, gen.innerSamples[i].z, -gen.innerSamples[i].r);
+      const [x, y] = screenPt(
+        cam,
+        gen.innerSamples[i].z,
+        -gen.innerSamples[i].r,
+      );
       d += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
     }
     return d + "Z";
@@ -1426,16 +2604,27 @@ export default function ProfileEditor({
     return d;
   };
 
-  if (!cam || size.w === 0) return <div ref={wrapRef} className="relative h-full w-full" />;
+  if (!cam || size.w === 0)
+    return <div ref={wrapRef} className="relative h-full w-full" />;
 
   const P = (z: number, r: number) => screenPt(cam, z, r);
+  const pathKn = path ? pathKnots(path) : null;
+  const pathHandleOwner = new Map<number, PathItem>();
+  if (path) {
+    for (const it of path.items) {
+      if (it.ha != null) pathHandleOwner.set(it.ha, it);
+      if (it.hb != null) pathHandleOwner.set(it.hb, it);
+    }
+  }
+  const pxXY = (q: XY): [number, number] => pxOf(cam, q);
+
   const gridZ: number[] = [];
   for (let z = 0; z <= L + 0.001; z += 10) gridZ.push(z);
   const gridR: number[] = [];
   for (let r = 10; r <= R + 0.001; r += 10) gridR.push(r);
 
   const iso = isolatedOpId != null;
-  const isoOp = iso ? ops.find((o) => o.id === isolatedOpId) ?? null : null;
+  const isoOp = iso ? (ops.find((o) => o.id === isolatedOpId) ?? null) : null;
   const fadeStyle = { transition: "opacity .3s ease" } as const;
   const snapLabel = settings.snap === 0 ? "آزاد" : `${settings.snap}`;
   const selSegs = segs.filter((s) => selected.includes(s.id));
@@ -1445,16 +2634,21 @@ export default function ProfileEditor({
   const hoverSeg = hoverId != null ? segs.find((s) => s.id === hoverId) : null;
   const hoverLocked = hoverSeg
     ? (() => {
-        const allowed = selected.includes(hoverSeg.id) ? selected : [hoverSeg.id];
+        const allowed = selected.includes(hoverSeg.id)
+          ? selected
+          : [hoverSeg.id];
         return allowed.some((id) => segLocked(id, allowed));
       })()
     : false;
   /* آیا گروه انتخاب‌شده به المان دیگری متصل است (و در نتیجه قفل)؟ */
-  const selLocked = selected.length > 0 && selected.some((id) => segLocked(id, selected));
+  const selLocked =
+    selected.length > 0 && selected.some((id) => segLocked(id, selected));
 
   /* المان‌هایی که دسته‌های کنترل و نقاطشان نمایش داده می‌شود: یا المان انتخاب شده
      یا حداقل یک نقطه‌اش مستقل انتخاب شده است */
-  const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id));
+  const handleSegs = segs.filter(
+    (s) => selected.includes(s.id) || selPointSegIds.includes(s.id),
+  );
 
   /* پیش‌نمایش ترسیم */
   let previewSeg: SketchSeg | null = null;
@@ -1470,7 +2664,8 @@ export default function ProfileEditor({
       previewSeg = makeSeg("cubic", [...pts, cursor]);
     } else {
       previewSeg = makeSeg(tool as SketchKind, [...pts, cursor]);
-      if (!previewSeg && pts.length === 1) previewSeg = makeSeg("line", [pts[0], cursor]);
+      if (!previewSeg && pts.length === 1)
+        previewSeg = makeSeg("line", [pts[0], cursor]);
     }
   }
   /* ایندکس مرحلهٔ فعلی — برای منحنی کنترلی بر اساس وضعیت دسته‌ها */
@@ -1482,7 +2677,10 @@ export default function ProfileEditor({
   } else {
     stepIdx = draft.length;
   }
-  const stepText = tool !== "select" ? STEP_HINT[tool][Math.min(stepIdx, STEP_HINT[tool].length - 1)] : "";
+  const stepText =
+    tool !== "select"
+      ? STEP_HINT[tool][Math.min(stepIdx, STEP_HINT[tool].length - 1)]
+      : "";
 
   /* اندازهٔ زندهٔ خط در حال ترسیم */
   let liveInfo = "";
@@ -1493,7 +2691,10 @@ export default function ProfileEditor({
   }
 
   return (
-    <div ref={wrapRef} className="relative h-full w-full overflow-hidden rounded-lg border border-edge bg-[#120e09]">
+    <div
+      ref={wrapRef}
+      className="relative h-full w-full overflow-hidden rounded-lg border border-edge bg-[#120e09]"
+    >
       <svg
         ref={svgRef}
         width={size.w}
@@ -1510,7 +2711,7 @@ export default function ProfileEditor({
                   ? hoverLocked
                     ? "cursor-default"
                     : "cursor-move"
-                  : "cursor-default"
+                  : "cursor-default",
         )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -1529,9 +2730,22 @@ export default function ProfileEditor({
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          <pattern id="hatch" width="7" height="7" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+          <pattern
+            id="hatch"
+            width="7"
+            height="7"
+            patternTransform="rotate(45)"
+            patternUnits="userSpaceOnUse"
+          >
             <rect width="7" height="7" fill="rgba(227,169,78,0.05)" />
-            <line x1="0" y1="0" x2="0" y2="7" stroke="rgba(227,169,78,0.10)" strokeWidth="1.4" />
+            <line
+              x1="0"
+              y1="0"
+              x2="0"
+              y2="7"
+              stroke="rgba(227,169,78,0.10)"
+              strokeWidth="1.4"
+            />
           </pattern>
         </defs>
 
@@ -1540,40 +2754,139 @@ export default function ProfileEditor({
           {gridZ.map((z) => {
             const sx = cam.ox + z * cam.s;
             return (
-              <line key={`v${z}`} x1={sx} y1={cam.oy - R * cam.s} x2={sx} y2={cam.oy + R * cam.s} stroke={z % 50 === 0 ? "rgba(209,183,134,0.16)" : "rgba(209,183,134,0.07)"} strokeWidth={1} />
+              <line
+                key={`v${z}`}
+                x1={sx}
+                y1={cam.oy - R * cam.s}
+                x2={sx}
+                y2={cam.oy + R * cam.s}
+                stroke={
+                  z % 50 === 0
+                    ? "rgba(209,183,134,0.16)"
+                    : "rgba(209,183,134,0.07)"
+                }
+                strokeWidth={1}
+              />
             );
           })}
           {gridR.map((r) => (
             <g key={`h${r}`}>
-              <line x1={cam.ox} y1={cam.oy - r * cam.s} x2={cam.ox + L * cam.s} y2={cam.oy - r * cam.s} stroke={(r * 2) % 50 === 0 ? "rgba(209,183,134,0.14)" : "rgba(209,183,134,0.07)"} strokeWidth={1} />
-              <line x1={cam.ox} y1={cam.oy + r * cam.s} x2={cam.ox + L * cam.s} y2={cam.oy + r * cam.s} stroke={(r * 2) % 50 === 0 ? "rgba(209,183,134,0.14)" : "rgba(209,183,134,0.07)"} strokeWidth={1} />
+              <line
+                x1={cam.ox}
+                y1={cam.oy - r * cam.s}
+                x2={cam.ox + L * cam.s}
+                y2={cam.oy - r * cam.s}
+                stroke={
+                  (r * 2) % 50 === 0
+                    ? "rgba(209,183,134,0.14)"
+                    : "rgba(209,183,134,0.07)"
+                }
+                strokeWidth={1}
+              />
+              <line
+                x1={cam.ox}
+                y1={cam.oy + r * cam.s}
+                x2={cam.ox + L * cam.s}
+                y2={cam.oy + r * cam.s}
+                stroke={
+                  (r * 2) % 50 === 0
+                    ? "rgba(209,183,134,0.14)"
+                    : "rgba(209,183,134,0.07)"
+                }
+                strokeWidth={1}
+              />
             </g>
           ))}
-          {gridZ.filter((z) => z % 50 === 0).map((z) => (
-            <text key={`lz${z}`} x={cam.ox + z * cam.s} y={cam.oy + R * cam.s + 18} textAnchor="middle" fontSize="10" fill="#8b7c5f" fontFamily="JetBrains Mono, monospace">
-              {z}
-            </text>
-          ))}
+          {gridZ
+            .filter((z) => z % 50 === 0)
+            .map((z) => (
+              <text
+                key={`lz${z}`}
+                x={cam.ox + z * cam.s}
+                y={cam.oy + R * cam.s + 18}
+                textAnchor="middle"
+                fontSize="10"
+                fill="#8b7c5f"
+                fontFamily="JetBrains Mono, monospace"
+              >
+                {z}
+              </text>
+            ))}
           {gridR.map((r) => (
-            <text key={`lr${r}`} x={cam.ox - 8} y={cam.oy - r * cam.s + 3.5} textAnchor="end" fontSize="10" fill="#8b7c5f" fontFamily="JetBrains Mono, monospace">
+            <text
+              key={`lr${r}`}
+              x={cam.ox - 8}
+              y={cam.oy - r * cam.s + 3.5}
+              textAnchor="end"
+              fontSize="10"
+              fill="#8b7c5f"
+              fontFamily="JetBrains Mono, monospace"
+            >
               ⌀{Math.round(r * 2)}
             </text>
           ))}
-          <text x={cam.ox + L * cam.s + 10} y={cam.oy + 3.5} fontSize="11" fill="#a8946f" fontFamily="JetBrains Mono, monospace" fontWeight={700}>X</text>
-          <text x={cam.ox - 8} y={cam.oy - R * cam.s - 10} textAnchor="end" fontSize="11" fill="#a8946f" fontFamily="JetBrains Mono, monospace" fontWeight={700}>Y ⌀</text>
+          <text
+            x={cam.ox + L * cam.s + 10}
+            y={cam.oy + 3.5}
+            fontSize="11"
+            fill="#a8946f"
+            fontFamily="JetBrains Mono, monospace"
+            fontWeight={700}
+          >
+            X
+          </text>
+          <text
+            x={cam.ox - 8}
+            y={cam.oy - R * cam.s - 10}
+            textAnchor="end"
+            fontSize="11"
+            fill="#a8946f"
+            fontFamily="JetBrains Mono, monospace"
+            fontWeight={700}
+          >
+            Y ⌀
+          </text>
         </g>
 
-        <line x1={0} y1={cam.oy} x2={size.w} y2={cam.oy} stroke="rgba(227,169,78,0.35)" strokeWidth={1} strokeDasharray="10 4 2 4" />
-        <rect x={cam.ox} y={cam.oy - R * cam.s} width={L * cam.s} height={2 * R * cam.s} fill="url(#hatch)" stroke="rgba(227,169,78,0.55)" strokeWidth={1.3} strokeDasharray="7 5" />
+        <line
+          x1={0}
+          y1={cam.oy}
+          x2={size.w}
+          y2={cam.oy}
+          stroke="rgba(227,169,78,0.35)"
+          strokeWidth={1}
+          strokeDasharray="10 4 2 4"
+        />
+        <rect
+          x={cam.ox}
+          y={cam.oy - R * cam.s}
+          width={L * cam.s}
+          height={2 * R * cam.s}
+          fill="url(#hatch)"
+          stroke="rgba(227,169,78,0.55)"
+          strokeWidth={1.3}
+          strokeDasharray="7 5"
+        />
 
         {settings.showGhost && ghostPath && (
           <g style={{ opacity: iso ? 0.15 : 1, ...fadeStyle }}>
-            <path d={ghostPath} fill="rgba(227,169,78,0.12)" stroke="rgba(227,169,78,0.4)" strokeWidth={1} />
+            <path
+              d={ghostPath}
+              fill="rgba(227,169,78,0.12)"
+              stroke="rgba(227,169,78,0.4)"
+              strokeWidth={1}
+            />
           </g>
         )}
         {settings.showGhost && innerGhost && (
           <g style={{ opacity: iso ? 0.15 : 1, ...fadeStyle }}>
-            <path d={innerGhost} fill="rgba(76,201,240,0.10)" stroke="rgba(76,201,240,0.55)" strokeWidth={1} strokeDasharray="5 4" />
+            <path
+              d={innerGhost}
+              fill="rgba(76,201,240,0.10)"
+              stroke="rgba(76,201,240,0.55)"
+              strokeWidth={1}
+              strokeDasharray="5 4"
+            />
           </g>
         )}
 
@@ -1586,15 +2899,53 @@ export default function ProfileEditor({
             const dim = iso && !matchIso;
             if (dim && isRapid) return null;
             const color = SEG_COLOR[run.kind];
-            const baseOpacity = isRapid ? 0.28 : run.kind === "offset" ? 0.9 : 0.8;
+            const baseOpacity = isRapid
+              ? 0.28
+              : run.kind === "offset"
+                ? 0.9
+                : 0.8;
             return (
               <g key={i} style={{ opacity: dim ? 0.06 : 1, ...fadeStyle }}>
-                <path d={run.d} fill="none" stroke={color} strokeOpacity={matchIso ? 1 : baseOpacity} strokeWidth={(isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) + (matchIso ? 0.7 : 0)} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" filter={matchIso ? "url(#curveGlow)" : undefined} />
-                {run.arrows && !dim && <path d={run.arrows} fill={color} fillOpacity={0.95} />}
+                <path
+                  d={run.d}
+                  fill="none"
+                  stroke={color}
+                  strokeOpacity={matchIso ? 1 : baseOpacity}
+                  strokeWidth={
+                    (isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) +
+                    (matchIso ? 0.7 : 0)
+                  }
+                  strokeDasharray={
+                    isRapid ? "4 4" : run.kind === "offset" ? "7 4" : undefined
+                  }
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  filter={matchIso ? "url(#curveGlow)" : undefined}
+                />
+                {run.arrows && !dim && (
+                  <path d={run.arrows} fill={color} fillOpacity={0.95} />
+                )}
                 {run.holder === 2 && !dim && !isRapid && (
                   <g>
-                    <rect x={run.sx - 12} y={run.sy - 21} width={24} height={13} rx={3} fill="#120e09" stroke="#4cc9f0" strokeWidth={1} />
-                    <text x={run.sx} y={run.sy - 11} textAnchor="middle" fontSize={8.5} fontWeight={800} fontFamily="JetBrains Mono, monospace" fill="#4cc9f0">
+                    <rect
+                      x={run.sx - 12}
+                      y={run.sy - 21}
+                      width={24}
+                      height={13}
+                      rx={3}
+                      fill="#120e09"
+                      stroke="#4cc9f0"
+                      strokeWidth={1}
+                    />
+                    <text
+                      x={run.sx}
+                      y={run.sy - 11}
+                      textAnchor="middle"
+                      fontSize={8.5}
+                      fontWeight={800}
+                      fontFamily="JetBrains Mono, monospace"
+                      fill="#4cc9f0"
+                    >
                       H2
                     </text>
                   </g>
@@ -1605,10 +2956,21 @@ export default function ProfileEditor({
         </g>
 
         {/* المان‌های اسکچ */}
-        <g style={{ opacity: iso ? 0.3 : 1, ...fadeStyle }}>
+        <g
+          style={{ opacity: pathOpen ? 0.24 : iso ? 0.3 : 1, ...fadeStyle }}
+          pointerEvents={pathOpen ? "none" : undefined}
+        >
           {/* آینهٔ پایین محور */}
           {segs.map((s) => (
-            <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke={segSide.get(s.id) === "inner" ? "#4cc9f0" : "#e3a94e"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+            <path
+              key={`m${s.id}`}
+              d={segPath(s, cam, true)}
+              fill="none"
+              stroke={segSide.get(s.id) === "inner" ? "#4cc9f0" : "#e3a94e"}
+              strokeOpacity={0.28}
+              strokeWidth={1.6}
+              strokeLinecap="round"
+            />
           ))}
           {segs.map((s) => {
             const sel = selected.includes(s.id);
@@ -1620,7 +2982,15 @@ export default function ProfileEditor({
                 key={s.id}
                 d={segPath(s, cam)}
                 fill="none"
-                stroke={sel ? "#45b394" : hasSelPt ? "#ffd27a" : hov ? "#fff3dc" : base}
+                stroke={
+                  sel
+                    ? "#45b394"
+                    : hasSelPt
+                      ? "#ffd27a"
+                      : hov
+                        ? "#fff3dc"
+                        : base
+                }
                 strokeWidth={sel ? 3.2 : hasSelPt ? 3.4 : hov ? 3 : 2.4}
                 strokeLinecap="round"
                 filter={sel || hasSelPt ? "url(#curveGlow)" : undefined}
@@ -1629,107 +2999,459 @@ export default function ProfileEditor({
           })}
 
           {/* نشانهٔ قفل بودن المان زیر نشانگر (متصل به المان دیگر) */}
-          {hoverSeg && hoverLocked && !selected.includes(hoverSeg.id) && (
-            <path
-              d={segPath(hoverSeg, cam)}
-              fill="none"
-              stroke="#d95848"
-              strokeOpacity={0.75}
-              strokeWidth={1.2}
-              strokeDasharray="4 4"
-              strokeLinecap="round"
-              pointerEvents="none"
-            />
-          )}
+          {!pathOpen &&
+            hoverSeg &&
+            hoverLocked &&
+            !selected.includes(hoverSeg.id) && (
+              <path
+                d={segPath(hoverSeg, cam)}
+                fill="none"
+                stroke="#d95848"
+                strokeOpacity={0.75}
+                strokeWidth={1.2}
+                strokeDasharray="4 4"
+                strokeLinecap="round"
+                pointerEvents="none"
+              />
+            )}
 
           {/* نشانگر نقاط مستقلِ انتخاب‌شده — رنگ خود نقطه تغییر می‌کند */}
-          {selPoints.map((ps, i) => {
-            const s = segs.find((x) => x.id === ps.segId);
-            const pt = s ? s[ps.part] : null;
-            if (!s || !pt) return null;
-            const [x, y] = P(pt.z, pt.r);
-            const isCtrl = ps.part === "c1" || ps.part === "c2";
-            return (
-              <g key={`selpt-${i}`} filter="url(#curveGlow)">
-                <circle
-                  className="pt-hover"
-                  cx={x}
-                  cy={y}
-                  r={isCtrl ? 6 : 6.5}
-                  fill="#ffd27a"
-                  stroke="#120e09"
-                  strokeWidth={1.8}
-                />
-              </g>
-            );
-          })}
+          {!pathOpen &&
+            selPoints.map((ps, i) => {
+              const s = segs.find((x) => x.id === ps.segId);
+              const pt = s ? s[ps.part] : null;
+              if (!s || !pt) return null;
+              const [x, y] = P(pt.z, pt.r);
+              const isCtrl = ps.part === "c1" || ps.part === "c2";
+              return (
+                <g key={`selpt-${i}`} filter="url(#curveGlow)">
+                  <circle
+                    className="pt-hover"
+                    cx={x}
+                    cy={y}
+                    r={isCtrl ? 6 : 6.5}
+                    fill="#ffd27a"
+                    stroke="#120e09"
+                    strokeWidth={1.8}
+                  />
+                </g>
+              );
+            })}
 
           {/* دسته‌ها و نقاط المان‌های انتخاب‌شده یا دارای نقطهٔ مستقلِ انتخاب‌شده */}
-          {handleSegs.map((s) => {
-            const [ax, ay] = P(s.a.z, s.a.r);
-            const [bx, by] = P(s.b.z, s.b.r);
-            return (
-              <g key={`h${s.id}`}>
-                {s.c1 && (
-                  <>
-                    <line x1={ax} y1={ay} x2={P(s.c1.z, s.c1.r)[0]} y2={P(s.c1.z, s.c1.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
-                    <circle className="pt-hover" cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
-                  </>
-                )}
-                {s.c2 && (
-                  <>
-                    <line x1={bx} y1={by} x2={P(s.c2.z, s.c2.r)[0]} y2={P(s.c2.z, s.c2.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
-                    <circle className="pt-hover" cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
-                  </>
-                )}
-                {s.via && (
-                  <circle className="pt-hover" cx={P(s.via.z, s.via.r)[0]} cy={P(s.via.z, s.via.r)[1]} r={5} fill="#2b1f33" stroke="#b48ee0" strokeWidth={2} />
-                )}
-                <circle className="pt-hover" cx={ax} cy={ay} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
-                <circle className="pt-hover" cx={bx} cy={by} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
-              </g>
-            );
-          })}
+          {!pathOpen &&
+            handleSegs.map((s) => {
+              const [ax, ay] = P(s.a.z, s.a.r);
+              const [bx, by] = P(s.b.z, s.b.r);
+              return (
+                <g key={`h${s.id}`}>
+                  {s.c1 && (
+                    <>
+                      <line
+                        x1={ax}
+                        y1={ay}
+                        x2={P(s.c1.z, s.c1.r)[0]}
+                        y2={P(s.c1.z, s.c1.r)[1]}
+                        stroke="#6ab0d8"
+                        strokeWidth={1}
+                        strokeDasharray="3 3"
+                      />
+                      <circle
+                        className="pt-hover"
+                        cx={P(s.c1.z, s.c1.r)[0]}
+                        cy={P(s.c1.z, s.c1.r)[1]}
+                        r={5}
+                        fill="#1b2a33"
+                        stroke="#6ab0d8"
+                        strokeWidth={2}
+                      />
+                    </>
+                  )}
+                  {s.c2 && (
+                    <>
+                      <line
+                        x1={bx}
+                        y1={by}
+                        x2={P(s.c2.z, s.c2.r)[0]}
+                        y2={P(s.c2.z, s.c2.r)[1]}
+                        stroke="#6ab0d8"
+                        strokeWidth={1}
+                        strokeDasharray="3 3"
+                      />
+                      <circle
+                        className="pt-hover"
+                        cx={P(s.c2.z, s.c2.r)[0]}
+                        cy={P(s.c2.z, s.c2.r)[1]}
+                        r={5}
+                        fill="#1b2a33"
+                        stroke="#6ab0d8"
+                        strokeWidth={2}
+                      />
+                    </>
+                  )}
+                  {s.via && (
+                    <circle
+                      className="pt-hover"
+                      cx={P(s.via.z, s.via.r)[0]}
+                      cy={P(s.via.z, s.via.r)[1]}
+                      r={5}
+                      fill="#2b1f33"
+                      stroke="#b48ee0"
+                      strokeWidth={2}
+                    />
+                  )}
+                  <circle
+                    className="pt-hover"
+                    cx={ax}
+                    cy={ay}
+                    r={5.5}
+                    fill="#0f2a22"
+                    stroke="#45b394"
+                    strokeWidth={2.4}
+                  />
+                  <circle
+                    className="pt-hover"
+                    cx={bx}
+                    cy={by}
+                    r={5.5}
+                    fill="#0f2a22"
+                    stroke="#45b394"
+                    strokeWidth={2.4}
+                  />
+                </g>
+              );
+            })}
 
           {/* نقاط انتهایی همهٔ المان‌ها — همیشه قابل‌دیدن برای اتصال و راست‌کلیک
               (المان‌هایی که دسته‌هایشان در بالا رندر شده اینجا تکرار نمی‌شوند) */}
-          {segs.map(
-            (s) =>
-              !selected.includes(s.id) &&
-              !selPointSegIds.includes(s.id) && (
-                <g key={`e${s.id}`} className="opacity-80">
-                  <circle className="pt-hover" cx={P(s.a.z, s.a.r)[0]} cy={P(s.a.z, s.a.r)[1]} r={3.4} fill="#241c12" stroke="#e3a94e" strokeWidth={1.6} />
-                  <circle className="pt-hover" cx={P(s.b.z, s.b.r)[0]} cy={P(s.b.z, s.b.r)[1]} r={3.4} fill="#241c12" stroke="#e3a94e" strokeWidth={1.6} />
-                </g>
-              )
-          )}
+          {!pathOpen &&
+            segs.map(
+              (s) =>
+                !selected.includes(s.id) &&
+                !selPointSegIds.includes(s.id) && (
+                  <g key={`e${s.id}`} className="opacity-80">
+                    <circle
+                      className="pt-hover"
+                      cx={P(s.a.z, s.a.r)[0]}
+                      cy={P(s.a.z, s.a.r)[1]}
+                      r={3.4}
+                      fill="#241c12"
+                      stroke="#e3a94e"
+                      strokeWidth={1.6}
+                    />
+                    <circle
+                      className="pt-hover"
+                      cx={P(s.b.z, s.b.r)[0]}
+                      cy={P(s.b.z, s.b.r)[1]}
+                      r={3.4}
+                      fill="#241c12"
+                      stroke="#e3a94e"
+                      strokeWidth={1.6}
+                    />
+                  </g>
+                ),
+            )}
         </g>
+
+        {/* ---------- ویرایش مسیر — کل برنامه به‌صورت یک Polyline پیوسته ---------- */}
+        {pathOpen && path && (
+          <g>
+            {/* نشانهٔ شکاف‌ها (قانون ۸) */}
+            {pathIssuesNow?.gaps.map((gi) => {
+              const a = path.items[gi];
+              const b = path.items[gi + 1];
+              if (!a || !b) return null;
+              const [x1, y1] = P(path.verts[a.vb].z, path.verts[a.vb].x / 2);
+              const [x2, y2] = P(path.verts[b.va].z, path.verts[b.va].x / 2);
+              return (
+                <g key={`pg${gi}`}>
+                  <line
+                    x1={x1}
+                    y1={y1}
+                    x2={x2}
+                    y2={y2}
+                    stroke="#d95848"
+                    strokeWidth={1.3}
+                    strokeDasharray="3 3"
+                  />
+                  <circle
+                    cx={(x1 + x2) / 2}
+                    cy={(y1 + y2) / 2}
+                    r={3}
+                    fill="#d95848"
+                  />
+                </g>
+              );
+            })}
+            {/* قلم‌ها: خط‌ها و منحنی‌های واقعی */}
+            {path.items.map((it) => {
+              if (!pathVisible(it)) return null;
+              const sel = selPI.includes(it.id);
+              const hov = hoverPI === it.id;
+              const inPick = picker?.rows.some(
+                (r) => r.kind === "item" && r.id === it.id,
+              );
+              const isRapid = it.motion === 0;
+              const d = itemSvgData(path, it, pxXY);
+              return (
+                <g key={`pi${it.id}`}>
+                  {sel && (
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke="#45b394"
+                      strokeWidth={5.5}
+                      strokeOpacity={0.5}
+                      strokeLinecap="round"
+                      filter="url(#curveGlow)"
+                    />
+                  )}
+                  {inPick && !sel && (
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeWidth={4.4}
+                      strokeOpacity={0.5}
+                      strokeLinecap="round"
+                    />
+                  )}
+                  <path
+                    d={d}
+                    fill="none"
+                    stroke={hov ? "#fff3dc" : SEG_COLOR[it.kind]}
+                    strokeWidth={isRapid ? 1.3 : sel ? 2.8 : hov ? 2.4 : 1.9}
+                    strokeOpacity={isRapid ? 0.6 : 0.96}
+                    strokeDasharray={isRapid ? "5 4" : undefined}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </g>
+              );
+            })}
+            {/* دسته‌های کنترلی — فقط برای منحنی‌های انتخابی/هاور */}
+            {path.items.map((it) => {
+              if (!it.curve || it.ha == null || it.hb == null) return null;
+              if (!selPI.includes(it.id) && hoverPI !== it.id) return null;
+              const A = path.verts[it.va];
+              const B = path.verts[it.vb];
+              const H1 = path.verts[it.ha];
+              const H2 = path.verts[it.hb];
+              const [ax, ay] = P(A.z, A.x / 2);
+              const [bx, by] = P(B.z, B.x / 2);
+              const [h1x, h1y] = P(H1.z, H1.x / 2);
+              const [h2x, h2y] = P(H2.z, H2.x / 2);
+              return (
+                <g key={`ph${it.id}`}>
+                  <line
+                    x1={ax}
+                    y1={ay}
+                    x2={h1x}
+                    y2={h1y}
+                    stroke="#6ab0d8"
+                    strokeWidth={1.1}
+                    strokeDasharray="3 3"
+                  />
+                  <line
+                    x1={bx}
+                    y1={by}
+                    x2={h2x}
+                    y2={h2y}
+                    stroke="#6ab0d8"
+                    strokeWidth={1.1}
+                    strokeDasharray="3 3"
+                  />
+                  <circle
+                    cx={h1x}
+                    cy={h1y}
+                    r={5}
+                    fill="#1b2a33"
+                    stroke={selPV.includes(it.ha) ? "#ffd27a" : "#6ab0d8"}
+                    strokeWidth={2}
+                    className="pt-hover"
+                  />
+                  <circle
+                    cx={h2x}
+                    cy={h2y}
+                    r={5}
+                    fill="#1b2a33"
+                    stroke={selPV.includes(it.hb) ? "#ffd27a" : "#6ab0d8"}
+                    strokeWidth={2}
+                    className="pt-hover"
+                  />
+                </g>
+              );
+            })}
+            {/* رأس‌های زنجیره */}
+            {path.verts.map((v) => {
+              const knot = pathKn?.knots.has(v.id) ?? false;
+              if (!knot) return null;
+              const [x, y] = P(v.z, v.x / 2);
+              const on = selPV.includes(v.id);
+              const inc = path.items.filter(
+                (i) => i.va === v.id || i.vb === v.id,
+              ).length;
+              const inPick = picker?.rows.some(
+                (r) => r.kind === "vert" && r.id === v.id,
+              );
+              return (
+                <g
+                  key={`pv${v.id}`}
+                  className="pt-hover"
+                  filter={on || inPick ? "url(#curveGlow)" : undefined}
+                >
+                  <circle
+                    cx={x}
+                    cy={y}
+                    r={on ? 6 : hoverPV === v.id ? 5.4 : inc > 1 ? 3.6 : 3}
+                    fill={on ? "#ffd27a" : "#120e09"}
+                    stroke={
+                      on
+                        ? "#120e09"
+                        : inPick
+                          ? "#ffffff"
+                          : inc > 2
+                            ? "#45b394"
+                            : "#7fd6bd"
+                    }
+                    strokeWidth={on ? 1.9 : 1.7}
+                  />
+                  {inc > 2 && <circle cx={x} cy={y} r={1.2} fill="#45b394" />}
+                </g>
+              );
+            })}
+            {/* پیش‌نمایش باکس انتخاب */}
+            {marqP && (
+              <g pointerEvents="none">
+                {marqP.ids.map((id) => {
+                  const it = path.items.find((i) => i.id === id);
+                  if (!it) return null;
+                  return (
+                    <path
+                      key={`pm${id}`}
+                      d={itemSvgData(path, it, pxXY)}
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeOpacity={0.7}
+                      strokeWidth={3.2}
+                      strokeLinecap="round"
+                    />
+                  );
+                })}
+                {marqP.vids.map((vid) => {
+                  const v = path.verts[vid];
+                  if (!v) return null;
+                  const [x, y] = P(v.z, v.x / 2);
+                  return (
+                    <circle
+                      key={`pmv${vid}`}
+                      cx={x}
+                      cy={y}
+                      r={5.5}
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeOpacity={0.75}
+                      strokeWidth={1.8}
+                    />
+                  );
+                })}
+              </g>
+            )}
+          </g>
+        )}
 
         {/* پیش‌نمایش ترسیم */}
         {previewSeg && (
           <g>
-            <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeDasharray="6 4" strokeLinecap="round" opacity={0.95} />
+            <path
+              d={segPath(previewSeg, cam)}
+              fill="none"
+              stroke="#45b394"
+              strokeWidth={2.2}
+              strokeDasharray="6 4"
+              strokeLinecap="round"
+              opacity={0.95}
+            />
             {previewSeg.kind === "cubic" && previewSeg.c1 && previewSeg.c2 ? (
               <>
                 {/* خطوط اتصال دسته‌ها به نقاط انتهایی */}
-                <line x1={P(previewSeg.a.z, previewSeg.a.r)[0]} y1={P(previewSeg.a.z, previewSeg.a.r)[1]} x2={P(previewSeg.c1.z, previewSeg.c1.r)[0]} y2={P(previewSeg.c1.z, previewSeg.c1.r)[1]} stroke="#6ab0d8" strokeWidth={1.2} strokeDasharray="3 3" />
-                <line x1={P(previewSeg.b.z, previewSeg.b.r)[0]} y1={P(previewSeg.b.z, previewSeg.b.r)[1]} x2={P(previewSeg.c2.z, previewSeg.c2.r)[0]} y2={P(previewSeg.c2.z, previewSeg.c2.r)[1]} stroke="#6ab0d8" strokeWidth={1.2} strokeDasharray="3 3" />
+                <line
+                  x1={P(previewSeg.a.z, previewSeg.a.r)[0]}
+                  y1={P(previewSeg.a.z, previewSeg.a.r)[1]}
+                  x2={P(previewSeg.c1.z, previewSeg.c1.r)[0]}
+                  y2={P(previewSeg.c1.z, previewSeg.c1.r)[1]}
+                  stroke="#6ab0d8"
+                  strokeWidth={1.2}
+                  strokeDasharray="3 3"
+                />
+                <line
+                  x1={P(previewSeg.b.z, previewSeg.b.r)[0]}
+                  y1={P(previewSeg.b.z, previewSeg.b.r)[1]}
+                  x2={P(previewSeg.c2.z, previewSeg.c2.r)[0]}
+                  y2={P(previewSeg.c2.z, previewSeg.c2.r)[1]}
+                  stroke="#6ab0d8"
+                  strokeWidth={1.2}
+                  strokeDasharray="3 3"
+                />
                 {/* نقاط شروع و پایان */}
-                <circle cx={P(previewSeg.a.z, previewSeg.a.r)[0]} cy={P(previewSeg.a.z, previewSeg.a.r)[1]} r={4.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2} />
-                <circle cx={P(previewSeg.b.z, previewSeg.b.r)[0]} cy={P(previewSeg.b.z, previewSeg.b.r)[1]} r={4.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2} />
+                <circle
+                  cx={P(previewSeg.a.z, previewSeg.a.r)[0]}
+                  cy={P(previewSeg.a.z, previewSeg.a.r)[1]}
+                  r={4.5}
+                  fill="#0f2a22"
+                  stroke="#45b394"
+                  strokeWidth={2}
+                />
+                <circle
+                  cx={P(previewSeg.b.z, previewSeg.b.r)[0]}
+                  cy={P(previewSeg.b.z, previewSeg.b.r)[1]}
+                  r={4.5}
+                  fill="#0f2a22"
+                  stroke="#45b394"
+                  strokeWidth={2}
+                />
                 {/* دستهٔ در حال تنظیم برجسته‌تر: ابتدا c2 (پایان)، سپس c1 (شروع) */}
-                <circle cx={P(previewSeg.c1.z, previewSeg.c1.r)[0]} cy={P(previewSeg.c1.z, previewSeg.c1.r)[1]} r={draftSecondSet.current ? 6 : 4} fill="#1b2a33" stroke={draftSecondSet.current ? "#f3c26b" : "#6ab0d8"} strokeWidth={2} />
-                <circle cx={P(previewSeg.c2.z, previewSeg.c2.r)[0]} cy={P(previewSeg.c2.z, previewSeg.c2.r)[1]} r={!draftSecondSet.current ? 6 : 4} fill="#1b2a33" stroke={!draftSecondSet.current ? "#f3c26b" : "#6ab0d8"} strokeWidth={2} />
+                <circle
+                  cx={P(previewSeg.c1.z, previewSeg.c1.r)[0]}
+                  cy={P(previewSeg.c1.z, previewSeg.c1.r)[1]}
+                  r={draftSecondSet.current ? 6 : 4}
+                  fill="#1b2a33"
+                  stroke={draftSecondSet.current ? "#f3c26b" : "#6ab0d8"}
+                  strokeWidth={2}
+                />
+                <circle
+                  cx={P(previewSeg.c2.z, previewSeg.c2.r)[0]}
+                  cy={P(previewSeg.c2.z, previewSeg.c2.r)[1]}
+                  r={!draftSecondSet.current ? 6 : 4}
+                  fill="#1b2a33"
+                  stroke={!draftSecondSet.current ? "#f3c26b" : "#6ab0d8"}
+                  strokeWidth={2}
+                />
               </>
             ) : (
               draft.map((p, i) => (
-                <circle key={i} cx={P(p.z, p.r)[0]} cy={P(p.z, p.r)[1]} r={4.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2} />
+                <circle
+                  key={i}
+                  cx={P(p.z, p.r)[0]}
+                  cy={P(p.z, p.r)[1]}
+                  r={4.5}
+                  fill="#0f2a22"
+                  stroke="#45b394"
+                  strokeWidth={2}
+                />
               ))
             )}
           </g>
         )}
         {tool !== "select" && cursor && (
-          <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
+          <circle
+            cx={P(cursor.z, cursor.r)[0]}
+            cy={P(cursor.z, cursor.r)[1]}
+            r={4}
+            fill="none"
+            stroke="#45b394"
+            strokeWidth={1.6}
+          />
         )}
 
         {/* نشانگر اسنپ */}
@@ -1770,8 +3492,23 @@ export default function ProfileEditor({
             const [x, y] = P(p.z, p.r);
             return (
               <g key={`sep-${key}`}>
-                <circle cx={x} cy={y} r={8} fill="rgba(217,88,72,0.12)" stroke="#d95848" strokeWidth={1.6} strokeDasharray="3 2.5" />
-                <line x1={x - 5} y1={y + 5} x2={x + 5} y2={y - 5} stroke="#d95848" strokeWidth={1.6} />
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={8}
+                  fill="rgba(217,88,72,0.12)"
+                  stroke="#d95848"
+                  strokeWidth={1.6}
+                  strokeDasharray="3 2.5"
+                />
+                <line
+                  x1={x - 5}
+                  y1={y + 5}
+                  x2={x + 5}
+                  y2={y - 5}
+                  stroke="#d95848"
+                  strokeWidth={1.6}
+                />
               </g>
             );
           })}
@@ -1787,11 +3524,30 @@ export default function ProfileEditor({
                 <g>
                   {[y, ym].map((yy, k) => (
                     <g key={k} filter="url(#curveGlow)">
-                      <rect x={x - 7} y={yy - 7} width={14} height={14} transform={`rotate(45 ${x} ${yy})`} fill="#f72585" stroke="#120e09" strokeWidth={1.8} />
+                      <rect
+                        x={x - 7}
+                        y={yy - 7}
+                        width={14}
+                        height={14}
+                        transform={`rotate(45 ${x} ${yy})`}
+                        fill="#f72585"
+                        stroke="#120e09"
+                        strokeWidth={1.8}
+                      />
                       <circle cx={x} cy={yy} r={2.2} fill="#ffffff" />
                     </g>
                   ))}
-                  <text x={x + 13} y={y - 9} fontSize={10} fontFamily="Vazirmatn, sans-serif" fontWeight={800} fill="#f72585" stroke="#120e09" strokeWidth={3} paintOrder="stroke">
+                  <text
+                    x={x + 13}
+                    y={y - 9}
+                    fontSize={10}
+                    fontFamily="Vazirmatn, sans-serif"
+                    fontWeight={800}
+                    fill="#f72585"
+                    stroke="#120e09"
+                    strokeWidth={3}
+                    paintOrder="stroke"
+                  >
                     Split
                   </text>
                 </g>
@@ -1810,7 +3566,13 @@ export default function ProfileEditor({
                 key={`pv-${id}`}
                 d={segPath(s, cam)}
                 fill="none"
-                stroke={marquee.remove ? "#d95848" : marquee.x1 >= marquee.x0 ? "#4aa3ff" : "#3faf5d"}
+                stroke={
+                  marquee.remove
+                    ? "#d95848"
+                    : marquee.x1 >= marquee.x0
+                      ? "#4aa3ff"
+                      : "#3faf5d"
+                }
                 strokeWidth={4.5}
                 strokeLinecap="round"
                 strokeDasharray={marquee.remove ? "7 4" : undefined}
@@ -1829,44 +3591,89 @@ export default function ProfileEditor({
             const c = marquee.remove ? "#d95848" : "#ffd27a";
             return (
               <g key={`pvp-${i}`} pointerEvents="none">
-                <circle cx={x} cy={y} r={8.5} fill="none" stroke={c} strokeWidth={1.8} strokeDasharray="3 2.5" opacity={0.9} />
+                <circle
+                  cx={x}
+                  cy={y}
+                  r={8.5}
+                  fill="none"
+                  stroke={c}
+                  strokeWidth={1.8}
+                  strokeDasharray="3 2.5"
+                  opacity={0.9}
+                />
                 <circle cx={x} cy={y} r={3.4} fill={c} opacity={0.9} />
               </g>
             );
           })}
 
         {/* باکس انتخابگر: چپ‌به‌راست آبی توپر (فقط داخل) / راست‌به‌چپ سبز چین‌دار (متقاطع) */}
-        {marquee && Math.hypot(marquee.x1 - marquee.x0, marquee.y1 - marquee.y0) > 4 && (
-          <g>
-            {(() => {
-              const crossing = marquee.x1 < marquee.x0;
-              const c = crossing ? "#3faf5d" : "#4aa3ff";
-              const x = Math.min(marquee.x0, marquee.x1);
-              const y = Math.min(marquee.y0, marquee.y1);
-              const w = Math.abs(marquee.x1 - marquee.x0);
-              const h = Math.abs(marquee.y1 - marquee.y0);
-              return (
-                <>
-                  <rect x={x} y={y} width={w} height={h} fill={crossing ? "rgba(63,175,93,0.10)" : "rgba(74,163,255,0.10)"} stroke={c} strokeWidth={1.4} strokeDasharray={crossing ? "6 3" : undefined} />
-                  <text x={x + 6} y={y - 7} fontSize={10.5} fontFamily="Vazirmatn, sans-serif" fontWeight={700} fill={c} stroke="#120e09" strokeWidth={3} paintOrder="stroke">
-                    {crossing ? "متقاطع" : "پنجره‌ای"} • {marqueeHits.length} المان، {marqueePointHits.length} نقطه
-                    {marquee.remove ? " − حذف" : marquee.add ? " + افزودن" : ""}
-                  </text>
-                </>
-              );
-            })()}
-          </g>
-        )}
+        {marquee &&
+          Math.hypot(marquee.x1 - marquee.x0, marquee.y1 - marquee.y0) > 4 && (
+            <g>
+              {(() => {
+                const crossing = marquee.x1 < marquee.x0;
+                const c = crossing ? "#3faf5d" : "#4aa3ff";
+                const x = Math.min(marquee.x0, marquee.x1);
+                const y = Math.min(marquee.y0, marquee.y1);
+                const w = Math.abs(marquee.x1 - marquee.x0);
+                const h = Math.abs(marquee.y1 - marquee.y0);
+                return (
+                  <>
+                    <rect
+                      x={x}
+                      y={y}
+                      width={w}
+                      height={h}
+                      fill={
+                        crossing
+                          ? "rgba(63,175,93,0.10)"
+                          : "rgba(74,163,255,0.10)"
+                      }
+                      stroke={c}
+                      strokeWidth={1.4}
+                      strokeDasharray={crossing ? "6 3" : undefined}
+                    />
+                    <text
+                      x={x + 6}
+                      y={y - 7}
+                      fontSize={10.5}
+                      fontFamily="Vazirmatn, sans-serif"
+                      fontWeight={700}
+                      fill={c}
+                      stroke="#120e09"
+                      strokeWidth={3}
+                      paintOrder="stroke"
+                    >
+                      {crossing ? "متقاطع" : "پنجره‌ای"} • {marqueeHits.length}{" "}
+                      المان، {marqueePointHits.length} نقطه
+                      {marquee.remove
+                        ? " − حذف"
+                        : marquee.add
+                          ? " + افزودن"
+                          : ""}
+                    </text>
+                  </>
+                );
+              })()}
+            </g>
+          )}
       </svg>
 
       {/* ---------- منوی راست‌کلیک: اتصال / جداسازی نقطه ---------- */}
       {ctxMenu && (
         <div
           className="anim-in absolute z-20 w-44 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
-          style={{ left: Math.min(ctxMenu.x, size.w - 180), top: Math.min(ctxMenu.y, size.h - 120) }}
+          style={{
+            left: Math.min(ctxMenu.x, size.w - 180),
+            top: Math.min(ctxMenu.y, size.h - 120),
+          }}
         >
           <div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">
-            {ctxMenu.separated ? "نقطه جداشده" : ctxMenu.clusterSize > 1 ? `متصل به ${ctxMenu.clusterSize} نقطه` : "نقطهٔ تنها"}
+            {ctxMenu.separated
+              ? "نقطه جداشده"
+              : ctxMenu.clusterSize > 1
+                ? `متصل به ${ctxMenu.clusterSize} نقطه`
+                : "نقطهٔ تنها"}
           </div>
           {ctxMenu.separated ? (
             <button
@@ -1897,77 +3704,214 @@ export default function ProfileEditor({
         </div>
       )}
 
-      {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
-      <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          {TOOLS.map((t, i) => (
+      {/* ---------- نوار ابزار حالت ویرایش مسیر ---------- */}
+      {pathOpen && (
+        <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5">
+          <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-brass/45 bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
             <button
-              key={t.id}
-              onClick={() => {
-                setTool(t.id);
-                cancelDraft();
-              }}
-              title={`${t.name} (${t.key}) — ${t.hint}`}
+              onClick={() => setPTool("select")}
+              title="انتخاب و جابه‌جایی (V) — کلیک روی خط یا نقطه؛ Shift افزودن به انتخاب"
               className={cn(
-                "grid h-[27px] w-full shrink-0 place-items-center transition-colors",
-                i > 0 && "border-t border-edge",
-                tool === t.id ? "bg-teal text-[#0d201a]" : "text-mute hover:bg-panel3 hover:text-ink"
+                "grid h-[27px] w-full place-items-center transition-colors",
+                pTool === "select"
+                  ? "bg-brass text-[#241a0c]"
+                  : "text-mute hover:bg-panel3 hover:text-ink",
               )}
             >
-              {t.icon}
+              <IconCursor className="h-4 w-4" />
             </button>
-          ))}
+            <button
+              onClick={() => setPTool((t) => (t === "add" ? "select" : "add"))}
+              title="افزودن نقطه روی خط (N) — کلیک روی یک خط، آن را در همان‌جا به دو خط تقسیم می‌کند"
+              className={cn(
+                "grid h-[27px] w-full border-t border-edge place-items-center transition-colors",
+                pTool === "add"
+                  ? "bg-teal text-[#0d201a]"
+                  : "text-mute hover:bg-panel3 hover:text-ink",
+              )}
+            >
+              <IconPlus className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => (selPI.length ? delSelItems() : delSelVerts())}
+              disabled={!selPI.length && !selPV.length}
+              title="حذف انتخاب (Delete) — خطِ حذف‌شده با تقاطع/مرکز هندسی پر می‌شود و رأسِ حذف‌شده دو خط همسایه را یکی می‌کند"
+              className={cn(
+                "grid h-[27px] w-full border-t border-edge place-items-center transition-colors",
+                selPI.length || selPV.length
+                  ? "text-danger/80 hover:bg-danger/15"
+                  : "text-dim/40",
+              )}
+            >
+              <IconTrash className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={weldNow}
+              title="بستن شکاف‌های زنجیره (E) — سرِ خط بعدی روی انتهای خط قبلی می‌نشیند"
+              className="grid h-[27px] w-full border-t border-edge place-items-center text-mute transition-colors hover:bg-panel3 hover:text-ink"
+            >
+              <IconMagnetSm className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <div className="flex shrink-0 flex-col gap-1">
+            <button
+              className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink"
+              title="بزرگ‌نمایی"
+              onClick={() => zoomBy(1.3)}
+            >
+              <IconPlus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink"
+              title="کوچک‌نمایی"
+              onClick={() => zoomBy(1 / 1.3)}
+            >
+              <IconMinus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink"
+              title="جاگذاری نما"
+              onClick={() => setCam(fit(size.w, size.h))}
+            >
+              <IconFit className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
+      )}
 
-        <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          <button onClick={onUndo} disabled={!canUndo} title="واگرد (Ctrl+Z)" className={cn("grid h-[27px] w-full place-items-center transition-colors", canUndo ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
-            <IconUndo className="h-3.5 w-3.5" />
-          </button>
-          <button onClick={onRedo} disabled={!canRedo} title="بازانجام (Ctrl+Y)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", canRedo ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
-            <IconRedo className="h-3.5 w-3.5" />
-          </button>
-          <button onClick={duplicateSelected} disabled={!selected.length} title="کپی المان‌های انتخابی (Ctrl+D)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", selected.length ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
-            <IconCopy className="h-3.5 w-3.5" />
-          </button>
-          <button onClick={deleteSelected} disabled={!selected.length} title="حذف انتخابی (Delete)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", selected.length ? "text-danger/80 hover:bg-danger/15 hover:text-danger" : "text-dim/40")}>
-            <IconTrash className="h-3.5 w-3.5" />
-          </button>
-        </div>
+      {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
+      {!pathOpen && (
+        <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
+            {TOOLS.map((t, i) => (
+              <button
+                key={t.id}
+                onClick={() => {
+                  setTool(t.id);
+                  cancelDraft();
+                }}
+                title={`${t.name} (${t.key}) — ${t.hint}`}
+                className={cn(
+                  "grid h-[27px] w-full shrink-0 place-items-center transition-colors",
+                  i > 0 && "border-t border-edge",
+                  tool === t.id
+                    ? "bg-teal text-[#0d201a]"
+                    : "text-mute hover:bg-panel3 hover:text-ink",
+                )}
+              >
+                {t.icon}
+              </button>
+            ))}
+          </div>
 
-        <div className="flex shrink-0 flex-col gap-1">
-          <button className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink" title="بزرگ‌نمایی" onClick={() => zoomBy(1.3)}>
-            <IconPlus className="h-3.5 w-3.5" />
-          </button>
-          <button className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink" title="کوچک‌نمایی" onClick={() => zoomBy(1 / 1.3)}>
-            <IconMinus className="h-3.5 w-3.5" />
-          </button>
-          <button className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink" title="جاگذاری نما" onClick={() => setCam(fit(size.w, size.h))}>
-            <IconFit className="h-3.5 w-3.5" />
-          </button>
-          <button
-            className={cn(
-              "grid h-[27px] w-full place-items-center rounded-lg border bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm transition-colors",
-              panMode ? "border-teal/60 text-teal" : "border-edge text-mute hover:border-edge2 hover:text-ink"
-            )}
-            title="پن (جابه‌جایی نما) — یا Space را نگه دارید، یا با دکمهٔ وسط/راست بکشید"
-            onClick={() => setPanMode((v) => !v)}
-          >
-            <IconHand className="h-3.5 w-3.5" />
-          </button>
+          <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              title="واگرد (Ctrl+Z)"
+              className={cn(
+                "grid h-[27px] w-full place-items-center transition-colors",
+                canUndo
+                  ? "text-mute hover:bg-panel3 hover:text-ink"
+                  : "text-dim/40",
+              )}
+            >
+              <IconUndo className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={onRedo}
+              disabled={!canRedo}
+              title="بازانجام (Ctrl+Y)"
+              className={cn(
+                "grid h-[27px] w-full border-t border-edge place-items-center transition-colors",
+                canRedo
+                  ? "text-mute hover:bg-panel3 hover:text-ink"
+                  : "text-dim/40",
+              )}
+            >
+              <IconRedo className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={duplicateSelected}
+              disabled={!selected.length}
+              title="کپی المان‌های انتخابی (Ctrl+D)"
+              className={cn(
+                "grid h-[27px] w-full border-t border-edge place-items-center transition-colors",
+                selected.length
+                  ? "text-mute hover:bg-panel3 hover:text-ink"
+                  : "text-dim/40",
+              )}
+            >
+              <IconCopy className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={deleteSelected}
+              disabled={!selected.length}
+              title="حذف انتخابی (Delete)"
+              className={cn(
+                "grid h-[27px] w-full border-t border-edge place-items-center transition-colors",
+                selected.length
+                  ? "text-danger/80 hover:bg-danger/15 hover:text-danger"
+                  : "text-dim/40",
+              )}
+            >
+              <IconTrash className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="flex shrink-0 flex-col gap-1">
+            <button
+              className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink"
+              title="بزرگ‌نمایی"
+              onClick={() => zoomBy(1.3)}
+            >
+              <IconPlus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink"
+              title="کوچک‌نمایی"
+              onClick={() => zoomBy(1 / 1.3)}
+            >
+              <IconMinus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              className="grid h-[27px] w-full place-items-center rounded-lg border border-edge bg-panel/92 text-mute shadow-lg shadow-black/30 backdrop-blur-sm transition-colors hover:border-edge2 hover:text-ink"
+              title="جاگذاری نما"
+              onClick={() => setCam(fit(size.w, size.h))}
+            >
+              <IconFit className="h-3.5 w-3.5" />
+            </button>
+            <button
+              className={cn(
+                "grid h-[27px] w-full place-items-center rounded-lg border bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm transition-colors",
+                panMode
+                  ? "border-teal/60 text-teal"
+                  : "border-edge text-mute hover:border-edge2 hover:text-ink",
+              )}
+              title="پن (جابه‌جایی نما) — یا Space را نگه دارید، یا با دکمهٔ وسط/راست بکشید"
+              onClick={() => setPanMode((v) => !v)}
+            >
+              <IconHand className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ---------- نوار انتخاب ---------- */}
-      {tool === "select" && (
+      {!pathOpen && tool === "select" && (
         <div className="anim-in absolute bottom-[44px] left-[46px] z-10 flex max-w-[calc(100%-60px)] flex-col gap-1 rounded-lg border border-edge bg-panel/92 px-2.5 py-1.5 shadow-lg shadow-black/40 backdrop-blur-sm">
           <div className="flex items-center justify-center gap-1.5">
             <span
               className={cn(
                 "rounded-full border px-2 py-0.5 text-[10px] font-bold",
-                selected.length ? "border-teal/50 text-teal" : "border-edge text-dim"
+                selected.length
+                  ? "border-teal/50 text-teal"
+                  : "border-edge text-dim",
               )}
             >
-              {selected.length ? `${selected.length} انتخاب شده` : "بدون انتخاب"}
+              {selected.length
+                ? `${selected.length} انتخاب شده`
+                : "بدون انتخاب"}
             </span>
             {selLocked && (
               <span
@@ -1978,25 +3922,47 @@ export default function ProfileEditor({
               </span>
             )}
             <span className="h-4 w-px bg-edge" />
-            <button onClick={selectAllEligible} title="انتخاب همه (Ctrl+A)" className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink">
+            <button
+              onClick={selectAllEligible}
+              title="انتخاب همه (Ctrl+A)"
+              className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink"
+            >
               همه
             </button>
-            <button onClick={invertSelection} title="معکوس‌کردن انتخاب (Ctrl+I)" className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink">
+            <button
+              onClick={invertSelection}
+              title="معکوس‌کردن انتخاب (Ctrl+I)"
+              className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink"
+            >
               معکوس
             </button>
-            <button onClick={() => onSelected([])} disabled={!selected.length} title="لغو انتخاب (Esc)" className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink disabled:opacity-35">
+            <button
+              onClick={() => onSelected([])}
+              disabled={!selected.length}
+              title="لغو انتخاب (Esc)"
+              className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink disabled:opacity-35"
+            >
               پاک
             </button>
           </div>
-          <div className="flex items-center justify-center gap-1 border-t border-edge/60 pt-1" dir="ltr">
+          <div
+            className="flex items-center justify-center gap-1 border-t border-edge/60 pt-1"
+            dir="ltr"
+          >
             {(["line", "quad", "cubic", "arc"] as SketchKind[]).map((k) => (
               <button
                 key={k}
                 onClick={() => setSelFilter((f) => ({ ...f, [k]: !f[k] }))}
-                title={selFilter[k] ? `عدم انتخاب ${KIND_FA[k]}‌ها در باکس/کلیک` : `انتخاب ${KIND_FA[k]}‌ها`}
+                title={
+                  selFilter[k]
+                    ? `عدم انتخاب ${KIND_FA[k]}‌ها در باکس/کلیک`
+                    : `انتخاب ${KIND_FA[k]}‌ها`
+                }
                 className={cn(
                   "rounded-full border px-2 py-px text-[9px] font-bold transition-all",
-                  selFilter[k] ? "border-teal/50 text-teal" : "border-edge text-dim/50 line-through"
+                  selFilter[k]
+                    ? "border-teal/50 text-teal"
+                    : "border-edge text-dim/50 line-through",
                 )}
               >
                 {KIND_FA[k]}
@@ -2007,12 +3973,25 @@ export default function ProfileEditor({
       )}
 
       {/* راهنمای مرحلهٔ ترسیم */}
-      {tool !== "select" && (
+      {!pathOpen && tool !== "select" && (
         <div className="anim-in absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
-          <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
+          <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">
+            {stepIdx + 1}
+          </span>
           {stepText}
-          {liveInfo && <span className="font-mono text-[10px] font-normal text-mute">{liveInfo}</span>}
-          <button onClick={() => { setTool("select"); cancelDraft(); }} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="لغو (Esc)">
+          {liveInfo && (
+            <span className="font-mono text-[10px] font-normal text-mute">
+              {liveInfo}
+            </span>
+          )}
+          <button
+            onClick={() => {
+              setTool("select");
+              cancelDraft();
+            }}
+            className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10"
+            title="لغو (Esc)"
+          >
             <IconX className="h-3 w-3" />
           </button>
         </div>
@@ -2020,22 +3999,307 @@ export default function ProfileEditor({
 
       {/* نشان ایزوله */}
       {iso && isoOp && tool === "select" && (
-        <div className="anim-in absolute top-12 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold shadow-lg shadow-black/40 backdrop-blur-sm" style={{ borderColor: `${OP_INFO[isoOp.type].color}77`, background: "#1d1710ee", color: OP_INFO[isoOp.type].color }}>
-          <span className="inline-block h-2 w-2 rounded-full" style={{ background: OP_INFO[isoOp.type].color }} />
+        <div
+          className="anim-in absolute top-12 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold shadow-lg shadow-black/40 backdrop-blur-sm"
+          style={{
+            borderColor: `${OP_INFO[isoOp.type].color}77`,
+            background: "#1d1710ee",
+            color: OP_INFO[isoOp.type].color,
+          }}
+        >
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: OP_INFO[isoOp.type].color }}
+          />
           نمای ایزوله: {OP_INFO[isoOp.type].name}
-          <button onClick={onClearIsolate} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="خروج (Esc)">
+          <button
+            onClick={onClearIsolate}
+            className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10"
+            title="خروج (Esc)"
+          >
             <IconX className="h-3 w-3" />
           </button>
         </div>
       )}
 
-      {/* ---------- بالا-راست: منوی لایه‌ها ---------- */}
+      {/* ---------- بالا-راست: منوی لایه‌ها + کلید «ویرایش مسیر» ---------- */}
       <div className="absolute top-2.5 right-2.5 z-20 flex items-start gap-2">
         <LayerMenu settings={settings} onSettings={onSettings} />
+        <button
+          onClick={() => onPathToggle(!pathOpen)}
+          title="کل برنامۀ جی‌کد به یک Polyline یکپارچه تبدیل می‌شود؛ خط‌ها و نقطه‌ها را انتخاب، جابه‌جا یا حذف کنید و روی یک خط نقطۀ تازه بگذارید — جی‌کد بی‌درنگ از همین مسیر ساخته می‌شود"
+          className={cn(
+            "chip-toggle backdrop-blur-sm transition-all",
+            pathOpen
+              ? "border-brass bg-brass/15 text-brass2"
+              : pathOverride
+                ? "border-brass/50 bg-panel/85 text-brass2"
+                : "border-edge bg-panel/85 text-ink hover:border-edge2",
+          )}
+        >
+          <IconPen
+            className={cn(
+              "h-3.5 w-3.5",
+              pathOpen ? "text-brass2" : "text-brass",
+            )}
+          />
+          ویرایش مسیر
+          {pathOverride && !pathOpen && (
+            <span
+              className="rounded-full border border-brass/50 px-1 font-mono text-[9px] font-bold text-brass2"
+              title="برنامۀ فعلی از مسیرِ ویرایش‌شده ساخته می‌شود"
+            >
+              فعال
+            </span>
+          )}
+        </button>
+        {pathOverride && !pathOpen && (
+          <button
+            onClick={onPathClear}
+            title="برگشت به برنامۀ ساخته‌شدۀ خودکار از پروفایل و عملیات (ویرایش‌های مسیر پاک می‌شوند)"
+            className="chip-toggle border-danger/45 bg-panel/85 text-danger backdrop-blur-sm transition-all hover:bg-danger/15"
+          >
+            <IconX className="h-3 w-3" />
+            پاک کردن اورراید مسیر
+          </button>
+        )}
       </div>
 
+      {/* ---------- کادر «روی‌افتاده‌ها» — انتخاب از بین خط‌ها/نقطه‌های روی هم ---------- */}
+      {picker && (
+        <div
+          className="anim-in absolute z-30 w-[268px] overflow-hidden rounded-lg border border-brass/45 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
+          style={{
+            left: Math.min(picker.x, Math.max(8, size.w - 280)),
+            top: Math.min(
+              picker.y,
+              Math.max(8, size.h - 36 - picker.rows.length * 40),
+            ),
+          }}
+        >
+          <div className="border-b border-edge px-3 py-1.5 text-[10.5px] font-bold text-brass2">
+            {picker.rows.length} مورد روی هم افتاده — یکی را انتخاب کنید
+          </div>
+          {picker.rows.map((r, i) => (
+            <button
+              key={`${r.kind}-${r.id}`}
+              onMouseEnter={() => setPicker({ ...picker, act: i })}
+              onClick={() => choosePick(r)}
+              className={cn(
+                "block w-full px-3 py-1.5 text-right transition-colors",
+                i === picker.act ? "bg-brass/15" : "hover:bg-panel3",
+              )}
+            >
+              <span
+                className={cn(
+                  "block text-[11.5px] font-bold",
+                  i === picker.act ? "text-brass2" : "text-ink/85",
+                )}
+              >
+                {r.t}
+              </span>
+              <span className="block font-mono text-[9.5px] text-dim" dir="ltr">
+                {r.sub} • {r.d.toFixed(1)}px
+              </span>
+            </button>
+          ))}
+          <p className="border-t border-edge px-3 py-1.5 text-[9.5px] leading-4 text-dim">
+            Tab جابه‌جایی بین گزینه‌ها • Enter انتخاب • Esc بستن. نزدیک‌ترین
+            مورد همیشه اول لیست است.
+          </p>
+        </div>
+      )}
+
+      {/* ---------- نوار وضعیتِ حالت ویرایش مسیر ---------- */}
+      {pathOpen && path && pathStatsNow && (
+        <div className="anim-in absolute bottom-2.5 left-1/2 z-20 flex -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-full border border-brass/45 bg-[#1d1710ee] py-1.5 pr-3.5 pl-1.5 text-[11.5px] font-bold shadow-lg shadow-black/40 backdrop-blur-sm">
+          <span className="h-2 w-2 rounded-full bg-brass" />
+          حالت ویرایش مسیر
+          <span className="font-mono text-[10px] font-normal text-mute">
+            {pathStatsNow.items.toLocaleString("fa-IR")} قلم ·{" "}
+            {pathStatsNow.curves.toLocaleString("fa-IR")} منحنی ·{" "}
+            {pathStatsNow.verts.toLocaleString("fa-IR")} نقطه ·{" "}
+            {pathChanged ? "تغییر شده" : "بدون تغییر"}
+          </span>
+          {!!pathIssuesNow?.gaps.length && (
+            <button
+              onClick={weldNow}
+              className="rounded-full border border-danger/60 bg-danger/12 px-2 py-0.5 text-[10.5px] font-bold text-danger transition-colors hover:bg-danger/20"
+              title="انتقال سریعِ خودکار بین دو نقطه ایجاد شده؛ برای بستنشان این را بزنید"
+            >
+              {pathIssuesNow.gaps.length.toLocaleString("fa-IR")} شکاف — اتصال
+            </button>
+          )}
+          {!pathIssuesNow?.gaps.length && !pathIssuesNow?.zero && (
+            <span
+              className="rounded-full border border-teal/45 px-2 py-0.5 font-mono text-[10px] text-teal"
+              title="پس از هر ویرایش بررسی شد: پیوستگی، ترتیب رأس‌ها، بدون صفرطول و بدون رأسِ بی‌استفاده"
+            >
+              مسیر سالم ✓
+            </span>
+          )}
+          <button
+            onClick={onPathConfirm}
+            className="flex items-center gap-1 rounded-full border border-teal/60 bg-teal/15 px-2.5 py-1 text-[11px] font-bold text-teal transition-colors hover:bg-teal/25"
+            title="مسیرِ ویرایش‌شده ثبت می‌شود و حالت بسته می‌شود (واگرد، دقیقاً به آخرین تغییرِ همین حالت بازمی‌گرداند)"
+          >
+            <IconCheck className="h-3 w-3" />
+            تأیید و خروج
+          </button>
+          <button
+            onClick={onPathCancel}
+            className="rounded-full border border-edge bg-panel/70 px-2.5 py-1 text-[11px] font-bold text-mute transition-colors hover:text-ink"
+            title="تغییرهای همین نشستِ ویرایش روی تاریخچۀ اصلی واگرد می‌شوند"
+          >
+            انصراف
+          </button>
+        </div>
+      )}
+      {pathOpen && pMsg && (
+        <div className="anim-in absolute bottom-[46px] left-1/2 z-20 -translate-x-1/2 rounded-lg border border-brass/45 bg-panel/95 px-3 py-1.5 text-[11px] font-bold text-brass2 shadow-lg shadow-black/40 backdrop-blur-sm">
+          {pMsg}
+        </div>
+      )}
+
+      {/* ---------- پنل انتخاب و دقتِ عددی ---------- */}
+      {pathOpen &&
+        path &&
+        (selPV.length || selPI.length ? (
+          <div className="anim-in absolute left-2.5 bottom-11 w-[214px] rounded-lg border border-teal/45 bg-panel/95 p-2.5 shadow-xl shadow-black/40 backdrop-blur-sm">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[11.5px] font-bold text-teal">
+                <span className="h-2 w-2 rounded-full bg-teal" />
+                {selPV.length === 1
+                  ? "رأسِ انتخابی"
+                  : `${(selPV.length || selPI.length).toLocaleString("fa-IR")} مورد انتخابی`}
+              </span>
+              <button
+                onClick={() => {
+                  setSelPI([]);
+                  setSelPV([]);
+                }}
+                className="grid h-5 w-5 place-items-center rounded text-dim transition-colors hover:text-ink"
+                title="پاک کردن انتخاب (Esc)"
+              >
+                <IconX className="h-3 w-3" />
+              </button>
+            </div>
+            {selPV.length === 1
+              ? (() => {
+                  const v = path.verts[selPV[0]];
+                  return v ? (
+                    <>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <NumF
+                          label="X (طول)"
+                          v={v.z}
+                          onC={(n) => setVertExact(selPV[0], { z: n })}
+                        />
+                        <NumF
+                          label="⌀ (قطر)"
+                          v={v.x}
+                          onC={(n) => setVertExact(selPV[0], { x: n })}
+                        />
+                      </div>
+                      <p className="mt-1.5 text-center text-[9px] leading-4 text-dim">
+                        مقدار دقیق وارد کنید — جابه‌جایی فقط روی همین نقطه و
+                        خط‌های وصل‌شده به آن اثر می‌گذارد
+                      </p>
+                    </>
+                  ) : null;
+                })()
+              : null}
+            {!!selPV.length && selPV.length !== 1 && (
+              <div className="grid grid-cols-2 gap-1.5">
+                <label className="block">
+                  <span className="mb-0.5 block text-[9px] font-semibold text-mute">
+                    ΔX جابه‌جایی
+                  </span>
+                  <input
+                    value={delta.z}
+                    onChange={(ev) =>
+                      setDelta((d) => ({ ...d, z: ev.target.value }))
+                    }
+                    dir="ltr"
+                    className="field-input !px-1.5 !py-1 text-center !text-[11px]"
+                    placeholder="0.00"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-0.5 block text-[9px] font-semibold text-mute">
+                    Δ⌀ جابه‌جایی
+                  </span>
+                  <input
+                    value={delta.x}
+                    onChange={(ev) =>
+                      setDelta((d) => ({ ...d, x: ev.target.value }))
+                    }
+                    dir="ltr"
+                    className="field-input !px-1.5 !py-1 text-center !text-[11px]"
+                    placeholder="0.00"
+                  />
+                </label>
+                <button
+                  onClick={applyDelta}
+                  className="btn btn-teal col-span-2 justify-center !py-1 text-[10.5px]"
+                >
+                  اعمال روی انتخابی‌ها
+                </button>
+              </div>
+            )}
+            {!!selPI.length && (
+              <div className="mt-1.5 space-y-1 border-t border-edge/70 pt-1.5 text-[10px]">
+                <div className="flex items-center justify-between text-mute">
+                  <span>قلم‌های انتخابی</span>
+                  <span className="font-mono text-ink">
+                    {selPI.length.toLocaleString("fa-IR")}
+                  </span>
+                </div>
+                {parallelGap && (
+                  <div
+                    className="flex items-center justify-between text-mute"
+                    title="کوچک‌ترین فاصلۀ عمود تا نزدیک‌ترین قلم هم‌جهت — برای کنترل گامِ بین پاس‌ها"
+                  >
+                    <span>فاصله تا خط موازی</span>
+                    <span className="font-mono text-brass2">
+                      {parallelGap.d.toFixed(3)} mm
+                    </span>
+                  </div>
+                )}
+                <div className="flex gap-1 pt-0.5">
+                  <button
+                    onClick={delSelItems}
+                    className="btn !py-1 flex-1 justify-center text-[10px] !text-danger"
+                    title="حذف خط‌های انتخابی و وصل‌کردن دو سر (Delete)"
+                  >
+                    حذف خط
+                  </button>
+                  <button
+                    onClick={straightenNow}
+                    className="btn !py-1 flex-1 justify-center text-[10px]"
+                    title="منحنی‌های انتخابی به خطِ راست تبدیل شوند"
+                  >
+                    به خط صاف
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="anim-in absolute left-2.5 bottom-11 w-[214px] rounded-lg border border-edge bg-panel/92 p-2.5 text-[10px] leading-5 text-mute shadow-lg shadow-black/40 backdrop-blur-sm">
+            <span className="mb-1 block text-[11px] font-bold text-ink">
+              راهنمای ویرایش مسیر
+            </span>
+            • روی خط یا نقطه کلیک کنید؛ اگر چندتا روی هم باشند کادر انتخاب باز
+            می‌شود
+            <br />• بکشید تا جابه‌جا شود (Alt برای جابه‌جایی آزادِ بی‌مغناطیس)
+            <br />• ابزار «+ نقطه» یا دابل‌کلیک: یک نقطه روی خط می‌سازد
+            <br />• Delete: حذف خط یا نقطه — مسیر خودش وصل می‌ماند
+          </div>
+        ))}
+
       {/* ---------- بازرس هندسی ---------- */}
-      {one && tool === "select" && (
+      {!pathOpen && one && tool === "select" && (
         <Inspector
           seg={one}
           blankL={L}
@@ -2046,50 +4310,91 @@ export default function ProfileEditor({
       )}
       {selSegs.length > 1 && tool === "select" && (
         <div className="anim-in absolute right-2.5 bottom-11 rounded-lg border border-teal/40 bg-panel/95 px-3 py-2 text-[11px] font-bold text-teal backdrop-blur-sm">
-          {selSegs.length} المان انتخاب شده — برای جابه‌جایی بکشید یا Delete بزنید
+          {selSegs.length} المان انتخاب شده — برای جابه‌جایی بکشید یا Delete
+          بزنید
         </div>
       )}
 
       {/* ---------- پنل ویرایش نقطهٔ مستقل ---------- */}
-      {selPoints.length === 1 && tool === "select" && (() => {
-        const ps = selPoints[0];
-        const s = segs.find((x) => x.id === ps.segId);
-        const pt = s ? s[ps.part] : null;
-        if (!s || !pt) return null;
-        const partFa =
-          ps.part === "a" ? "نقطهٔ شروع" :
-          ps.part === "b" ? "نقطهٔ پایان" :
-          ps.part === "c1" ? "دستهٔ کنترل ۱" :
-          ps.part === "c2" ? "دستهٔ کنترل ۲" : "نقطهٔ روی کمان";
-        return (
-          <div className="anim-in absolute left-2.5 bottom-11 w-[196px] rounded-lg border border-brass/40 bg-panel/95 p-2.5 shadow-xl shadow-black/40 backdrop-blur-sm">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-[11.5px] font-bold text-brass2">
-                <span className="h-2 w-2 rounded-full bg-brass2" />
-                {partFa}
-              </span>
-              <button onClick={() => setSelPoints([])} className="grid h-5 w-5 place-items-center rounded text-dim transition-colors hover:text-ink" title="بستن">
-                <IconX className="h-3 w-3" />
-              </button>
+      {!pathOpen &&
+        selPoints.length === 1 &&
+        tool === "select" &&
+        (() => {
+          const ps = selPoints[0];
+          const s = segs.find((x) => x.id === ps.segId);
+          const pt = s ? s[ps.part] : null;
+          if (!s || !pt) return null;
+          const partFa =
+            ps.part === "a"
+              ? "نقطهٔ شروع"
+              : ps.part === "b"
+                ? "نقطهٔ پایان"
+                : ps.part === "c1"
+                  ? "دستهٔ کنترل ۱"
+                  : ps.part === "c2"
+                    ? "دستهٔ کنترل ۲"
+                    : "نقطهٔ روی کمان";
+          return (
+            <div className="anim-in absolute left-2.5 bottom-11 w-[196px] rounded-lg border border-brass/40 bg-panel/95 p-2.5 shadow-xl shadow-black/40 backdrop-blur-sm">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-[11.5px] font-bold text-brass2">
+                  <span className="h-2 w-2 rounded-full bg-brass2" />
+                  {partFa}
+                </span>
+                <button
+                  onClick={() => setSelPoints([])}
+                  className="grid h-5 w-5 place-items-center rounded text-dim transition-colors hover:text-ink"
+                  title="بستن"
+                >
+                  <IconX className="h-3 w-3" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-1.5">
+                <NumF
+                  label="X (طول)"
+                  v={pt.z}
+                  onC={(v) =>
+                    patchPoint(ps.segId, ps.part, {
+                      z: Math.min(L, Math.max(0, v)),
+                    })
+                  }
+                />
+                <NumF
+                  label="⌀ (قطر)"
+                  v={pt.r * 2}
+                  onC={(v) =>
+                    patchPoint(ps.segId, ps.part, {
+                      r: Math.min(R, Math.max(0, v / 2)),
+                    })
+                  }
+                />
+              </div>
+              <p className="mt-1.5 text-center text-[9px] text-dim">
+                {KIND_FA[s.kind]} — بکشید یا مقدار دقیق وارد کنید
+              </p>
             </div>
-            <div className="grid grid-cols-2 gap-1.5">
-              <NumF label="X (طول)" v={pt.z} onC={(v) => patchPoint(ps.segId, ps.part, { z: Math.min(L, Math.max(0, v)) })} />
-              <NumF label="⌀ (قطر)" v={pt.r * 2} onC={(v) => patchPoint(ps.segId, ps.part, { r: Math.min(R, Math.max(0, v / 2)) })} />
-            </div>
-            <p className="mt-1.5 text-center text-[9px] text-dim">{KIND_FA[s.kind]} — بکشید یا مقدار دقیق وارد کنید</p>
-          </div>
-        );
-      })()}
-      {selPoints.length > 1 && tool === "select" && (
+          );
+        })()}
+      {!pathOpen && selPoints.length > 1 && tool === "select" && (
         <div className="anim-in absolute left-2.5 bottom-11 rounded-lg border border-brass/40 bg-panel/95 px-3 py-2 text-[11px] font-bold text-brass2 backdrop-blur-sm">
           {selPoints.length} نقطه انتخاب شده — بکشید تا با هم جابه‌جا شوند
         </div>
       )}
 
       {/* گیر و راهنما */}
-      <div className="absolute right-2.5 bottom-2.5 flex items-center gap-2">
+      <div
+        className={cn(
+          "absolute right-2.5 bottom-2.5 flex items-center gap-2",
+          pathOpen && "hidden",
+        )}
+      >
         <button
-          className={cn("chip-toggle backdrop-blur-sm transition-all", settings.smartSnap ? "border-teal/50 bg-panel/85 text-teal" : "border-edge bg-panel/60 text-dim")}
+          className={cn(
+            "chip-toggle backdrop-blur-sm transition-all",
+            settings.smartSnap
+              ? "border-teal/50 bg-panel/85 text-teal"
+              : "border-edge bg-panel/60 text-dim",
+          )}
           title="چسبندگی هوشمند به نقاط انتها، وسط، مرکز و تقاطع"
           onClick={() => onSettings({ smartSnap: !settings.smartSnap })}
         >
@@ -2121,7 +4426,10 @@ export default function ProfileEditor({
         </span>
       </div>
 
-      <div className="absolute bottom-2.5 left-2.5 rounded-md border border-edge bg-panel/90 px-2.5 py-1 font-mono text-[11px] tracking-wide text-brass2/90 backdrop-blur-sm" dir="ltr">
+      <div
+        className="absolute bottom-2.5 left-2.5 rounded-md border border-edge bg-panel/90 px-2.5 py-1 font-mono text-[11px] tracking-wide text-brass2/90 backdrop-blur-sm"
+        dir="ltr"
+      >
         <span ref={readoutRef}>X 0.0&nbsp;&nbsp;Y⌀ 0.0</span>
       </div>
     </div>
@@ -2146,7 +4454,10 @@ function Inspector({
   const len = segLength(seg);
   const ang = lineAngle(seg.a, seg.b);
   const rad = seg.kind === "arc" ? arcRadius(seg) : 0;
-  const clamp = (p: SPoint): SPoint => ({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)) });
+  const clamp = (p: SPoint): SPoint => ({
+    z: Math.min(blankL, Math.max(0, p.z)),
+    r: Math.min(blankR, Math.max(0, p.r)),
+  });
 
   return (
     <div className="anim-in absolute right-2.5 bottom-11 w-[228px] rounded-lg border border-teal/40 bg-panel/95 p-2.5 shadow-xl shadow-black/40 backdrop-blur-sm">
@@ -2155,28 +4466,60 @@ function Inspector({
           <span className="h-2 w-2 rounded-full bg-teal" />
           {KIND_FA[seg.kind]}
         </span>
-        <button onClick={onClose} className="grid h-5 w-5 place-items-center rounded text-dim transition-colors hover:text-ink" title="بستن">
+        <button
+          onClick={onClose}
+          className="grid h-5 w-5 place-items-center rounded text-dim transition-colors hover:text-ink"
+          title="بستن"
+        >
           <IconX className="h-3 w-3" />
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-1.5">
-        <NumF label="X شروع" v={seg.a.z} onC={(v) => onPatch({ a: clamp({ ...seg.a, z: v }) })} />
-        <NumF label="⌀ شروع" v={seg.a.r * 2} onC={(v) => onPatch({ a: clamp({ ...seg.a, r: v / 2 }) })} />
-        <NumF label="X پایان" v={seg.b.z} onC={(v) => onPatch({ b: clamp({ ...seg.b, z: v }) })} />
-        <NumF label="⌀ پایان" v={seg.b.r * 2} onC={(v) => onPatch({ b: clamp({ ...seg.b, r: v / 2 }) })} />
+        <NumF
+          label="X شروع"
+          v={seg.a.z}
+          onC={(v) => onPatch({ a: clamp({ ...seg.a, z: v }) })}
+        />
+        <NumF
+          label="⌀ شروع"
+          v={seg.a.r * 2}
+          onC={(v) => onPatch({ a: clamp({ ...seg.a, r: v / 2 }) })}
+        />
+        <NumF
+          label="X پایان"
+          v={seg.b.z}
+          onC={(v) => onPatch({ b: clamp({ ...seg.b, z: v }) })}
+        />
+        <NumF
+          label="⌀ پایان"
+          v={seg.b.r * 2}
+          onC={(v) => onPatch({ b: clamp({ ...seg.b, r: v / 2 }) })}
+        />
       </div>
 
       {seg.kind === "line" && (
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF label="طول" v={len} onC={(v) => onPatch({ b: clamp(endFromLenAngle(seg.a, v, ang)) })} />
-          <NumF label="زاویه°" v={ang} onC={(v) => onPatch({ b: clamp(endFromLenAngle(seg.a, len, v)) })} />
+          <NumF
+            label="طول"
+            v={len}
+            onC={(v) => onPatch({ b: clamp(endFromLenAngle(seg.a, v, ang)) })}
+          />
+          <NumF
+            label="زاویه°"
+            v={ang}
+            onC={(v) => onPatch({ b: clamp(endFromLenAngle(seg.a, len, v)) })}
+          />
         </div>
       )}
 
       {seg.kind === "arc" && (
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF label="شعاع" v={rad} onC={(v) => onPatch(arcWithRadius(seg, v))} />
+          <NumF
+            label="شعاع"
+            v={rad}
+            onC={(v) => onPatch(arcWithRadius(seg, v))}
+          />
           <div className="flex items-end">
             <button
               onClick={() => {
@@ -2196,23 +4539,49 @@ function Inspector({
 
       {(seg.kind === "quad" || seg.kind === "cubic") && seg.c1 && (
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF label="X کنترل۱" v={seg.c1.z} onC={(v) => onPatch({ c1: clamp({ ...seg.c1!, z: v }) })} />
-          <NumF label="⌀ کنترل۱" v={seg.c1.r * 2} onC={(v) => onPatch({ c1: clamp({ ...seg.c1!, r: v / 2 }) })} />
+          <NumF
+            label="X کنترل۱"
+            v={seg.c1.z}
+            onC={(v) => onPatch({ c1: clamp({ ...seg.c1!, z: v }) })}
+          />
+          <NumF
+            label="⌀ کنترل۱"
+            v={seg.c1.r * 2}
+            onC={(v) => onPatch({ c1: clamp({ ...seg.c1!, r: v / 2 }) })}
+          />
           {seg.kind === "cubic" && seg.c2 && (
             <>
-              <NumF label="X کنترل۲" v={seg.c2.z} onC={(v) => onPatch({ c2: clamp({ ...seg.c2!, z: v }) })} />
-              <NumF label="⌀ کنترل۲" v={seg.c2.r * 2} onC={(v) => onPatch({ c2: clamp({ ...seg.c2!, r: v / 2 }) })} />
+              <NumF
+                label="X کنترل۲"
+                v={seg.c2.z}
+                onC={(v) => onPatch({ c2: clamp({ ...seg.c2!, z: v }) })}
+              />
+              <NumF
+                label="⌀ کنترل۲"
+                v={seg.c2.r * 2}
+                onC={(v) => onPatch({ c2: clamp({ ...seg.c2!, r: v / 2 }) })}
+              />
             </>
           )}
         </div>
       )}
 
-      <p className="mt-1.5 text-center font-mono text-[9px] text-dim">طول کمان/منحنی: {len.toFixed(1)} mm</p>
+      <p className="mt-1.5 text-center font-mono text-[9px] text-dim">
+        طول کمان/منحنی: {len.toFixed(1)} mm
+      </p>
     </div>
   );
 }
 
-function NumF({ label, v, onC }: { label: string; v: number; onC: (n: number) => void }) {
+function NumF({
+  label,
+  v,
+  onC,
+}: {
+  label: string;
+  v: number;
+  onC: (n: number) => void;
+}) {
   const [t, setT] = useState(String(Math.round(v * 100) / 100));
   const focused = useRef(false);
   useEffect(() => {
@@ -2220,7 +4589,9 @@ function NumF({ label, v, onC }: { label: string; v: number; onC: (n: number) =>
   }, [v]);
   return (
     <label className="block">
-      <span className="mb-0.5 block text-[9px] font-semibold text-mute">{label}</span>
+      <span className="mb-0.5 block text-[9px] font-semibold text-mute">
+        {label}
+      </span>
       <input
         type="text"
         inputMode="decimal"
@@ -2230,7 +4601,11 @@ function NumF({ label, v, onC }: { label: string; v: number; onC: (n: number) =>
         onFocus={() => (focused.current = true)}
         onChange={(e) => {
           setT(e.target.value);
-          const n = parseFloat(e.target.value.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))));
+          const n = parseFloat(
+            e.target.value.replace(/[۰-۹]/g, (d) =>
+              String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)),
+            ),
+          );
           if (Number.isFinite(n)) onC(n);
         }}
         onBlur={() => {
