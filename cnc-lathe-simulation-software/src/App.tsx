@@ -108,6 +108,34 @@ export default function App() {
   const editBufRef = useRef<EditBuf | null>(editBuf);
   editBufRef.current = editBuf;
 
+  /* آفست هلدر دوم در مختصات ماشین مستقیماً روی Polyline اثر دارد. هنگام
+     تغییر ورودی‌ها، تمام رأس‌های متعلق به حرکات H2 بدون ازبین‌رفتن ویرایش‌های
+     انجام‌شده جابه‌جا می‌شوند؛ پل‌های متصل نیز به‌واسطه رأس مشترک زنده به‌روز می‌شوند. */
+  const previousHolder2 = useRef({ ...params.holder2 });
+  useEffect(() => {
+    const prev = previousHolder2.current;
+    const dz = params.holder2.xOff - prev.xOff;
+    const dr = params.holder2.yOff - prev.yOff;
+    previousHolder2.current = { ...params.holder2 };
+    if (Math.abs(dz) < 1e-12 && Math.abs(dr) < 1e-12) return;
+    setEditBuf((buf) => {
+      if (!buf) return buf;
+      const holder2Verts = new Set<number>();
+      for (const line of buf.lines) {
+        if (line.holder !== 2 || line.key.startsWith("#")) continue;
+        holder2Verts.add(line.va);
+        holder2Verts.add(line.vb);
+      }
+      if (!holder2Verts.size) return buf;
+      return {
+        ...buf,
+        verts: buf.verts.map((v) =>
+          holder2Verts.has(v.id) ? { ...v, z: v.z + dz, x: v.x - 2 * dr } : v
+        ),
+      };
+    });
+  }, [params.holder2.xOff, params.holder2.yOff]);
+
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);

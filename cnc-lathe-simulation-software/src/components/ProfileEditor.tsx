@@ -291,6 +291,7 @@ export default function ProfileEditor({
   const [hoverBuf, setHoverBuf] = useState<number | null>(null);
   const [bufMarq, setBufMarq] = useState<{ ids: number[]; vxs: number[] } | null>(null);
   const [hitPicker, setHitPicker] = useState<{ x: number; y: number; lines: number[]; verts: number[] } | null>(null);
+  const [pickerHover, setPickerHover] = useState<{ kind: "line" | "vert"; id: number } | null>(null);
   useEffect(() => {
     if (editOpen) return;
     setSelL([]);
@@ -299,6 +300,7 @@ export default function ProfileEditor({
     setHoverBuf(null);
     setBufMarq(null);
     setHitPicker(null);
+    setPickerHover(null);
   }, [editOpen]);
   /* نقاط جداشده (unjoined) — به‌صورت پیش‌فرض همهٔ نقاطِ هم‌مکان متصل‌اند */
   const [separated, setSeparated] = useState<Set<string>>(new Set());
@@ -1207,10 +1209,12 @@ export default function ProfileEditor({
       const alreadyChosen = nearVerts.some((id) => selV.includes(id)) || nearLines.some((id) => selL.includes(id));
       if (nearVerts.length + nearLines.length > 1 && !e.shiftKey && !alreadyChosen) {
         const rect = wrapRef.current!.getBoundingClientRect();
+        setPickerHover(null);
         setHitPicker({ x: e.clientX - rect.left, y: e.clientY - rect.top, lines: nearLines, verts: nearVerts });
         return;
       }
       setHitPicker(null);
+      setPickerHover(null);
       const bv = hitBufVx(ploc.x, ploc.y);
       if (bv != null) {
         if (e.shiftKey) setSelV(selV.includes(bv) ? selV.filter((x) => x !== bv) : [...selV, bv]);
@@ -1845,6 +1849,9 @@ export default function ProfileEditor({
     const [x2, y2] = screenPt(cam, b.z, b.x / 2);
     return `M ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)}`;
   };
+  const pathStart = editOpen && lines.length ? vz(lines[0].va) : null;
+  const pathEnd = editOpen && lines.length ? vz(lines[lines.length - 1].vb) : null;
+  const pathEndsCoincident = !!pathStart && !!pathEnd && Math.hypot(pathStart.z - pathEnd.z, pathStart.x - pathEnd.x) < 1e-7;
   const selVids = new Set<number>();
   if (editOpen) {
     for (const id of selL) {
@@ -2045,7 +2052,7 @@ export default function ProfileEditor({
                   d={run.d}
                   fill="none"
                   stroke={SEG_COLOR[run.kind]}
-                  strokeOpacity={dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9}
+                  strokeOpacity={pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9}
                   strokeWidth={(isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5) + (matchIso ? 0.7 : 0)}
                   strokeDasharray={isRapid ? "4 4" : run.kind === "offset" ? "7 4" : undefined}
                   strokeLinejoin="round"
@@ -2054,6 +2061,59 @@ export default function ProfileEditor({
                 />
               );
             })}
+
+            {/* پیش‌نمایش گزینه زیر نشانگر در انتخاب‌گر هم‌پوشانی */}
+            {pickerHover?.kind === "line" && lineById.get(pickerHover.id) && (() => {
+              const line = lineById.get(pickerHover.id)!;
+              const kind: SegKind = line.motion === 0 ? "rapid" : line.kind;
+              return (
+                <path
+                  d={lineD(line)}
+                  fill="none"
+                  stroke={SEG_COLOR[kind]}
+                  strokeWidth={5}
+                  strokeOpacity={1}
+                  strokeLinecap="round"
+                  filter="url(#curveGlow)"
+                  pointerEvents="none"
+                />
+              );
+            })()}
+            {pickerHover?.kind === "vert" && vById.get(pickerHover.id) && (() => {
+              const vertex = vz(pickerHover.id);
+              const [x, y] = P(vertex.z, vertex.x / 2);
+              return (
+                <g pointerEvents="none" filter="url(#curveGlow)">
+                  <circle cx={x} cy={y} r={10} fill="#ffd27a" fillOpacity={0.24} stroke="#ffd27a" strokeWidth={3} />
+                  <circle cx={x} cy={y} r={3.5} fill="#fff3dc" />
+                </g>
+              );
+            })()}
+
+            {/* نشانگرهای ثابت ابتدا و انتهای Polyline */}
+            {pathStart && (() => {
+              const [x, y] = P(pathStart.z, pathStart.x / 2);
+              return (
+                <g transform={`translate(${x + (pathEndsCoincident ? -13 : 0)} ${y})`} pointerEvents="none" filter="url(#curveGlow)">
+                  {pathEndsCoincident && <line x1={8} y1={0} x2={13} y2={0} stroke="#45d19f" strokeWidth={2} />}
+                  <circle r={8} fill="#102b24" stroke="#45d19f" strokeWidth={2.5} />
+                  <text y={3.2} textAnchor="middle" fontSize={9} fontWeight={900} fill="#8fffd7">S</text>
+                  <text x={11} y={-9} fontSize={9} fontWeight={800} fill="#8fffd7">شروع</text>
+                </g>
+              );
+            })()}
+            {pathEnd && (() => {
+              const [x, y] = P(pathEnd.z, pathEnd.x / 2);
+              return (
+                <g transform={`translate(${x + (pathEndsCoincident ? 13 : 0)} ${y})`} pointerEvents="none" filter="url(#curveGlow)">
+                  {pathEndsCoincident && <line x1={-8} y1={0} x2={-13} y2={0} stroke="#ff756f" strokeWidth={2} />}
+                  <path d="M 0 -11 L 11 0 L 0 11 L -11 0 Z" fill="#35191a" fillOpacity={0.82} stroke="#ff756f" strokeWidth={2.5} />
+                  <text y={3.2} textAnchor="middle" fontSize={9} fontWeight={900} fill="#ffc0bc">E</text>
+                  <text x={13} y={13} fontSize={9} fontWeight={800} fill="#ffc0bc">پایان</text>
+                </g>
+              );
+            })()}
+
             {/* منحنی‌های افست — ۱:۱ با پروفایل، مستقل‌قابل‌ویرایش */}
             {offSegs.map((o) => {
               const sel = selOff.includes(o.id);
@@ -2099,14 +2159,14 @@ export default function ProfileEditor({
               );
             })}
             {hoverBuf != null && lineById.get(hoverBuf) && (
-              <path d={lineD(lineById.get(hoverBuf)!)} fill="none" stroke="#fff3dc" strokeOpacity={0.9} strokeWidth={2.4} strokeLinecap="round" pointerEvents="none" />
+              <path d={lineD(lineById.get(hoverBuf)!)} fill="none" stroke="#fff3dc" strokeOpacity={pickerHover ? 0.08 : 0.9} strokeWidth={2.4} strokeLinecap="round" pointerEvents="none" />
             )}
             {bufMarq?.ids.map((id) => {
               const l = lineById.get(id);
-              return l ? <path key={`bm${id}`} d={lineD(l)} fill="none" stroke="#ffffff" strokeOpacity={0.8} strokeWidth={2.2} strokeLinecap="round" /> : null;
+              return l ? <path key={`bm${id}`} d={lineD(l)} fill="none" stroke="#ffffff" strokeOpacity={pickerHover ? 0.08 : 0.8} strokeWidth={2.2} strokeLinecap="round" /> : null;
             })}
             {lines.filter((l) => selL.includes(l.id)).map((l) => (
-              <path key={`bs${l.id}`} d={lineD(l)} fill="none" stroke="#45b394" strokeWidth={3} strokeLinecap="round" filter="url(#curveGlow)" />
+              <path key={`bs${l.id}`} d={lineD(l)} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3} strokeLinecap="round" filter="url(#curveGlow)" />
             ))}
             {/* رأس‌های خطوط انتخابی — هر رأس یک نقطه (اشتراک‌ها هم‌مکان‌اند، دو‌تایی نمی‌شود) */}
             {[...selVids].map((vid) => {
@@ -2115,7 +2175,7 @@ export default function ProfileEditor({
               const on = selV.includes(vid);
               const shared = linesAtVx(vid).length > 1;
               return (
-                <g key={`bv${vid}`} filter="url(#curveGlow)">
+                <g key={`bv${vid}`} filter="url(#curveGlow)" opacity={pickerHover ? 0.1 : 1}>
                   <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={on ? "#ffd27a" : shared ? "#0f2a22" : "#120e09"} stroke={on ? "#120e09" : "#45b394"} strokeWidth={2.4} />
                 </g>
               );
@@ -2607,16 +2667,32 @@ export default function ProfileEditor({
         >
           <div className="mb-1.5 flex items-center justify-between px-1 text-[10.5px] font-bold text-brass2">
             <span>انتخاب مورد هم‌پوشان</span>
-            <button onClick={() => setHitPicker(null)} className="text-dim hover:text-ink"><IconX className="h-3 w-3" /></button>
+            <button onClick={() => { setHitPicker(null); setPickerHover(null); }} className="text-dim hover:text-ink"><IconX className="h-3 w-3" /></button>
           </div>
           <div className="max-h-36 space-y-1 overflow-y-auto">
             {hitPicker.verts.map((id) => (
-              <button key={`pv${id}`} className="w-full rounded-md border border-edge bg-panel2 px-2 py-1.5 text-right text-[10.5px] text-ink hover:border-teal/60" onClick={() => { setSelV([id]); setSelL([]); setHitPicker(null); }}>
+              <button
+                key={`pv${id}`}
+                className="w-full rounded-md border border-edge bg-panel2 px-2 py-1.5 text-right text-[10.5px] text-ink hover:border-brass/70 hover:bg-panel3"
+                onMouseEnter={() => setPickerHover({ kind: "vert", id })}
+                onMouseLeave={() => setPickerHover(null)}
+                onFocus={() => setPickerHover({ kind: "vert", id })}
+                onBlur={() => setPickerHover(null)}
+                onClick={() => { setSelV([id]); setSelL([]); setHitPicker(null); setPickerHover(null); }}
+              >
                 نقطه {id.toLocaleString("fa-IR")} · X {vz(id).z.toFixed(2)} · Y { (vz(id).x / 2).toFixed(2) }
               </button>
             ))}
             {hitPicker.lines.map((id) => { const l = lineById.get(id); return l ? (
-              <button key={`pl${id}`} className="flex w-full items-center gap-2 rounded-md border border-edge bg-panel2 px-2 py-1.5 text-right text-[10.5px] text-ink hover:border-teal/60" onClick={() => { setSelL([id]); setSelV([]); setHitPicker(null); }}>
+              <button
+                key={`pl${id}`}
+                className="flex w-full items-center gap-2 rounded-md border border-edge bg-panel2 px-2 py-1.5 text-right text-[10.5px] text-ink hover:border-brass/70 hover:bg-panel3"
+                onMouseEnter={() => setPickerHover({ kind: "line", id })}
+                onMouseLeave={() => setPickerHover(null)}
+                onFocus={() => setPickerHover({ kind: "line", id })}
+                onBlur={() => setPickerHover(null)}
+                onClick={() => { setSelL([id]); setSelV([]); setHitPicker(null); setPickerHover(null); }}
+              >
                 <span className="h-2 w-2 rounded-full" style={{ background: SEG_COLOR[l.motion === 0 ? "rapid" : l.kind] }} />
                 <span>خط {id.toLocaleString("fa-IR")} · {l.motion === 0 ? "حرکت سریع" : OP_INFO[ops.find((o) => o.id === l.opId)?.type ?? "finish"].name}</span>
               </button>
