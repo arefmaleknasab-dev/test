@@ -289,6 +289,8 @@ export default function ProfileEditor({
   const [activeLine, setActiveLine] = useState<number | null>(null); // مبنای پیمایش Arrow
   const [selV, setSelV] = useState<number[]>([]); // رأس‌های انتخابی (نقاط مشترک)
   const [showPathPoints, setShowPathPoints] = useState(true);
+  const [shiftDown, setShiftDown] = useState(false);
+  const shiftRef = useRef(false);
   const [selOff, setSelOff] = useState<number[]>([]); // منحنی‌های افست انتخابی
   const [hoverBuf, setHoverBuf] = useState<number | null>(null);
   const [bufMarq, setBufMarq] = useState<{ ids: number[]; vxs: number[] } | null>(null);
@@ -535,6 +537,32 @@ export default function ProfileEditor({
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, editOpen, selL, activeLine, selV, selOff, edit, marquee]);
+
+  /* وضعیت فیزیکی Shift برای پیش‌نمایش بازه؛ مستقل از زبان صفحه‌کلید. */
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") return;
+      shiftRef.current = true;
+      setShiftDown(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key !== "Shift") return;
+      shiftRef.current = false;
+      setShiftDown(false);
+    };
+    const blur = () => {
+      shiftRef.current = false;
+      setShiftDown(false);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", blur);
+    };
+  }, []);
 
   /* نگه‌داشتن Space برای پن موقت */
   useEffect(() => {
@@ -994,6 +1022,14 @@ export default function ProfileEditor({
   const verts = edit ? edit.verts : ([] as EVert[]);
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
+  const rangePreview = useMemo(() => {
+    if (!editOpen || !shiftDown || activeLine == null || hoverBuf == null) return [] as number[];
+    const from = lines.findIndex((l) => l.id === activeLine);
+    const to = lines.findIndex((l) => l.id === hoverBuf);
+    if (from < 0 || to < 0) return [] as number[];
+    const lo = Math.min(from, to), hi = Math.max(from, to);
+    return lines.slice(lo, hi + 1).map((l) => l.id);
+  }, [editOpen, shiftDown, activeLine, hoverBuf, lines]);
   const vz = (vid: number): EVert => vById.get(vid) ?? { id: vid, z: 0, x: 0 };
   const bufVisible = (l: ELine) => settings[KIND_VISIBLE[l.motion === 0 ? "rapid" : l.kind]];
   const bufPx = (c: Cam, l: ELine): [number, number, number, number] => {
@@ -1246,6 +1282,24 @@ export default function ProfileEditor({
       const ploc = toLocal(e.clientX, e.clientY);
       const nearVerts = hitBufVerts(ploc.x, ploc.y);
       const nearLines = hitBufLines(ploc.x, ploc.y);
+
+      /* Shift+کلیک: انتخاب قطعی بازهٔ هندسی از Segment فعال تا هدف، همراه با
+         حفظ تمام انتخاب‌های قبلی. اولویت آن از انتخاب Vertex بالاتر است. */
+      if ((e.shiftKey || shiftRef.current) && activeLine != null && nearLines.length) {
+        const target = nearLines[0];
+        const from = lines.findIndex((line) => line.id === activeLine);
+        const to = lines.findIndex((line) => line.id === target);
+        if (from >= 0 && to >= 0) {
+          const lo = Math.min(from, to), hi = Math.max(from, to);
+          const range = lines.slice(lo, hi + 1).map((line) => line.id);
+          selectEditLines([...selL, ...range], target, true);
+          setSelV([]);
+          setHitPicker(null);
+          setPickerHover(null);
+          return;
+        }
+      }
+
       /* Ctrl+کلیک روی Segment انتخاب‌شده، حتی در محل هم‌پوشانی، فقط همان را لغو می‌کند. */
       if (e.ctrlKey || e.metaKey) {
         const selectedHit = activeLine != null && nearLines.includes(activeLine)
@@ -1340,7 +1394,7 @@ export default function ProfileEditor({
     if (!d) {
       if (tool === "select") {
         /* اگر نشانگر روی خودِ نقطه باشد، المان زیرین hover نشود تا فقط نقطه سفید شود */
-        const onHandle = hitHandle(raw) != null;
+        const onHandle = !editOpen && hitHandle(raw) != null;
         let hb: number | null = null;
         if (editOpen && !onHandle) {
           const ploc = toLocal(e.clientX, e.clientY);
@@ -2011,6 +2065,9 @@ export default function ProfileEditor({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerLeave={() => {
+          if (!drag.current) setHoverBuf(null);
+        }}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
         onMouseDown={(e) => {
@@ -2231,6 +2288,24 @@ export default function ProfileEditor({
             {lines.filter((l) => selL.includes(l.id)).map((l) => {
               const active = l.id === activeLine;
               return <path key={`bs${l.id}`} d={lineD(l)} fill="none" stroke={active ? "#ffd27a" : "#45b394"} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={active ? 4.2 : 3} strokeLinecap="round" filter="url(#curveGlow)" />;
+            })}
+            {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
+            {rangePreview.map((id) => {
+              const line = lineById.get(id);
+              if (!line) return null;
+              return (
+                <path
+                  key={`range-${id}`}
+                  d={lineD(line)}
+                  fill="none"
+                  stroke="#fff3dc"
+                  strokeOpacity={0.82}
+                  strokeWidth={5.2}
+                  strokeLinecap="round"
+                  filter="url(#curveGlow)"
+                  pointerEvents="none"
+                />
+              );
             })}
             {/* رأس‌های خطوط انتخابی — هر رأس یک نقطه (اشتراک‌ها هم‌مکان‌اند، دو‌تایی نمی‌شود) */}
             {showPathPoints && [...selVids].map((vid) => {
@@ -2725,7 +2800,7 @@ export default function ProfileEditor({
             {lines.length.toLocaleString("fa-IR")} خط · {verts.length.toLocaleString("fa-IR")} نقطه
             {activeLine != null && ` · فعال: ${activeLine.toLocaleString("fa-IR")}`}
           </span>
-          <span className="hidden text-[9px] font-normal text-dim xl:inline">←/→ پیمایش · Shift+←/→ افزودن · Delete حذف</span>
+          <span className="hidden text-[9px] font-normal text-dim xl:inline">Shift+Hover بازه · Shift+Click انتخاب · ←/→ پیمایش</span>
           <button
             onClick={onEditConfirm}
             disabled={!editChanges}
