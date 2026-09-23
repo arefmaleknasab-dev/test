@@ -202,8 +202,9 @@ export default function App() {
     setSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
-    /* اگر history به پیش از ساخته‌شدن پیش‌نویس برگشت، UI نیز باید بسته شود. */
-    if (!e.editBuf) setEditOpen(false);
+    /* Undo/Redo نباید پیش‌نویس را در پشت‌صحنه تغییر دهد: هر وضعیت تاریخی که
+       EditBuf دارد، هم‌زمان خودِ حالت ویرایش مسیر را نیز دوباره باز می‌کند. */
+    setEditOpen(!!e.editBuf);
     setHistVer((v) => v + 1);
   };
   const undo = () => {
