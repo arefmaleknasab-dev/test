@@ -286,15 +286,39 @@ export default function ProfileEditor({
   /* ---------- حالت ویرایش مسیر — ویرایشگرِ پلی‌لاینِ پیوسته (مثل بک‌پلات سیمکو) ---------- */
   const editOpen = !!edit;
   const [selL, setSelL] = useState<number[]>([]); // خطوط انتخابی
+  const [activeLine, setActiveLine] = useState<number | null>(null); // مبنای پیمایش Arrow
   const [selV, setSelV] = useState<number[]>([]); // رأس‌های انتخابی (نقاط مشترک)
   const [selOff, setSelOff] = useState<number[]>([]); // منحنی‌های افست انتخابی
   const [hoverBuf, setHoverBuf] = useState<number | null>(null);
   const [bufMarq, setBufMarq] = useState<{ ids: number[]; vxs: number[] } | null>(null);
   const [hitPicker, setHitPicker] = useState<{ x: number; y: number; lines: number[]; verts: number[] } | null>(null);
   const [pickerHover, setPickerHover] = useState<{ kind: "line" | "vert"; id: number } | null>(null);
+
+  /* انتخاب Segment در خود EditBuf نگه‌داری می‌شود تا بخشی از تاریخچه اصلی باشد. */
+  const selectEditLines = (ids: number[], requestedActive: number | null, record = true) => {
+    const ordered = edit ? edit.lines.filter((l) => ids.includes(l.id)).map((l) => l.id) : [];
+    const active = requestedActive != null && ordered.includes(requestedActive)
+      ? requestedActive
+      : ordered[ordered.length - 1] ?? null;
+    setSelL(ordered);
+    setActiveLine(active);
+    if (!edit) return;
+    const stored = edit.selLines ?? [];
+    if ((edit.activeLine ?? null) === active && stored.length === ordered.length && stored.every((id, i) => id === ordered[i])) return;
+    onEditBuf({ ...edit, selLines: ordered, activeLine: active }, record);
+  };
+
+  /* Undo/Redo ممکن است یک EditBuf قدیمی را برگرداند؛ انتخاب محلی باید همگام شود. */
+  useEffect(() => {
+    if (!edit) return;
+    setSelL(edit.selLines ?? []);
+    setActiveLine(edit.activeLine ?? null);
+  }, [edit?.selLines, edit?.activeLine]);
+
   useEffect(() => {
     if (editOpen) return;
     setSelL([]);
+    setActiveLine(null);
     setSelV([]);
     setSelOff([]);
     setHoverBuf(null);
@@ -399,7 +423,8 @@ export default function ProfileEditor({
       if (editOpen && e.key === "Escape") {
         if (selL.length || selV.length || selOff.length) {
           e.preventDefault();
-          setSelL([]);
+          if (selL.length) selectEditLines([], null, true);
+          else { setSelL([]); setActiveLine(null); }
           setSelV([]);
           setSelOff([]);
           return;
@@ -410,29 +435,43 @@ export default function ProfileEditor({
           return;
         }
       }
+      if (editOpen && edit && selL.length && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        const active = activeLine != null && selL.includes(activeLine) ? activeLine : selL[selL.length - 1];
+        const index = edit.lines.findIndex((line) => line.id === active);
+        const nextIndex = index + (e.key === "ArrowLeft" ? -1 : 1);
+        if (index >= 0 && nextIndex >= 0 && nextIndex < edit.lines.length) {
+          const nextId = edit.lines[nextIndex].id;
+          selectEditLines(e.shiftKey ? [...selL, nextId] : [nextId], nextId, true);
+          setSelV([]);
+        }
+        return;
+      }
       if (editOpen && (e.key === "Delete" || e.key === "Backspace") && edit) {
         if (selV.length) {
           e.preventDefault();
           const fin = deleteEditVertices(edit.verts, edit.lines, selV);
-          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines }, true);
-          setSelV([]); setSelL([]);
+          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: [], activeLine: null }, true);
+          setSelV([]); setSelL([]); setActiveLine(null);
           return;
         }
         if (selL.length) {
           e.preventDefault();
           const fin = deleteEditLines(edit.verts, edit.lines, selL);
-          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines }, true);
-          setSelL([]); setSelV([]);
+          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: [], activeLine: null }, true);
+          setSelL([]); setActiveLine(null); setSelV([]);
           return;
         }
       }
       const k = e.key.toLowerCase();
-      if ((e.ctrlKey || e.metaKey) && k === "z" && !e.shiftKey) {
+      const undoKey = e.code === "KeyZ" || k === "z";
+      const redoKey = e.code === "KeyY" || k === "y";
+      if ((e.ctrlKey || e.metaKey) && undoKey && !e.shiftKey) {
         e.preventDefault();
         onUndo();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && (k === "y" || (e.shiftKey && k === "z"))) {
+      if ((e.ctrlKey || e.metaKey) && (redoKey || (e.shiftKey && undoKey))) {
         e.preventDefault();
         onRedo();
         return;
@@ -494,7 +533,7 @@ export default function ProfileEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, editOpen, selL, selV, selOff, edit, marquee]);
+  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, editOpen, selL, activeLine, selV, selOff, edit, marquee]);
 
   /* نگه‌داشتن Space برای پن موقت */
   useEffect(() => {
@@ -975,7 +1014,7 @@ export default function ProfileEditor({
   };
   const linesAtVx = (vid: number): ELine[] => lines.filter((l) => l.va === vid || l.vb === vid);
   useEffect(() => {
-    setSelL([]); setSelV([]); setHitPicker(null);
+    setSelV([]); setHitPicker(null);
   }, [isolatedOpId]);
 
   /* با ورود به ویرایش مسیر، قاب دور کل مسیر واقعی ماشین (شامل آفست هلدر ۲) تنظیم می‌شود. */
@@ -1206,6 +1245,20 @@ export default function ProfileEditor({
       const ploc = toLocal(e.clientX, e.clientY);
       const nearVerts = hitBufVerts(ploc.x, ploc.y);
       const nearLines = hitBufLines(ploc.x, ploc.y);
+      /* Ctrl+کلیک روی Segment انتخاب‌شده، حتی در محل هم‌پوشانی، فقط همان را لغو می‌کند. */
+      if (e.ctrlKey || e.metaKey) {
+        const selectedHit = activeLine != null && nearLines.includes(activeLine)
+          ? activeLine
+          : nearLines.find((id) => selL.includes(id));
+        if (selectedHit != null) {
+          const ids = selL.filter((id) => id !== selectedHit);
+          selectEditLines(ids, null, true);
+          setSelV([]);
+          setHitPicker(null);
+          setPickerHover(null);
+          return;
+        }
+      }
       const alreadyChosen = nearVerts.some((id) => selV.includes(id)) || nearLines.some((id) => selL.includes(id));
       if (nearVerts.length + nearLines.length > 1 && !e.shiftKey && !alreadyChosen) {
         const rect = wrapRef.current!.getBoundingClientRect();
@@ -1239,9 +1292,15 @@ export default function ProfileEditor({
       const bl = hitBufLine(ploc.x, ploc.y);
       if (bl != null) {
         let ids: number[];
+        if (e.ctrlKey || e.metaKey) {
+          ids = selL.includes(bl) ? selL.filter((x) => x !== bl) : [...selL, bl];
+          selectEditLines(ids, ids.includes(bl) ? bl : null, true);
+          setSelV([]);
+          return;
+        }
         if (e.shiftKey) ids = selL.includes(bl) ? selL.filter((x) => x !== bl) : [...selL, bl];
         else ids = selL.includes(bl) ? selL : [bl];
-        setSelL(ids);
+        selectEditLines(ids, bl, true);
         setSelV([]);
         const vset = new Set<number>();
         for (const l of lines) if (ids.includes(l.id)) { vset.add(l.va); vset.add(l.vb); }
@@ -1540,7 +1599,7 @@ export default function ProfileEditor({
         if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
           onSelected([]);
           setSelPoints([]);
-          if (editOpen) { setSelL([]); setSelV([]); setHitPicker(null); }
+          if (editOpen) { selectEditLines([], null, true); setSelV([]); setHitPicker(null); }
         }
         return;
       }
@@ -1561,13 +1620,15 @@ export default function ProfileEditor({
           const remove = e.ctrlKey || e.metaKey;
           const add = e.shiftKey;
           if (remove) {
-            setSelL(selL.filter((id) => !bh.ids.includes(id)));
+            const nextLines = selL.filter((id) => !bh.ids.includes(id));
+            selectEditLines(nextLines, nextLines.includes(activeLine ?? -1) ? activeLine : null, true);
             setSelV(selV.filter((id) => !bh.vxs.includes(id)));
           } else if (add) {
-            setSelL([...selL, ...bh.ids.filter((id) => !selL.includes(id))]);
+            const nextLines = [...selL, ...bh.ids.filter((id) => !selL.includes(id))];
+            selectEditLines(nextLines, bh.ids[bh.ids.length - 1] ?? activeLine, true);
             setSelV([...selV, ...bh.vxs.filter((id) => !selV.includes(id))]);
           } else {
-            setSelL(bh.ids);
+            selectEditLines(bh.ids, bh.ids[bh.ids.length - 1] ?? null, true);
             setSelV(bh.vxs);
           }
           setBufMarq(null);
@@ -1693,9 +1754,9 @@ export default function ProfileEditor({
       const id = hitBufLine(loc.x, loc.y);
       if (id != null) {
         const fin = insertEditVertex(edit.verts, edit.lines, id, raw.z, raw.r * 2);
-        onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines }, true);
+        onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: [], activeLine: null }, true);
         const nearest = fin.verts.reduce((best, v) => Math.hypot(v.z - raw.z, v.x / 2 - raw.r) < Math.hypot(best.z - raw.z, best.x / 2 - raw.r) ? v : best, fin.verts[0]);
-        setSelV([nearest.id]); setSelL([]);
+        setSelV([nearest.id]); setSelL([]); setActiveLine(null);
         return;
       }
     }
@@ -2165,9 +2226,10 @@ export default function ProfileEditor({
               const l = lineById.get(id);
               return l ? <path key={`bm${id}`} d={lineD(l)} fill="none" stroke="#ffffff" strokeOpacity={pickerHover ? 0.08 : 0.8} strokeWidth={2.2} strokeLinecap="round" /> : null;
             })}
-            {lines.filter((l) => selL.includes(l.id)).map((l) => (
-              <path key={`bs${l.id}`} d={lineD(l)} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3} strokeLinecap="round" filter="url(#curveGlow)" />
-            ))}
+            {lines.filter((l) => selL.includes(l.id)).map((l) => {
+              const active = l.id === activeLine;
+              return <path key={`bs${l.id}`} d={lineD(l)} fill="none" stroke={active ? "#ffd27a" : "#45b394"} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={active ? 4.2 : 3} strokeLinecap="round" filter="url(#curveGlow)" />;
+            })}
             {/* رأس‌های خطوط انتخابی — هر رأس یک نقطه (اشتراک‌ها هم‌مکان‌اند، دو‌تایی نمی‌شود) */}
             {[...selVids].map((vid) => {
               const v = vz(vid);
@@ -2634,8 +2696,9 @@ export default function ProfileEditor({
           <span className="font-mono text-[10px] font-normal text-mute">
             {editChanges ? `${editChanges.toLocaleString("fa-IR")} تغییر · ` : "بدون تغییر · "}
             {lines.length.toLocaleString("fa-IR")} خط · {verts.length.toLocaleString("fa-IR")} نقطه
+            {activeLine != null && ` · فعال: ${activeLine.toLocaleString("fa-IR")}`}
           </span>
-          <span className="hidden text-[9px] font-normal text-dim xl:inline">دابل‌کلیک: افزودن نقطه · Delete: حذف</span>
+          <span className="hidden text-[9px] font-normal text-dim xl:inline">←/→ پیمایش · Shift+←/→ افزودن · Delete حذف</span>
           <button
             onClick={onEditConfirm}
             disabled={!editChanges}
@@ -2678,7 +2741,7 @@ export default function ProfileEditor({
                 onMouseLeave={() => setPickerHover(null)}
                 onFocus={() => setPickerHover({ kind: "vert", id })}
                 onBlur={() => setPickerHover(null)}
-                onClick={() => { setSelV([id]); setSelL([]); setHitPicker(null); setPickerHover(null); }}
+                onClick={() => { setSelV([id]); selectEditLines([], null, true); setHitPicker(null); setPickerHover(null); }}
               >
                 نقطه {id.toLocaleString("fa-IR")} · X {vz(id).z.toFixed(2)} · Y { (vz(id).x / 2).toFixed(2) }
               </button>
@@ -2691,7 +2754,7 @@ export default function ProfileEditor({
                 onMouseLeave={() => setPickerHover(null)}
                 onFocus={() => setPickerHover({ kind: "line", id })}
                 onBlur={() => setPickerHover(null)}
-                onClick={() => { setSelL([id]); setSelV([]); setHitPicker(null); setPickerHover(null); }}
+                onClick={() => { selectEditLines([id], id, true); setSelV([]); setHitPicker(null); setPickerHover(null); }}
               >
                 <span className="h-2 w-2 rounded-full" style={{ background: SEG_COLOR[l.motion === 0 ? "rapid" : l.kind] }} />
                 <span>خط {id.toLocaleString("fa-IR")} · {l.motion === 0 ? "حرکت سریع" : OP_INFO[ops.find((o) => o.id === l.opId)?.type ?? "finish"].name}</span>

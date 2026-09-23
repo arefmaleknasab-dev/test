@@ -218,7 +218,7 @@ export default function App() {
     if (editBufRef.current) return;
     pushPast(snap());
     const seed = seedGcodeEdit(gen.segs, params);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {} });
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
     setHistVer((v) => v + 1);
   };
   const closeEdit = () => {

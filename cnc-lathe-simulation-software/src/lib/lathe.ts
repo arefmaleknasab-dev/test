@@ -2092,6 +2092,9 @@ export interface EditBuf {
   lines: ELine[]; // به همان ترتیب اجرای برنامه؛ همواره vb==vaِ خطِ بعد (زنجیرهٔ بسته)
   sketch: SketchSeg[]; // کپیِ کاریِ پروفایل (تأیید = انتقال به اسکچ اصلی)
   off: Record<number, OffPatch>; // ویرایش مستقل منحنی‌های افست (کلید = id قطعهٔ پروفایل)
+  /** انتخاب Segment جزئی از تاریخچهٔ اصلی است تا Undo/Redo آن را نیز بازیابی کند. */
+  selLines: number[];
+  activeLine: number | null;
 }
 
 export type ELineXY = ELine & { z1: number; x1: number; z2: number; x2: number };
