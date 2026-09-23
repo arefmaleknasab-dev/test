@@ -2673,8 +2673,21 @@ export default function ProfileEditor({
       )}
 
       {/* ---------- بالا-راست: منوی لایه‌ها + کلید «ویرایش مسیر» (سمت چپِ منو) ---------- */}
-      <div className="absolute top-2.5 right-2.5 z-20 flex items-start gap-2">
+      <div dir="rtl" className="absolute top-2.5 right-2.5 z-20 flex items-start gap-2">
         <LayerMenu settings={settings} onSettings={onSettings} />
+        <button
+          onClick={() => onEditToggle(!editOpen)}
+          title="ویرایشِ مسیرِ جی‌کد به‌صورت یک خطِ یکپارچه (مثل سیمکو) — فایل فقط با «تأیید» به‌روز می‌شود"
+          className={cn(
+            "chip-toggle backdrop-blur-sm transition-all",
+            editOpen
+              ? "border-brass bg-brass/15 text-brass2"
+              : "border-edge bg-panel/85 text-ink hover:border-edge2"
+          )}
+        >
+          <IconCode className={cn("h-3.5 w-3.5", editOpen ? "text-brass2" : "text-brass")} />
+          ویرایش مسیر
+        </button>
         {editOpen && (
           <button
             type="button"
@@ -2700,19 +2713,6 @@ export default function ProfileEditor({
             نقاط
           </button>
         )}
-        <button
-          onClick={() => onEditToggle(!editOpen)}
-          title="ویرایشِ مسیرِ جی‌کد به‌صورت یک خطِ یکپارچه (مثل سیمکو) — فایل فقط با «تأیید» به‌روز می‌شود"
-          className={cn(
-            "chip-toggle backdrop-blur-sm transition-all",
-            editOpen
-              ? "border-brass bg-brass/15 text-brass2"
-              : "border-edge bg-panel/85 text-ink hover:border-edge2"
-          )}
-        >
-          <IconCode className={cn("h-3.5 w-3.5", editOpen ? "text-brass2" : "text-brass")} />
-          ویرایش مسیر
-        </button>
       </div>
 
       {/* ---------- نوارِ حالت ادیت: شمارش تغییرات + تأیید/انصراف ---------- */}
