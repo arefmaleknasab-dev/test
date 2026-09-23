@@ -1022,6 +1022,16 @@ export default function ProfileEditor({
   const verts = edit ? edit.verts : ([] as EVert[]);
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
+  const vertexLineCount = useMemo(() => {
+    const count = new Map<number, number>();
+    for (const line of lines) {
+      count.set(line.va, (count.get(line.va) ?? 0) + 1);
+      count.set(line.vb, (count.get(line.vb) ?? 0) + 1);
+    }
+    return count;
+  }, [lines]);
+  /* Set و جدول degree مانع جست‌وجوی O(n²) هنگام هر فریم pan می‌شوند. */
+  const selectedLineIds = useMemo(() => new Set(selL), [selL]);
   const rangePreview = useMemo(() => {
     if (!editOpen || !shiftDown || activeLine == null || hoverBuf == null) return [] as number[];
     const from = lines.findIndex((l) => l.id === activeLine);
@@ -1049,7 +1059,6 @@ export default function ProfileEditor({
     const fin = normalizeEditBuf(nextVerts, nextLines);
     onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines }, true);
   };
-  const linesAtVx = (vid: number): ELine[] => lines.filter((l) => l.va === vid || l.vb === vid);
   useEffect(() => {
     setSelV([]); setHitPicker(null);
   }, [isolatedOpId]);
@@ -1965,6 +1974,23 @@ export default function ProfileEditor({
     const [x2, y2] = screenPt(cam, b.z, b.x / 2);
     return `M ${x1.toFixed(1)} ${y1.toFixed(1)} L ${x2.toFixed(1)} ${y2.toFixed(1)}`;
   };
+  /* تمام Segmentهای انتخابی در دو path مرکب رندر می‌شوند، نه صدها path دارای
+     Gaussian blur. این کار تعداد nodeها و هزینهٔ GPU را هنگام pan ثابت نگه می‌دارد. */
+  let selectedLinesPath = "";
+  let activeLinePath = "";
+  if (editOpen && selectedLineIds.size) {
+    for (const line of lines) {
+      if (!selectedLineIds.has(line.id)) continue;
+      if (line.id === activeLine) activeLinePath += `${lineD(line)} `;
+      else selectedLinesPath += `${lineD(line)} `;
+    }
+  }
+  let rangePreviewPath = "";
+  for (const id of rangePreview) {
+    const line = lineById.get(id);
+    if (line) rangePreviewPath += `${lineD(line)} `;
+  }
+
   const pathStart = editOpen && lines.length ? vz(lines[0].va) : null;
   const pathEnd = editOpen && lines.length ? vz(lines[lines.length - 1].vb) : null;
   const pathEndsCoincident = !!pathStart && !!pathEnd && Math.hypot(pathStart.z - pathEnd.z, pathStart.x - pathEnd.x) < 1e-7;
@@ -2285,36 +2311,36 @@ export default function ProfileEditor({
               const l = lineById.get(id);
               return l ? <path key={`bm${id}`} d={lineD(l)} fill="none" stroke="#ffffff" strokeOpacity={pickerHover ? 0.08 : 0.8} strokeWidth={2.2} strokeLinecap="round" /> : null;
             })}
-            {lines.filter((l) => selL.includes(l.id)).map((l) => {
-              const active = l.id === activeLine;
-              return <path key={`bs${l.id}`} d={lineD(l)} fill="none" stroke={active ? "#ffd27a" : "#45b394"} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={active ? 4.2 : 3} strokeLinecap="round" filter="url(#curveGlow)" />;
-            })}
+            {/* هایلایت انتخاب با pathهای مرکب و glow سبکِ مبتنی بر stroke؛
+                از Gaussian blur پرهزینه برای تک‌تک Segmentها استفاده نمی‌شود. */}
+            {selectedLinesPath && (
+              <>
+                <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />
+                <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3} strokeLinecap="round" pointerEvents="none" />
+              </>
+            )}
+            {activeLinePath && (
+              <>
+                <path d={activeLinePath} fill="none" stroke="#ffd27a" strokeOpacity={pickerHover ? 0.02 : 0.24} strokeWidth={9} strokeLinecap="round" pointerEvents="none" />
+                <path d={activeLinePath} fill="none" stroke="#ffd27a" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={4.2} strokeLinecap="round" pointerEvents="none" />
+              </>
+            )}
             {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
-            {rangePreview.map((id) => {
-              const line = lineById.get(id);
-              if (!line) return null;
-              return (
-                <path
-                  key={`range-${id}`}
-                  d={lineD(line)}
-                  fill="none"
-                  stroke="#fff3dc"
-                  strokeOpacity={0.82}
-                  strokeWidth={5.2}
-                  strokeLinecap="round"
-                  filter="url(#curveGlow)"
-                  pointerEvents="none"
-                />
-              );
-            })}
+            {rangePreviewPath && (
+              <>
+                <path d={rangePreviewPath} fill="none" stroke="#fff3dc" strokeOpacity={0.18} strokeWidth={10} strokeLinecap="round" pointerEvents="none" />
+                <path d={rangePreviewPath} fill="none" stroke="#fff3dc" strokeOpacity={0.82} strokeWidth={5.2} strokeLinecap="round" pointerEvents="none" />
+              </>
+            )}
             {/* رأس‌های خطوط انتخابی — هر رأس یک نقطه (اشتراک‌ها هم‌مکان‌اند، دو‌تایی نمی‌شود) */}
             {showPathPoints && [...selVids].map((vid) => {
               const v = vz(vid);
               const [x, y] = P(v.z, v.x / 2);
               const on = selV.includes(vid);
-              const shared = linesAtVx(vid).length > 1;
+              const shared = (vertexLineCount.get(vid) ?? 0) > 1;
               return (
-                <g key={`bv${vid}`} filter="url(#curveGlow)" opacity={pickerHover ? 0.1 : 1}>
+                <g key={`bv${vid}`} opacity={pickerHover ? 0.1 : 1}>
+                  <circle cx={x} cy={y} r={8} fill={on ? "#ffd27a" : "#45b394"} fillOpacity={0.12} pointerEvents="none" />
                   <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={on ? "#ffd27a" : shared ? "#0f2a22" : "#120e09"} stroke={on ? "#120e09" : "#45b394"} strokeWidth={2.4} />
                 </g>
               );
