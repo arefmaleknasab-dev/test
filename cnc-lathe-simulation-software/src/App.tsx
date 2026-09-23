@@ -105,6 +105,10 @@ export default function App() {
   /* حالت ویرایش مسیر: فایل = برنامهٔ پایه + اوررایدِ تأییدشده (پیش از «تأیید» فایل دست‌نخورده است) */
   const [gcodeOvr, setGcodeOvr] = useState<GcodeOvrMap>(() => normGcodeOvr(SAVED?.gcodeOvr));
   const [editBuf, setEditBuf] = useState<EditBuf | null>(null);
+  /* باز/بسته‌بودن UI از وجود پیش‌نویس جداست تا خروج تصادفی، تغییرات تأییدنشده را پاک نکند. */
+  const [editOpen, setEditOpen] = useState(false);
+  const editOpenRef = useRef(editOpen);
+  editOpenRef.current = editOpen;
   const editBufRef = useRef<EditBuf | null>(editBuf);
   editBufRef.current = editBuf;
 
@@ -198,6 +202,8 @@ export default function App() {
     setSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
+    /* اگر history به پیش از ساخته‌شدن پیش‌نویس برگشت، UI نیز باید بسته شود. */
+    if (!e.editBuf) setEditOpen(false);
     setHistVer((v) => v + 1);
   };
   const undo = () => {
@@ -215,18 +221,25 @@ export default function App() {
 
   /* ---------- حالت ویرایش مسیر ---------- */
   const openEdit = () => {
-    if (editBufRef.current) return;
+    if (editOpenRef.current) return;
+    /* پیش‌نویس قبلی بدون seed مجدد باز می‌شود؛ انتخاب‌ها و هندسه دقیقاً حفظ شده‌اند. */
+    if (editBufRef.current) {
+      setEditOpen(true);
+      showToast("پیش‌نویس ویرایش مسیر بازیابی شد");
+      return;
+    }
     pushPast(snap());
     const seed = seedGcodeEdit(gen.segs, params);
     setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    setEditOpen(true);
     setHistVer((v) => v + 1);
   };
   const closeEdit = () => {
-    if (!editBufRef.current) return;
-    pushPast(snap());
-    setEditBuf(null);
-    setHistVer((v) => v + 1);
-    showToast("حالت ویرایش مسیر بسته شد — فایل، آخرین وضعیتِ تأییدشده است", "warn");
+    if (!editOpenRef.current) return;
+    /* فقط UI بسته می‌شود؛ editBuf به‌عنوان پیش‌نویس برای ورود بعدی باقی می‌ماند. */
+    commitRef.current = null;
+    setEditOpen(false);
+    showToast("ویرایش مسیر بسته شد — پیش‌نویس تغییرات برای بازگشت بعدی حفظ شد", "warn");
   };
   const confirmEdit = () => {
     const eb = editBufRef.current;
@@ -301,7 +314,7 @@ export default function App() {
   /* تغییر اسکچ — با commit=false تغییر زنده (کشیدن) و با true ثبت در تاریخچه */
   const onSketchChange = useCallback((next: SketchSeg[], commit: boolean) => {
     /* در حالت ادیت، ویرایش پروفایل روی کپیِ کاریِ بافر می‌نشیند (فایل تا «تأیید» عوض نمی‌شود) */
-    if (editBufRef.current) {
+    if (editOpenRef.current && editBufRef.current) {
       if (!commit && !commitRef.current) commitRef.current = snap();
       onEditBuf({ ...editBufRef.current, sketch: next }, commit);
       return;
@@ -314,6 +327,11 @@ export default function App() {
       commitRef.current = { sketch, gcodeOvr, editBuf: null }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
+    /* اگر پیش‌نویس پنهان وجود دارد، اسکچ جدید را نیز در آن همگام نگه می‌داریم
+       تا بازگشت و تأیید بعدی، تغییرات تازهٔ طراحی را بازنویسی نکند. */
+    if (editBufRef.current && !editOpenRef.current) {
+      setEditBuf({ ...editBufRef.current, sketch: next });
+    }
     setHistVer((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sketch, gcodeOvr]);
@@ -522,11 +540,11 @@ export default function App() {
           >
             {mode === "design" ? (
             <ProfileEditor
-              segs={editBuf ? editBuf.sketch : sketch}
+              segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
-              edit={editBuf}
+              edit={editOpen ? editBuf : null}
               editChanges={(() => {
-                if (!editBuf) return 0;
+                if (!editOpen || !editBuf) return 0;
                 const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
                 let n = JSON.stringify(next) === JSON.stringify(gcodeOvr) ? 0 : 1;
                 if (editBuf.sketch !== sketch) n++;

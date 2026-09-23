@@ -2844,9 +2844,9 @@ export default function ProfileEditor({
           <button
             onClick={onEditCancel}
             className="rounded-full border border-edge bg-panel/70 px-2.5 py-1 text-[11px] font-bold text-mute transition-colors hover:text-ink"
-            title="بستن ویرایش مسیر (با واگرد می‌توانید برگردید)"
+            title="خروج از ویرایش مسیر؛ پیش‌نویس تغییرات برای ورود بعدی حفظ می‌شود"
           >
-            انصراف
+            خروج
           </button>
         </div>
       )}
