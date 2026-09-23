@@ -288,6 +288,7 @@ export default function ProfileEditor({
   const [selL, setSelL] = useState<number[]>([]); // خطوط انتخابی
   const [activeLine, setActiveLine] = useState<number | null>(null); // مبنای پیمایش Arrow
   const [selV, setSelV] = useState<number[]>([]); // رأس‌های انتخابی (نقاط مشترک)
+  const [showPathPoints, setShowPathPoints] = useState(true);
   const [selOff, setSelOff] = useState<number[]>([]); // منحنی‌های افست انتخابی
   const [hoverBuf, setHoverBuf] = useState<number | null>(null);
   const [bufMarq, setBufMarq] = useState<{ ids: number[]; vxs: number[] } | null>(null);
@@ -1080,7 +1081,7 @@ export default function ProfileEditor({
   /* تمام رأس‌های نزدیک قابل انتخاب‌اند؛ برای هم‌پوشانی، انتخاب‌گر باز می‌شود. */
   const hitBufVerts = (px: number, py: number): number[] => {
     const c = camRef.current;
-    if (!c || !editOpen) return [];
+    if (!c || !editOpen || !showPathPoints) return [];
     const allowed = new Set(lines.filter(bufSelectable).flatMap((l) => [l.va, l.vb]));
     return verts.filter((v) => allowed.has(v.id)).map((v) => {
       const [x, y] = screenPt(c, v.z, v.x / 2); return { id: v.id, d: Math.hypot(px - x, py - y) };
@@ -2017,7 +2018,8 @@ export default function ProfileEditor({
         }}
       >
         <defs>
-          <filter id="curveGlow" x="-40%" y="-40%" width="180%" height="180%">
+          {/* userSpaceOnUse مانع صفرشدن محدوده فیلتر برای خطوط کاملاً افقی/عمودی می‌شود. */}
+          <filter id="curveGlow" filterUnits="userSpaceOnUse" x="-10000" y="-10000" width="20000" height="20000">
             <feGaussianBlur stdDeviation="3" result="b" />
             <feMerge>
               <feMergeNode in="b" />
@@ -2140,7 +2142,7 @@ export default function ProfileEditor({
                 />
               );
             })()}
-            {pickerHover?.kind === "vert" && vById.get(pickerHover.id) && (() => {
+            {showPathPoints && pickerHover?.kind === "vert" && vById.get(pickerHover.id) && (() => {
               const vertex = vz(pickerHover.id);
               const [x, y] = P(vertex.z, vertex.x / 2);
               return (
@@ -2231,7 +2233,7 @@ export default function ProfileEditor({
               return <path key={`bs${l.id}`} d={lineD(l)} fill="none" stroke={active ? "#ffd27a" : "#45b394"} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={active ? 4.2 : 3} strokeLinecap="round" filter="url(#curveGlow)" />;
             })}
             {/* رأس‌های خطوط انتخابی — هر رأس یک نقطه (اشتراک‌ها هم‌مکان‌اند، دو‌تایی نمی‌شود) */}
-            {[...selVids].map((vid) => {
+            {showPathPoints && [...selVids].map((vid) => {
               const v = vz(vid);
               const [x, y] = P(v.z, v.x / 2);
               const on = selV.includes(vid);
@@ -2673,6 +2675,31 @@ export default function ProfileEditor({
       {/* ---------- بالا-راست: منوی لایه‌ها + کلید «ویرایش مسیر» (سمت چپِ منو) ---------- */}
       <div className="absolute top-2.5 right-2.5 z-20 flex items-start gap-2">
         <LayerMenu settings={settings} onSettings={onSettings} />
+        {editOpen && (
+          <button
+            type="button"
+            role="switch"
+            aria-checked={showPathPoints}
+            onClick={() => {
+              setPickerHover(null);
+              setHitPicker(null);
+              setShowPathPoints((visible) => {
+                if (visible) setSelV([]);
+                return !visible;
+              });
+            }}
+            title={showPathPoints ? "پنهان‌کردن نقاط مسیر و غیرفعال‌کردن انتخاب آن‌ها" : "نمایش و فعال‌کردن نقاط مسیر"}
+            className={cn(
+              "chip-toggle backdrop-blur-sm transition-all",
+              showPathPoints ? "border-teal/55 bg-teal/10 text-teal" : "border-edge bg-panel/85 text-dim hover:border-edge2"
+            )}
+          >
+            <span className={cn("relative h-3.5 w-7 rounded-full border transition-colors", showPathPoints ? "border-teal/70 bg-teal/25" : "border-edge2 bg-panel3")}>
+              <span className={cn("absolute top-0.5 h-2 w-2 rounded-full transition-all", showPathPoints ? "right-0.5 bg-teal" : "right-[17px] bg-dim")} />
+            </span>
+            نقاط
+          </button>
+        )}
         <button
           onClick={() => onEditToggle(!editOpen)}
           title="ویرایشِ مسیرِ جی‌کد به‌صورت یک خطِ یکپارچه (مثل سیمکو) — فایل فقط با «تأیید» به‌روز می‌شود"
