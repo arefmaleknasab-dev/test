@@ -561,6 +561,7 @@ export interface Seg {
   x2: number; // قطر پایان
   z2: number;
   feed: number;
+  feedOvr?: boolean; // فیدِ دستی ویرایش مسیر؛ از ساده‌سازی global feed مستثناست
   line: number; // اندیس خط در آرایه خطوط جی‌کد
   kind: SegKind;
   op: OpType | "sys"; // عملیات مولد این حرکت
@@ -1536,7 +1537,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 /* جی‌کد فقط دو F باقی بماند و G1/F های تکراری حذف شوند.                     */
 const FINISH_KINDS: SegKind[] = ["finish", "offset", "borefin"];
 function normFeed(sg: Seg, p: Params): number {
-  if (!p.simpleFeed) return sg.feed;
+  if (sg.feedOvr || !p.simpleFeed) return sg.feed;
   return FINISH_KINDS.includes(sg.kind) ? p.feedFinish : p.feedRough;
 }
 
@@ -2008,6 +2009,8 @@ export interface GcodeOvr {
   e?: GcodeOvrPt;
   /** نقاط میانی برای شکستن یک حرکت به چند Segment پیوسته */
   via?: GcodeOvrPt[];
+  /** نوع حرکت و فید هر قطعه؛ هم‌ردیف با Segmentهای ساخته‌شده از s/via/e */
+  moves?: { motion: 0 | 1; feed: number }[];
   del?: boolean;
 }
 export type GcodeOvrMap = Record<string, GcodeOvr>;
@@ -2022,7 +2025,10 @@ export function applyGcodeOvr(base: GenResult, ovr: GcodeOvrMap, p: Params): Gen
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1], b = points[i];
       if (Math.hypot(b.z - a.z, b.x - a.x) < 1e-6) continue;
-      expanded.push({ ...sg0, z1: a.z, x1: a.x, z2: b.z, x2: b.x, note: i === 1 ? sg0.note : undefined });
+      const move = o?.moves?.[i - 1];
+      const motion = move?.motion ?? sg0.motion;
+      const feed = motion === 0 ? RAPID_RATE : (move?.feed ?? sg0.feed);
+      expanded.push({ ...sg0, motion, feed, feedOvr: !!move, z1: a.z, x1: a.x, z2: b.z, x2: b.x, note: i === 1 ? sg0.note : undefined });
     }
   }
   const kept: Seg[] = [];
@@ -2069,6 +2075,7 @@ export interface ELine {
   vb: number; // رأس مقصد
   motion: 0 | 1;
   feed: number;
+  feedOvr?: boolean;
   opId: number; // -۱ = سیستمی (نزدیک‌سازی/امنیت)
   kind: SegKind;
   holder: 1 | 2;
@@ -2133,7 +2140,7 @@ export function seedGcodeEdit(segs: Seg[], p: Params): Pick<EditBuf, "verts" | "
     const br = bridgeAt.get(i);
     if (br) for (let j = 0; j < br.legs.length; j++) addLine(br.legs[j], bridgeMeta(i * 10 + j));
     if (!(br && br.absorbed)) addLine(e1, bridgeMeta(i * 10 + 8));
-    addLine(e2, { key: sg.ovrKey ?? `#move:${i}`, motion: sg.motion, feed: sg.feed, opId: sg.opId, kind: sg.kind, holder: sg.holder, note: sg.note, fan: sg.fan, fanU: sg.fanU });
+    addLine(e2, { key: sg.ovrKey ?? `#move:${i}`, motion: sg.motion, feed: sg.feed, feedOvr: sg.feedOvr, opId: sg.opId, kind: sg.kind, holder: sg.holder, note: sg.note, fan: sg.fan, fanU: sg.fanU });
   });
   return normalizeEditBuf(verts, lines);
 }
@@ -2238,7 +2245,9 @@ export function deriveGcodeOvr(verts: EVert[], lines: ELine[], baseSegs: Seg[], 
     if (Math.hypot(b.z1 - s0.z, b.x1 - s0.x) > 1e-8) o.s = s0;
     if (Math.hypot(b.z2 - e0.z, b.x2 - e0.x) > 1e-8) o.e = e0;
     if (via.length) o.via = via;
-    if (o.s || o.e || o.via) next[key] = o; else delete next[key];
+    const moves = group.map((l) => ({ motion: l.motion, feed: l.motion === 0 ? RAPID_RATE : l.feed }));
+    if (moves.some((m) => m.motion !== b.motion || (m.motion === 1 && Math.abs(m.feed - b.feed) > 1e-8))) o.moves = moves;
+    if (o.s || o.e || o.via || o.moves) next[key] = o; else delete next[key];
   }
   for (const sg of baseSegs) if (sg.ovrKey && !groups.has(sg.ovrKey)) next[sg.ovrKey] = { del: true };
   return next;

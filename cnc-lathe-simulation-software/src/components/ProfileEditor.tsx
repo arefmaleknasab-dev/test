@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { EditBuf, ELine, EVert, GenResult, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
-import { deleteEditLines, deleteEditVertices, insertEditVertex, normalizeEditBuf, OP_INFO } from "../lib/lathe";
+import { deleteEditLines, deleteEditVertices, insertEditVertex, normalizeEditBuf, OP_INFO, RAPID_RATE } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
 import {
   arcRadius,
@@ -118,6 +118,25 @@ interface Cam {
   ox: number;
   oy: number;
 }
+
+const SPEED_PRESETS = [80, 100, 300, 500, 700, 900, 1500] as const;
+const SPEED_COLORS: Record<number, string> = {
+  80: "#4cc9f0",
+  100: "#4895ef",
+  300: "#43d6b5",
+  500: "#8ac926",
+  700: "#ffd166",
+  900: "#f4a261",
+  1500: "#b48ee0",
+};
+const speedStroke = (motion: 0 | 1, feed: number) => {
+  if (motion === 0) return "#ef4444";
+  const exact = SPEED_COLORS[Math.round(feed)];
+  if (exact) return exact;
+  /* سرعت دستی: طیف آبی تا بنفش، دور از قرمز اختصاصی G0. */
+  const hue = 195 + Math.min(95, Math.max(0, (feed / 1500) * 95));
+  return `hsl(${hue.toFixed(0)} 72% 62%)`;
+};
 
 const SEG_COLOR: Record<SegKind, string> = {
   rapid: "#93a1ad",
@@ -289,6 +308,8 @@ export default function ProfileEditor({
   const [activeLine, setActiveLine] = useState<number | null>(null); // مبنای پیمایش Arrow
   const [selV, setSelV] = useState<number[]>([]); // رأس‌های انتخابی (نقاط مشترک)
   const [showPathPoints, setShowPathPoints] = useState(true);
+  const [showPathBySpeed, setShowPathBySpeed] = useState(false);
+  const [speedMenu, setSpeedMenu] = useState<{ x: number; y: number } | null>(null);
   const [shiftDown, setShiftDown] = useState(false);
   const shiftRef = useRef(false);
   const [selOff, setSelOff] = useState<number[]>([]); // منحنی‌های افست انتخابی
@@ -328,6 +349,7 @@ export default function ProfileEditor({
     setBufMarq(null);
     setHitPicker(null);
     setPickerHover(null);
+    setSpeedMenu(null);
   }, [editOpen]);
   /* نقاط جداشده (unjoined) — به‌صورت پیش‌فرض همهٔ نقاطِ هم‌مکان متصل‌اند */
   const [separated, setSeparated] = useState<Set<string>>(new Set());
@@ -501,6 +523,10 @@ export default function ProfileEditor({
           setMarqueeHits([]);
           return;
         }
+        if (speedMenu) {
+          setSpeedMenu(null);
+          return;
+        }
         if (ctxMenu) {
           setCtxMenu(null);
           return;
@@ -536,7 +562,7 @@ export default function ProfileEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, editOpen, selL, activeLine, selV, selOff, edit, marquee]);
+  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu]);
 
   /* وضعیت فیزیکی Shift برای پیش‌نمایش بازه؛ مستقل از زبان صفحه‌کلید. */
   useEffect(() => {
@@ -1078,14 +1104,14 @@ export default function ProfileEditor({
 
   /* ران‌های بافر برای رسم — مسیرِ کامل، یک زنجیرۀ پیوسته (اتصال‌ها رأسِ مشترک‌اند) */
   const bufRuns = useMemo(() => {
-    if (!editOpen || !cam) return [] as { kind: SegKind; opId: number; d: string }[];
-    const out: { kind: SegKind; opId: number; d: string }[] = [];
-    let cur: { kind: SegKind; opId: number; pts: [number, number][] } | null = null;
+    if (!editOpen || !cam) return [] as { kind: SegKind; opId: number; motion: 0 | 1; feed: number; d: string }[];
+    const out: { kind: SegKind; opId: number; motion: 0 | 1; feed: number; d: string }[] = [];
+    let cur: { kind: SegKind; opId: number; motion: 0 | 1; feed: number; pts: [number, number][] } | null = null;
     const flush = () => {
       if (cur && cur.pts.length > 1) {
         let d = `M ${cur.pts[0][0].toFixed(1)} ${cur.pts[0][1].toFixed(1)}`;
         for (let i = 1; i < cur.pts.length; i++) d += ` L ${cur.pts[i][0].toFixed(1)} ${cur.pts[i][1].toFixed(1)}`;
-        out.push({ kind: cur.kind, opId: cur.opId, d });
+        out.push({ kind: cur.kind, opId: cur.opId, motion: cur.motion, feed: cur.feed, d });
       }
       cur = null;
     };
@@ -1097,9 +1123,9 @@ export default function ProfileEditor({
       }
       const a = vz(l.va);
       const b = vz(l.vb);
-      if (!cur || cur.kind !== kind || cur.opId !== l.opId) {
+      if (!cur || cur.kind !== kind || cur.opId !== l.opId || cur.motion !== l.motion || Math.abs(cur.feed - l.feed) > 1e-8) {
         flush();
-        cur = { kind, opId: l.opId, pts: [screenPt(cam, a.z, a.x / 2)] };
+        cur = { kind, opId: l.opId, motion: l.motion, feed: l.feed, pts: [screenPt(cam, a.z, a.x / 2)] };
       }
       cur.pts.push(screenPt(cam, b.z, b.x / 2));
     }
@@ -1133,6 +1159,35 @@ export default function ProfileEditor({
     }).filter((h) => h.d <= 8.5).sort((a, b) => a.d - b.d).map((h) => h.id);
   };
   const hitBufVx = (px: number, py: number) => hitBufVerts(px, py)[0] ?? null;
+
+  const applySelectedSpeed = (motion: 0 | 1, feed = RAPID_RATE) => {
+    if (!edit || !selL.length) return;
+    const ids = new Set(selL);
+    const nextLines = edit.lines.map((line) =>
+      ids.has(line.id) ? { ...line, motion, feed: motion === 0 ? RAPID_RATE : feed, feedOvr: true } : line
+    );
+    /* تغییر چند خط یک تراکنش واحد در history اصلی است. */
+    onEditBuf({ ...edit, lines: nextLines }, true);
+    setSpeedMenu(null);
+  };
+  const applyManualSpeed = () => {
+    const raw = window.prompt("سرعت G1 را وارد کنید (1 تا 1500 mm/min):", "300");
+    if (raw == null) return;
+    const value = Number(raw.trim());
+    if (!raw.trim() || !Number.isFinite(value) || value <= 0 || value > 1500) {
+      window.alert("سرعت باید یک عدد معتبر بین 1 و 1500 باشد.");
+      return;
+    }
+    applySelectedSpeed(1, value);
+  };
+  const openSpeedMenu = (clientX: number, clientY: number) => {
+    if (!editOpen || !selL.length) return;
+    const loc = toLocal(clientX, clientY);
+    const hit = hitBufLines(loc.x, loc.y).find((id) => selectedLineIds.has(id));
+    if (hit == null) return;
+    const rect = wrapRef.current!.getBoundingClientRect();
+    setSpeedMenu({ x: clientX - rect.left, y: clientY - rect.top });
+  };
 
   /* گامِ حرکت: فقط «میزانِ» جابه‌جایی از شبکه (چیپِ آهنربا) گرفته می‌شود — قفل روی خطوط شبکه نیست */
   const quantStep = (raw: SPoint, start: SPoint): { z: number; r: number } => {
@@ -1250,6 +1305,7 @@ export default function ProfileEditor({
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!camRef.current) return;
     setCtxMenu(null);
+    setSpeedMenu(null);
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
@@ -1647,6 +1703,7 @@ export default function ProfileEditor({
     if (d?.mode === "rwait") {
       if (!d.moved) {
         if (draft.length) cancelDraft();
+        else if (editOpen) openSpeedMenu(e.clientX, e.clientY);
         else openJoinMenu(e.clientX, e.clientY);
       }
       return;
@@ -1978,11 +2035,20 @@ export default function ProfileEditor({
      Gaussian blur. این کار تعداد nodeها و هزینهٔ GPU را هنگام pan ثابت نگه می‌دارد. */
   let selectedLinesPath = "";
   let activeLinePath = "";
+  let activeLineSpeedColor = "";
+  const selectedSpeedPaths = new Map<string, string>();
   if (editOpen && selectedLineIds.size) {
     for (const line of lines) {
       if (!selectedLineIds.has(line.id)) continue;
-      if (line.id === activeLine) activeLinePath += `${lineD(line)} `;
-      else selectedLinesPath += `${lineD(line)} `;
+      const d = `${lineD(line)} `;
+      if (line.id === activeLine) {
+        activeLinePath += d;
+        activeLineSpeedColor = speedStroke(line.motion, line.feed);
+      } else {
+        selectedLinesPath += d;
+        const color = speedStroke(line.motion, line.feed);
+        selectedSpeedPaths.set(color, `${selectedSpeedPaths.get(color) ?? ""}${d}`);
+      }
     }
   }
   let rangePreviewPath = "";
@@ -2197,7 +2263,7 @@ export default function ProfileEditor({
                   key={`br${i}`}
                   d={run.d}
                   fill="none"
-                  stroke={SEG_COLOR[run.kind]}
+                  stroke={showPathBySpeed ? speedStroke(run.motion, run.feed) : SEG_COLOR[run.kind]}
                   strokeOpacity={pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9}
                   strokeWidth={(isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5) + (matchIso ? 0.7 : 0)}
                   strokeDasharray={isRapid ? "4 4" : run.kind === "offset" ? "7 4" : undefined}
@@ -2216,7 +2282,7 @@ export default function ProfileEditor({
                 <path
                   d={lineD(line)}
                   fill="none"
-                  stroke={SEG_COLOR[kind]}
+                  stroke={showPathBySpeed ? speedStroke(line.motion, line.feed) : SEG_COLOR[kind]}
                   strokeWidth={5}
                   strokeOpacity={1}
                   strokeLinecap="round"
@@ -2316,13 +2382,17 @@ export default function ProfileEditor({
             {selectedLinesPath && (
               <>
                 <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />
-                <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3} strokeLinecap="round" pointerEvents="none" />
+                {showPathBySpeed ? [...selectedSpeedPaths].map(([color, d]) => (
+                  <path key={color} d={d} fill="none" stroke={color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3.2} strokeLinecap="round" pointerEvents="none" />
+                )) : (
+                  <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3} strokeLinecap="round" pointerEvents="none" />
+                )}
               </>
             )}
             {activeLinePath && (
               <>
-                <path d={activeLinePath} fill="none" stroke="#ffd27a" strokeOpacity={pickerHover ? 0.02 : 0.24} strokeWidth={9} strokeLinecap="round" pointerEvents="none" />
-                <path d={activeLinePath} fill="none" stroke="#ffd27a" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={4.2} strokeLinecap="round" pointerEvents="none" />
+                <path d={activeLinePath} fill="none" stroke="#ffd27a" strokeOpacity={pickerHover ? 0.02 : showPathBySpeed ? 0.55 : 0.24} strokeWidth={9} strokeLinecap="round" pointerEvents="none" />
+                <path d={activeLinePath} fill="none" stroke={showPathBySpeed ? activeLineSpeedColor : "#ffd27a"} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={4.2} strokeLinecap="round" pointerEvents="none" />
               </>
             )}
             {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
@@ -2603,6 +2673,36 @@ export default function ProfileEditor({
         )}
       </svg>
 
+      {/* ---------- منوی راست‌کلیک سرعت Segmentهای انتخاب‌شده ---------- */}
+      {speedMenu && editOpen && selL.length > 0 && (
+        <div
+          dir="rtl"
+          className="anim-in absolute z-30 w-48 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
+          style={{ left: Math.max(8, Math.min(speedMenu.x, size.w - 200)), top: Math.max(8, Math.min(speedMenu.y, size.h - 310)) }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">
+            تعیین سرعت · {selL.length.toLocaleString("fa-IR")} خط
+          </div>
+          <button onClick={applyManualSpeed} className="flex w-full items-center gap-2 px-3 py-2 text-right text-[11.5px] font-bold text-brass2 transition-colors hover:bg-panel3">
+            <span className="h-2.5 w-2.5 rounded-full border border-brass bg-brass/20" />
+            تعیین دستی سرعت...
+          </button>
+          <div className="h-px bg-edge" />
+          <button onClick={() => applySelectedSpeed(0)} className="flex w-full items-center gap-2 px-3 py-1.5 text-right text-[11.5px] font-semibold text-ink transition-colors hover:bg-panel3">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: speedStroke(0, RAPID_RATE) }} />
+            <span className="font-mono">G0</span>
+            <span className="mr-auto text-[9px] text-dim">حرکت سریع</span>
+          </button>
+          {SPEED_PRESETS.map((feed) => (
+            <button key={feed} onClick={() => applySelectedSpeed(1, feed)} className="flex w-full items-center gap-2 px-3 py-1.5 text-right text-[11.5px] font-semibold text-ink transition-colors hover:bg-panel3">
+              <span className="h-2.5 w-2.5 rounded-full" style={{ background: speedStroke(1, feed) }} />
+              <span className="font-mono">G1 F{feed}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* ---------- منوی راست‌کلیک: اتصال / جداسازی نقطه ---------- */}
       {ctxMenu && (
         <div
@@ -2793,6 +2893,24 @@ export default function ProfileEditor({
           <button
             type="button"
             role="switch"
+            aria-checked={showPathBySpeed}
+            onClick={() => setShowPathBySpeed((value) => !value)}
+            title="نمایش مسیر بر اساس سرعت"
+            className={cn(
+              "chip-toggle backdrop-blur-sm transition-all",
+              showPathBySpeed ? "border-brass/60 bg-brass/12 text-brass2" : "border-edge bg-panel/85 text-dim hover:border-edge2"
+            )}
+          >
+            <span className={cn("relative h-3.5 w-7 rounded-full border transition-colors", showPathBySpeed ? "border-brass/70 bg-brass/25" : "border-edge2 bg-panel3")}>
+              <span className={cn("absolute top-0.5 h-2 w-2 rounded-full transition-all", showPathBySpeed ? "right-0.5 bg-brass" : "right-[17px] bg-dim")} />
+            </span>
+            نمایش بر اساس سرعت
+          </button>
+        )}
+        {editOpen && (
+          <button
+            type="button"
+            role="switch"
             aria-checked={showPathPoints}
             onClick={() => {
               setPickerHover(null);
@@ -2884,7 +3002,7 @@ export default function ProfileEditor({
                 onBlur={() => setPickerHover(null)}
                 onClick={() => { selectEditLines([id], id, true); setSelV([]); setHitPicker(null); setPickerHover(null); }}
               >
-                <span className="h-2 w-2 rounded-full" style={{ background: SEG_COLOR[l.motion === 0 ? "rapid" : l.kind] }} />
+                <span className="h-2 w-2 rounded-full" style={{ background: showPathBySpeed ? speedStroke(l.motion, l.feed) : SEG_COLOR[l.motion === 0 ? "rapid" : l.kind] }} />
                 <span>خط {id.toLocaleString("fa-IR")} · {l.motion === 0 ? "حرکت سریع" : OP_INFO[ops.find((o) => o.id === l.opId)?.type ?? "finish"].name}</span>
               </button>
             ) : null; })}

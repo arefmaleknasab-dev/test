@@ -22,7 +22,7 @@ interface Saved {
   settings?: Partial<EdSettings>;
   layout?: LayoutState;
   activePreset?: string | null;
-  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; del?: boolean }>;
+  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; del?: boolean }>;
   version?: number;
 }
 
@@ -52,7 +52,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
   if (!raw || typeof raw !== "object") return out;
   for (const [k, v] of Object.entries(raw)) {
     if (!v || typeof v !== "object") continue;
-    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; del?: boolean } = {};
+    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; del?: boolean } = {};
     const okPt = (q: unknown): q is { z: number; x: number } =>
       !!q &&
       typeof q === "object" &&
@@ -63,8 +63,12 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
     if (okPt(v.s)) o.s = { z: v.s!.z, x: v.s!.x };
     if (okPt(v.e)) o.e = { z: v.e!.z, x: v.e!.x };
     if (Array.isArray(v.via)) o.via = v.via.filter(okPt).map((q) => ({ z: q.z, x: q.x }));
+    if (Array.isArray(v.moves)) {
+      const moves = v.moves.filter((m) => m && (m.motion === 0 || m.motion === 1) && typeof m.feed === "number" && isFinite(m.feed) && m.feed >= 0);
+      if (moves.length) o.moves = moves.map((m) => ({ motion: m.motion, feed: m.feed }));
+    }
     if (v.del === true) o.del = true;
-    if (o.s || o.e || o.via?.length || o.del) out[k] = o;
+    if (o.s || o.e || o.via?.length || o.moves?.length || o.del) out[k] = o;
   }
   return out;
 }
