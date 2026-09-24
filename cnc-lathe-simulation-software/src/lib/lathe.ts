@@ -94,7 +94,8 @@ export interface Params {
   blankL: number; // طول خام
   blankShape: BlankShape; // شکل مقطع خام
   doc: number; // عمق بار خشن (شعاع)
-  offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت
+  offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
+  innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
   feedRough: number; // mm/min
   feedFinish: number; // mm/min
   rpm: number;
@@ -290,7 +291,7 @@ let opUid = 1;
 
 /** گروه‌بندی عملیات برای انتخاب سریع «داخل / خارج / هردو» */
 export const OUTER_OPS: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish"];
-export const INNER_OPS: OpType[] = ["inner-rough", "inner-finish", "bottom"];
+export const INNER_OPS: OpType[] = ["inner-rough", "inner-offset", "inner-finish", "bottom"];
 
 /** هلدر پیش‌فرض هر عملیات: داخل‌تراشی با هلدر دوم، بقیه با هلدر اول */
 export const DEFAULT_HOLDER: Record<OpType, 1 | 2> = {
@@ -302,6 +303,7 @@ export const DEFAULT_HOLDER: Record<OpType, 1 | 2> = {
   offset: 1,
   finish: 1,
   "inner-rough": 2,
+  "inner-offset": 2,
   "inner-finish": 2,
   bottom: 2,
 };
@@ -312,6 +314,7 @@ export const DEFAULT_PARAMS: Params = {
   blankShape: "square",
   doc: 3,
   offsetDist: 0.5,
+  innerOffsetDist: 0.5,
   feedRough: 220,
   feedFinish: 110,
   rpm: 1500,
@@ -343,7 +346,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -453,11 +456,11 @@ function trimOffsetLoops(pts: Sample[]): Sample[] {
   return cur;
 }
 
-export type SegKind = "rapid" | "round" | "face" | "rough" | "roughz" | "copy" | "offset" | "finish" | "bore" | "borefin" | "bottom";
+export type SegKind = "rapid" | "round" | "face" | "rough" | "roughz" | "copy" | "offset" | "finish" | "bore" | "boreoff" | "borefin" | "bottom";
 
 /* ---------------- عملیات و استراتژی‌های تراش ---------------- */
 
-export type OpType = "round" | "face" | "rough-d" | "rough-z" | "copy" | "offset" | "finish" | "inner-rough" | "inner-finish" | "bottom";
+export type OpType = "round" | "face" | "rough-d" | "rough-z" | "copy" | "offset" | "finish" | "inner-rough" | "inner-offset" | "inner-finish" | "bottom";
 
 export interface Op {
   id: number;
@@ -475,11 +478,12 @@ export const OP_INFO: Record<OpType, { name: string; desc: string; color: string
   offset: { name: "آفست", desc: "خط موازی با طرح — مرجع مراحل خشن", color: "#f59a80" },
   finish: { name: "پرداخت نهایی", desc: "حرکت دقیق روی خط اصلی طرح", color: "#e0703c" },
   "inner-rough": { name: "خشن داخل (کاسه)", desc: "خالی‌کردن داخل کاسه با هلدر دوم", color: "#4cc9f0" },
+  "inner-offset": { name: "افست داخل تراشی", desc: "مسیر موازی دیواره داخلی پیش از پرداخت", color: "#c77dff" },
   "inner-finish": { name: "پرداخت داخل", desc: "پرداخت دیواره داخلی با هلدر دوم", color: "#f72585" },
   bottom: { name: "کف‌تراشی", desc: "برداشت طول اضافی خام پشت صفحه دهانه با هلدر داخل‌تراشی", color: "#ffd166" },
 };
 
-export const ALL_OP_TYPES: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish", "inner-rough", "inner-finish", "bottom"];
+export const ALL_OP_TYPES: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish", "inner-rough", "inner-offset", "inner-finish", "bottom"];
 
 export interface Strategy {
   id: string;
@@ -491,7 +495,7 @@ export const STRATEGIES: Strategy[] = [
   { id: "g71", name: "استاندارد شعاعی", types: ["round", "rough-d", "offset", "finish"] },
   { id: "g72", name: "محوری پله‌ای", types: ["round", "rough-z", "offset", "finish"] },
   { id: "copy", name: "کپی‌تراشی", types: ["round", "copy", "offset", "finish"] },
-  { id: "bowl", name: "کاسه داخل+خارج", types: ["round", "face", "rough-d", "bottom", "inner-rough", "offset", "finish", "inner-finish"] },
+  { id: "bowl", name: "کاسه داخل+خارج", types: ["round", "face", "rough-d", "offset", "finish", "bottom", "inner-rough", "inner-offset", "inner-finish"] },
 ];
 
 export function makeOps(types: OpType[]): Op[] {
@@ -539,6 +543,12 @@ export function normalizeOps(raw: unknown, legacy = false): Op[] | null {
         holder: hh === 2 ? 2 : hh === 1 ? 1 : DEFAULT_HOLDER[t as OpType],
       });
     }
+  }
+  /* مهاجرت زنجیره‌های کاسه ذخیره‌شده پیش از افزوده‌شدن آفست داخل‌تراشی. */
+  if (out.some((o) => o.type === "inner-rough") && out.some((o) => o.type === "inner-finish") && !out.some((o) => o.type === "inner-offset")) {
+    const roughAt = out.findIndex((o) => o.type === "inner-rough");
+    const id = Math.max(0, ...out.map((o) => o.id)) + 1;
+    out.splice(roughAt + 1, 0, { id, type: "inner-offset", on: true, holder: 2 });
   }
   if (legacy && out.length) {
     /* «آفست» (پاس فنری سابق) همیشه بعد از پرداخت بود؛ حالا باید قبل از آن باشد */
@@ -866,6 +876,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 
   /* خط آفست — موازی با خط اصلی طرح در فاصلهٔ offsetDist (مرجع مراحل خشن) */
   const OD = Math.max(0, p.offsetDist);
+  const IOD = Math.max(0, p.innerOffsetDist);
   /* خط آفست یکنواخت: آفست نرمال واقعی (نه r+OD شعاعی) + سقف قطر خام */
   const offSamples: Sample[] = normalOffset(samples, OD, true).map((s) => ({ z: s.z, r: Math.min(R, s.r) }));
   const floorR = minR + OD;
@@ -1282,7 +1293,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = IW[0].z;
         const zRim = IW[IW.length - 1].z;
         /* خط آفست یکنواخت داخل: آفست نرمال به سمت حفره (نه wallIn−OD شعاعی) */
-        const innerOff = normalOffset(IW, OD, false);
+        const innerOff = normalOffset(IW, IOD, false);
         const wallInOff = (z: number): number => {
           if (z <= innerOff[0].z) return innerOff[0].r;
           for (let i = 1; i < innerOff.length; i++) {
@@ -1319,6 +1330,38 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         /* خروج: بازگشت شعاعی در کف خالی‌شده، سپس خروج محوری به بیرون خط داخلی */
         rawRapid(2 * rEntry, depths[depths.length - 1]);
         rawRapid(2 * rEntry, mouthX);
+        mv(0, retractX, mouthX, 0, "rapid");
+        break;
+      }
+      /* آفست داخل‌تراشی — پاس خط‌چینِ موازی دیواره، بین خشن و پرداخت داخل */
+      case "inner-offset": {
+        curOp = "inner-offset";
+        if (!hasInner || IOD <= 0.01) break;
+        note(`INNER OFFSET PASS ${f2(IOD)} MM (HOLDER ${op.holder})`);
+        const IW = innerSamples;
+        const innerOff = normalOffset(IW, IOD, false);
+        if (innerOff.length < 2) break;
+        const zBot = innerOff[0].z;
+        const zRimF = innerOff[innerOff.length - 1].z;
+        const rEntry = 0.6;
+        const mouthX = Math.max(p.blankL, zRimF) + p.safety + (p.spreadG0 ? 3 : 0);
+        mv(0, 2 * rEntry, mouthX, 0, "rapid");
+        if (innerCleared) rawRapid(2 * rEntry, zBot);
+        else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "boreoff");
+        mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
+        for (let i = 1; i < innerOff.length; i++) {
+          mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
+        }
+        if (innerCleared) {
+          rawRapid(2 * rEntry, zRimF);
+          rawRapid(2 * rEntry, mouthX);
+        } else {
+          for (let i = innerOff.length - 2; i >= 0; i--) {
+            mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
+          }
+          mv(1, 2 * rEntry, zBot, p.feedFinish, "boreoff");
+          mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "boreoff");
+        }
         mv(0, retractX, mouthX, 0, "rapid");
         break;
       }
@@ -1527,7 +1570,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     rapidLen,
     timeSec,
     volumeCm3: vol / 1000,
-    roughLayers: p.ops.filter((o) => o.on && (o.type === "rough-d" || o.type === "rough-z" || o.type === "offset" || o.type === "inner-rough")).length,
+    roughLayers: p.ops.filter((o) => o.on && (o.type === "rough-d" || o.type === "rough-z" || o.type === "offset" || o.type === "inner-rough" || o.type === "inner-offset")).length,
     format: p.format,
   };
 }
@@ -1535,7 +1578,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 /* فیدر بهینه: وقتی simpleFeed روشن است، فیدر هر حرکت به یکی از دو فیدر اصلی  */
 /* (خشن برای عملیات‌های برداشت، پرداخت برای پرداخت و آفست) ساده می‌شود تا در  */
 /* جی‌کد فقط دو F باقی بماند و G1/F های تکراری حذف شوند.                     */
-const FINISH_KINDS: SegKind[] = ["finish", "offset", "borefin"];
+const FINISH_KINDS: SegKind[] = ["finish", "offset", "boreoff", "borefin"];
 function normFeed(sg: Seg, p: Params): number {
   if (sg.feedOvr || !p.simpleFeed) return sg.feed;
   return FINISH_KINDS.includes(sg.kind) ? p.feedFinish : p.feedRough;
@@ -1668,7 +1711,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
   lines.push("O1001 (KHARRATKOD - 2 AXIS WOOD LATHE)");
   lines.push(`(STOCK D${p.blankD} x L${p.blankL} MM)`);
   lines.push(`(TOOL: ${toolDesc(p.tool)})`);
-  lines.push(`(DOC ${p.doc} MM - OFFSET ${p.offsetDist} MM)`);
+  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM)`);
   const usesH2 = segs.some((s) => s.motion === 1 && s.holder === 2);
   if (usesH2) {
     lines.push(`(HOLDER2: XOFF ${p.holder2.xOff} YOFF ${p.holder2.yOff} ROT ${HOLDER2_ROT})`);

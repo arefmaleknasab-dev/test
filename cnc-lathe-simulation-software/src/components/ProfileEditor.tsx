@@ -152,6 +152,7 @@ const SEG_COLOR: Record<SegKind, string> = {
   finish: "#e0703c",
   offset: "#f59a80",
   bore: "#4cc9f0",
+  boreoff: "#c77dff",
   borefin: "#f72585",
   bottom: "#ffd166",
 };
@@ -248,6 +249,7 @@ const KIND_VISIBLE: Record<SegKind, LayerKey> = {
   finish: "showFinish",
   offset: "showOffset",
   bore: "showBore",
+  boreoff: "showBore",
   borefin: "showBore",
   bottom: "showBottom",
 };
@@ -2301,10 +2303,10 @@ export default function ProfileEditor({
             const dim = iso && !matchIso;
             if (dim && isRapid) return null;
             const color = SEG_COLOR[run.kind];
-            const baseOpacity = isRapid ? 0.28 : run.kind === "offset" ? 0.9 : 0.8;
+            const baseOpacity = isRapid ? 0.28 : run.kind === "offset" || run.kind === "boreoff" ? 0.9 : 0.8;
             return (
               <g key={i} style={{ opacity: dim ? 0.06 : 1, ...fadeStyle }}>
-                <path d={run.d} fill="none" stroke={color} strokeOpacity={matchIso ? 1 : baseOpacity} strokeWidth={(isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) + (matchIso ? 0.7 : 0)} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" filter={matchIso ? "url(#curveGlow)" : undefined} />
+                <path d={run.d} fill="none" stroke={color} strokeOpacity={matchIso ? 1 : baseOpacity} strokeWidth={(isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) + (matchIso ? 0.7 : 0)} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" filter={matchIso ? "url(#curveGlow)" : undefined} />
                 {run.arrows && !dim && <path d={run.arrows} fill={color} fillOpacity={0.95} />}
                 {run.holder === 2 && !dim && !isRapid && (
                   <g>
@@ -2335,7 +2337,7 @@ export default function ProfileEditor({
                   stroke={showPathBySpeed ? speedStroke(run.motion, run.feed) : SEG_COLOR[run.kind]}
                   strokeOpacity={pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9}
                   strokeWidth={(isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5) + (matchIso ? 0.7 : 0)}
-                  strokeDasharray={isRapid ? "4 4" : run.kind === "offset" ? "7 4" : undefined}
+                  strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined}
                   strokeLinejoin="round"
                   strokeLinecap="round"
                   filter={matchIso ? "url(#curveGlow)" : undefined}
