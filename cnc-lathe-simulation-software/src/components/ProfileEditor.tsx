@@ -1614,9 +1614,17 @@ export default function ProfileEditor({
       };
       const mode: "window" | "crossing" = loc.x >= d.sx ? "window" : "crossing";
       setMarquee({ x0: d.sx, y0: d.sy, x1: loc.x, y1: loc.y, add: e.shiftKey, remove: e.ctrlKey || e.metaKey });
-      setMarqueeHits(marqueeHitIds(rectW, mode));
-      setMarqueePointHits(marqueeHitPoints(rectW));
-      if (editOpen) setBufMarq(bufMarqueeHits(rectW, mode));
+      if (editOpen) {
+        /* در ویرایش مسیر فقط پیش‌نمایش EditBuf محاسبه می‌شود؛ پروفایل اصلی
+           نباید حتی به‌صورت موقت داخل باکس هایلایت شود. */
+        setMarqueeHits([]);
+        setMarqueePointHits([]);
+        setBufMarq(bufMarqueeHits(rectW, mode));
+      } else {
+        setBufMarq(null);
+        setMarqueeHits(marqueeHitIds(rectW, mode));
+        setMarqueePointHits(marqueeHitPoints(rectW));
+      }
       return;
     }
 
@@ -2676,7 +2684,7 @@ export default function ProfileEditor({
         )}
 
         {/* پیش‌نمایش نامزدهای باکس انتخاب */}
-        {marquee &&
+        {!editOpen && marquee &&
           marqueeHits.map((id) => {
             const s = segs.find((x) => x.id === id);
             if (!s || selected.includes(id)) return null;
@@ -2695,7 +2703,7 @@ export default function ProfileEditor({
           })}
 
         {/* پیش‌نمایش نقاط نامزدِ داخل باکس */}
-        {marquee &&
+        {!editOpen && marquee &&
           marqueePointHits.map((ph, i) => {
             const s = segs.find((x) => x.id === ph.segId);
             const pt = s ? s[ph.part] : null;
@@ -2724,7 +2732,7 @@ export default function ProfileEditor({
                 <>
                   <rect x={x} y={y} width={w} height={h} fill={crossing ? "rgba(63,175,93,0.10)" : "rgba(74,163,255,0.10)"} stroke={c} strokeWidth={1.4} strokeDasharray={crossing ? "6 3" : undefined} />
                   <text x={x + 6} y={y - 7} fontSize={10.5} fontFamily="Vazirmatn, sans-serif" fontWeight={700} fill={c} stroke="#120e09" strokeWidth={3} paintOrder="stroke">
-                    {crossing ? "متقاطع" : "پنجره‌ای"} • {marqueeHits.length} المان، {marqueePointHits.length} نقطه
+                    {crossing ? "متقاطع" : "پنجره‌ای"} • {editOpen ? (bufMarq?.ids.length ?? 0) : marqueeHits.length} المان، {editOpen ? (bufMarq?.vxs.length ?? 0) : marqueePointHits.length} نقطه
                     {marquee.remove ? " − حذف" : marquee.add ? " + افزودن" : ""}
                   </text>
                 </>
