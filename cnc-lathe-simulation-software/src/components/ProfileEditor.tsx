@@ -129,6 +129,10 @@ const SPEED_COLORS: Record<number, string> = {
   900: "#f4a261",
   1500: "#b48ee0",
 };
+const latinDigits = (value: string) => value
+  .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+  .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)));
+
 const speedStroke = (motion: 0 | 1, feed: number) => {
   if (motion === 0) return "#ef4444";
   const exact = SPEED_COLORS[Math.round(feed)];
@@ -310,6 +314,8 @@ export default function ProfileEditor({
   const [showPathPoints, setShowPathPoints] = useState(true);
   const [showPathBySpeed, setShowPathBySpeed] = useState(false);
   const [speedMenu, setSpeedMenu] = useState<{ x: number; y: number } | null>(null);
+  const [manualSpeed, setManualSpeed] = useState("");
+  const [speedError, setSpeedError] = useState("");
   const [shiftDown, setShiftDown] = useState(false);
   const shiftRef = useRef(false);
   const [selOff, setSelOff] = useState<number[]>([]); // منحنی‌های افست انتخابی
@@ -320,7 +326,9 @@ export default function ProfileEditor({
 
   /* انتخاب Segment در خود EditBuf نگه‌داری می‌شود تا بخشی از تاریخچه اصلی باشد. */
   const selectEditLines = (ids: number[], requestedActive: number | null, record = true) => {
-    const ordered = edit ? edit.lines.filter((l) => ids.includes(l.id)).map((l) => l.id) : [];
+    const ordered = edit ? edit.lines
+      .filter((l) => ids.includes(l.id) && (isolatedOpId == null || l.opId === isolatedOpId))
+      .map((l) => l.id) : [];
     const active = requestedActive != null && ordered.includes(requestedActive)
       ? requestedActive
       : ordered[ordered.length - 1] ?? null;
@@ -340,7 +348,16 @@ export default function ProfileEditor({
   }, [edit?.selLines, edit?.activeLine]);
 
   useEffect(() => {
-    if (editOpen) return;
+    if (editOpen) {
+      /* ابزارهای ترسیم پروفایل در ویرایش مسیر مجاز نیستند. */
+      setTool("select");
+      setDraft([]);
+      setCursor(null);
+      setSnapHit(null);
+      onSelected([]);
+      setSelPoints([]);
+      return;
+    }
     setSelL([]);
     setActiveLine(null);
     setSelV([]);
@@ -463,10 +480,11 @@ export default function ProfileEditor({
       if (editOpen && edit && selL.length && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
         const active = activeLine != null && selL.includes(activeLine) ? activeLine : selL[selL.length - 1];
-        const index = edit.lines.findIndex((line) => line.id === active);
+        const navigable = edit.lines.filter((line) => isolatedOpId == null || line.opId === isolatedOpId);
+        const index = navigable.findIndex((line) => line.id === active);
         const nextIndex = index + (e.key === "ArrowLeft" ? -1 : 1);
-        if (index >= 0 && nextIndex >= 0 && nextIndex < edit.lines.length) {
-          const nextId = edit.lines[nextIndex].id;
+        if (index >= 0 && nextIndex >= 0 && nextIndex < navigable.length) {
+          const nextId = navigable[nextIndex].id;
           selectEditLines(e.shiftKey ? [...selL, nextId] : [nextId], nextId, true);
           setSelV([]);
         }
@@ -508,12 +526,25 @@ export default function ProfileEditor({
       }
       if ((e.ctrlKey || e.metaKey) && k === "a") {
         e.preventDefault();
-        selectAllEligible();
+        if (editOpen && edit) {
+          const ids = edit.lines
+            .filter((line) => isolatedOpId == null || line.opId === isolatedOpId)
+            .map((line) => line.id);
+          selectEditLines(ids, ids[ids.length - 1] ?? null, true);
+          setSelV([]);
+        } else selectAllEligible();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && k === "i") {
         e.preventDefault();
-        invertSelection();
+        if (editOpen && edit) {
+          const eligible = edit.lines
+            .filter((line) => isolatedOpId == null || line.opId === isolatedOpId)
+            .map((line) => line.id);
+          const next = eligible.filter((id) => !selL.includes(id));
+          selectEditLines(next, next[next.length - 1] ?? null, true);
+          setSelV([]);
+        } else invertSelection();
         return;
       }
       if (e.key === "Escape") {
@@ -554,7 +585,7 @@ export default function ProfileEditor({
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const t = TOOLS.find((x) => x.key.toLowerCase() === k);
-      if (t) {
+      if (t && (!editOpen || t.id === "select")) {
         setTool(t.id);
         cancelDraft();
       }
@@ -1064,8 +1095,10 @@ export default function ProfileEditor({
     const to = lines.findIndex((l) => l.id === hoverBuf);
     if (from < 0 || to < 0) return [] as number[];
     const lo = Math.min(from, to), hi = Math.max(from, to);
-    return lines.slice(lo, hi + 1).map((l) => l.id);
-  }, [editOpen, shiftDown, activeLine, hoverBuf, lines]);
+    return lines.slice(lo, hi + 1)
+      .filter((line) => isolatedOpId == null || line.opId === isolatedOpId)
+      .map((l) => l.id);
+  }, [editOpen, shiftDown, activeLine, hoverBuf, lines, isolatedOpId]);
   const vz = (vid: number): EVert => vById.get(vid) ?? { id: vid, z: 0, x: 0 };
   const bufVisible = (l: ELine) => settings[KIND_VISIBLE[l.motion === 0 ? "rapid" : l.kind]];
   const bufPx = (c: Cam, l: ELine): [number, number, number, number] => {
@@ -1086,8 +1119,22 @@ export default function ProfileEditor({
     onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines }, true);
   };
   useEffect(() => {
-    setSelV([]); setHitPicker(null);
-  }, [isolatedOpId]);
+    setSelV([]);
+    setSelOff([]);
+    setHitPicker(null);
+    setPickerHover(null);
+    if (!edit || isolatedOpId == null) return;
+    const allowed = new Set(edit.lines.filter((line) => line.opId === isolatedOpId).map((line) => line.id));
+    const stored = edit.selLines ?? selL;
+    const kept = stored.filter((id) => allowed.has(id));
+    if (kept.length !== stored.length) {
+      const storedActive = edit.activeLine ?? activeLine;
+      const nextActive = storedActive != null && allowed.has(storedActive) ? storedActive : null;
+      selectEditLines(kept, nextActive, true);
+    }
+    // selectEditLines عمداً در dependency نیست؛ این effect فقط با تغییر isolate اجرا می‌شود.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isolatedOpId, editOpen]);
 
   /* با ورود به ویرایش مسیر، قاب دور کل مسیر واقعی ماشین (شامل آفست هلدر ۲) تنظیم می‌شود. */
   const editFitDone = useRef(false);
@@ -1171,14 +1218,18 @@ export default function ProfileEditor({
     setSpeedMenu(null);
   };
   const applyManualSpeed = () => {
-    const raw = window.prompt("سرعت G1 را وارد کنید (1 تا 1500 mm/min):", "300");
-    if (raw == null) return;
-    const value = Number(raw.trim());
-    if (!raw.trim() || !Number.isFinite(value) || value <= 0 || value > 1500) {
-      window.alert("سرعت باید یک عدد معتبر بین 1 و 1500 باشد.");
+    if (!/^\d+$/.test(manualSpeed)) {
+      setSpeedError("عدد ۰ تا ۲۰۰۰ وارد کنید");
       return;
     }
-    applySelectedSpeed(1, value);
+    const value = Number(manualSpeed);
+    if (!Number.isInteger(value) || value < 0 || value > 2000) {
+      setSpeedError("عدد ۰ تا ۲۰۰۰ وارد کنید");
+      return;
+    }
+    setSpeedError("");
+    if (value === 0) applySelectedSpeed(0);
+    else applySelectedSpeed(1, value);
   };
   const openSpeedMenu = (clientX: number, clientY: number) => {
     if (!editOpen || !selL.length) return;
@@ -1186,6 +1237,8 @@ export default function ProfileEditor({
     const hit = hitBufLines(loc.x, loc.y).find((id) => selectedLineIds.has(id));
     if (hit == null) return;
     const rect = wrapRef.current!.getBoundingClientRect();
+    setManualSpeed("");
+    setSpeedError("");
     setSpeedMenu({ x: clientX - rect.left, y: clientY - rect.top });
   };
 
@@ -1266,9 +1319,10 @@ export default function ProfileEditor({
     const ids: number[] = [];
     const vxs: number[] = [];
     const inR = (z: number, r: number) => z >= rectW.z0 - 1e-9 && z <= rectW.z1 + 1e-9 && r >= rectW.r0 - 1e-9 && r <= rectW.r1 + 1e-9;
-    for (const v of edit!.verts) if (inR(v.z, v.x / 2)) vxs.push(v.id);
-    for (const l of edit!.lines) {
-      if (!bufVisible(l)) continue;
+    const selectableLines = edit!.lines.filter(bufSelectable);
+    const allowedVerts = new Set(selectableLines.flatMap((line) => [line.va, line.vb]));
+    for (const v of edit!.verts) if (allowedVerts.has(v.id) && inR(v.z, v.x / 2)) vxs.push(v.id);
+    for (const l of selectableLines) {
       const a = { z: vz(l.va).z, r: vz(l.va).x / 2 };
       const b = { z: vz(l.vb).z, r: vz(l.vb).x / 2 };
       const both = inR(a.z, a.r) && inR(b.z, b.r);
@@ -1356,7 +1410,7 @@ export default function ProfileEditor({
         const to = lines.findIndex((line) => line.id === target);
         if (from >= 0 && to >= 0) {
           const lo = Math.min(from, to), hi = Math.max(from, to);
-          const range = lines.slice(lo, hi + 1).map((line) => line.id);
+          const range = lines.slice(lo, hi + 1).filter(bufSelectable).map((line) => line.id);
           selectEditLines([...selL, ...range], target, true);
           setSelV([]);
           setHitPicker(null);
@@ -1420,6 +1474,7 @@ export default function ProfileEditor({
         }
         if (e.shiftKey) ids = selL.includes(bl) ? selL.filter((x) => x !== bl) : [...selL, bl];
         else ids = selL.includes(bl) ? selL : [bl];
+        ids = lines.filter((line) => ids.includes(line.id) && bufSelectable(line)).map((line) => line.id);
         selectEditLines(ids, bl, true);
         setSelV([]);
         const vset = new Set<number>();
@@ -1756,6 +1811,12 @@ export default function ProfileEditor({
           return;
         }
         setBufMarq(null);
+        /* در ویرایش مسیر هرگز به انتخاب پروفایلِ زیرین fall through نمی‌کنیم. */
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          selectEditLines([], null, true);
+          setSelV([]);
+        }
+        return;
       }
       const hits = marqueeHitIds(rectW, mode);
       const pointHits = marqueeHitPoints(rectW);
@@ -2677,17 +2738,42 @@ export default function ProfileEditor({
       {speedMenu && editOpen && selL.length > 0 && (
         <div
           dir="rtl"
-          className="anim-in absolute z-30 w-48 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
-          style={{ left: Math.max(8, Math.min(speedMenu.x, size.w - 200)), top: Math.max(8, Math.min(speedMenu.y, size.h - 310)) }}
+          className="anim-in absolute z-30 w-64 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
+          style={{ left: Math.max(8, Math.min(speedMenu.x, size.w - 264)), top: Math.max(8, Math.min(speedMenu.y, size.h - 330)) }}
           onPointerDown={(e) => e.stopPropagation()}
         >
           <div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">
             تعیین سرعت · {selL.length.toLocaleString("fa-IR")} خط
           </div>
-          <button onClick={applyManualSpeed} className="flex w-full items-center gap-2 px-3 py-2 text-right text-[11.5px] font-bold text-brass2 transition-colors hover:bg-panel3">
-            <span className="h-2.5 w-2.5 rounded-full border border-brass bg-brass/20" />
-            تعیین دستی سرعت...
-          </button>
+          <form
+            className="flex flex-wrap items-center gap-1.5 px-2.5 py-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              applyManualSpeed();
+            }}
+          >
+            <label htmlFor="manual-feed" className="ml-auto text-[10.5px] font-bold text-brass2">تعیین دستی سرعت</label>
+            <input
+              id="manual-feed"
+              autoFocus
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="0–2000"
+              value={manualSpeed}
+              onChange={(e) => {
+                const value = latinDigits(e.target.value);
+                if (!/^\d*$/.test(value)) return;
+                if (value !== "" && Number(value) > 2000) return;
+                setManualSpeed(value);
+                setSpeedError("");
+              }}
+              className="h-7 w-[68px] rounded border border-edge2 bg-panel3 px-1.5 text-center font-mono text-[11px] text-ink outline-none focus:border-brass"
+            />
+            <button type="submit" className="h-7 rounded border border-brass/55 bg-brass/15 px-2 text-[10.5px] font-bold text-brass2 transition-colors hover:bg-brass/25">
+              تأیید
+            </button>
+            {speedError && <p className="w-full text-[9px] font-semibold text-red-400">{speedError}</p>}
+          </form>
           <div className="h-px bg-edge" />
           <button onClick={() => applySelectedSpeed(0)} className="flex w-full items-center gap-2 px-3 py-1.5 text-right text-[11.5px] font-semibold text-ink transition-colors hover:bg-panel3">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: speedStroke(0, RAPID_RATE) }} />
@@ -2744,7 +2830,7 @@ export default function ProfileEditor({
       {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
       <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          {TOOLS.map((t, i) => (
+          {(editOpen ? TOOLS.filter((t) => t.id === "select") : TOOLS).map((t, i) => (
             <button
               key={t.id}
               onClick={() => {
@@ -2895,7 +2981,7 @@ export default function ProfileEditor({
             role="switch"
             aria-checked={showPathBySpeed}
             onClick={() => setShowPathBySpeed((value) => !value)}
-            title="نمایش مسیر بر اساس سرعت"
+            title="رنگ‌بندی مسیر بر اساس سرعت"
             className={cn(
               "chip-toggle backdrop-blur-sm transition-all",
               showPathBySpeed ? "border-brass/60 bg-brass/12 text-brass2" : "border-edge bg-panel/85 text-dim hover:border-edge2"
@@ -2904,7 +2990,7 @@ export default function ProfileEditor({
             <span className={cn("relative h-3.5 w-7 rounded-full border transition-colors", showPathBySpeed ? "border-brass/70 bg-brass/25" : "border-edge2 bg-panel3")}>
               <span className={cn("absolute top-0.5 h-2 w-2 rounded-full transition-all", showPathBySpeed ? "right-0.5 bg-brass" : "right-[17px] bg-dim")} />
             </span>
-            نمایش بر اساس سرعت
+            رنگ سرعت
           </button>
         )}
         {editOpen && (
