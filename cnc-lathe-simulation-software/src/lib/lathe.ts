@@ -1015,6 +1015,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */
   let innerCleared = false; // آیا حفره داخل با خشن‌کاری خالی شده است؟
+  /* خشن شعاعی اکنون تمام طول خام را پوشش می‌دهد؛ کف‌تراشیِ بعد از آن تکراری است. */
+  let radialRoughCompleted = false;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1081,6 +1083,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
       case "bottom": {
         curOp = "bottom";
         if (!hasOuter) break;
+        /* قانون عدم تراش اضافه: اگر خشن شعاعی پیش‌تر در ترتیب عملیات اجرا شده،
+           پوشش کل طول خام انجام شده و کف‌تراشی بعدی کاملاً حذف می‌شود. */
+        if (radialRoughCompleted) break;
         const excess = p.blankL - zEnd;
         if (excess > 0.05) {
           note(`BOTTOM FACING - EXCESS ${f2(excess)} (HOLDER ${op.holder})`);
@@ -1116,6 +1121,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
       case "rough-d": {
         curOp = "rough-d";
         if (!hasOuter) break;
+        radialRoughCompleted = true;
 
         /* ------------------------------------------------------------------ */
         /* حالت رفت‌وبرگشتی (زیگزاگ) — مارپیچ دنبال‌کنندهٔ منحنی، فقط بازه‌های فعال:  */
