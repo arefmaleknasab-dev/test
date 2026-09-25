@@ -2022,9 +2022,10 @@ export default function ProfileEditor({
 
   /* ---------- مسیر ابزار ---------- */
   const runs = useMemo(() => {
-    if (!cam) return [] as { kind: SegKind; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[];
-    const out: { kind: SegKind; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[] = [];
+    if (!cam) return [] as { kind: SegKind; motion: 0 | 1; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[];
+    const out: { kind: SegKind; motion: 0 | 1; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[] = [];
     let curKind: SegKind | null = null;
+    let curMotion: 0 | 1 = 0;
     let curOpId = -2;
     let curHolder: 1 | 2 = 1;
     let curFan = -1; // گسترش G0 این ران (از جی‌کد) — تغییر آن ران را می‌شکافد
@@ -2042,7 +2043,7 @@ export default function ProfileEditor({
         let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
         for (let i = 1; i < pts.length; i++) d += ` L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
         let arrows = "";
-        if (curKind !== "rapid") {
+        if (curMotion !== 0) {
           const step = Math.max(1, Math.ceil((pts.length - 1) / 6));
           for (let i = step; i < pts.length - 1; i += step) {
             arrows += arrowHead(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
@@ -2052,7 +2053,7 @@ export default function ProfileEditor({
           const n = pts.length;
           arrows = arrowHead(pts[n - 2][0], pts[n - 2][1], pts[n - 1][0], pts[n - 1][1]);
         }
-        out.push({ kind: curKind, opId: curOpId, holder: curHolder, d, arrows, sx: pts[0][0], sy: pts[0][1] });
+        out.push({ kind: curKind, motion: curMotion, opId: curOpId, holder: curHolder, d, arrows, sx: pts[0][0], sy: pts[0][1] });
       }
       curKind = null;
       curFan = -1;
@@ -2062,11 +2063,12 @@ export default function ProfileEditor({
     for (const sg of gen.segs) {
       const kind: SegKind = sg.motion === 0 ? "rapid" : sg.kind;
       /* آفست نمایشی = همان گسترش جی‌کد (فقط قطر، فقط حرکت سریع) */
-      const fan = kind === "rapid" ? sg.fan ?? 0 : 0;
-      const fanU = kind === "rapid" ? sg.fanU ?? 0 : 0;
-      if (kind !== curKind || sg.opId !== curOpId || sg.holder !== curHolder || fan !== curFan || fanU !== curFanU) {
+      const fan = sg.motion === 0 ? sg.fan ?? 0 : 0;
+      const fanU = sg.motion === 0 ? sg.fanU ?? 0 : 0;
+      if (kind !== curKind || sg.motion !== curMotion || sg.opId !== curOpId || sg.holder !== curHolder || fan !== curFan || fanU !== curFanU) {
         flush();
         curKind = kind;
+        curMotion = sg.motion;
         curOpId = sg.opId;
         curHolder = sg.holder;
         curFan = fan;
@@ -2352,7 +2354,7 @@ export default function ProfileEditor({
         <g>
           {runs.map((run, i) => {
             if (editOpen || !settings[KIND_VISIBLE[run.kind]]) return null;
-            const isRapid = run.kind === "rapid";
+            const isRapid = run.motion === 0;
             const matchIso = iso && run.opId === isolatedOpId;
             const dim = iso && !matchIso;
             if (dim && isRapid) return null;
@@ -2379,7 +2381,7 @@ export default function ProfileEditor({
         {editOpen && (
           <g>
             {bufRuns.map((run, i) => {
-              const isRapid = run.kind === "rapid";
+              const isRapid = run.motion === 0;
               const matchIso = iso && run.opId === isolatedOpId;
               const dim = iso && !matchIso;
               if (dim && isRapid) return null;
