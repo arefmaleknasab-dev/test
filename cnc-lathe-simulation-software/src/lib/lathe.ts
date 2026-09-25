@@ -1432,24 +1432,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     }
   }
 
-  /* پایان: در استراتژی کاسه داخل+خارج، حرکت End از مرکز داخلی کاسه
-     دقیقاً ۵۰۰mm و به‌صورت خط صاف در راستای محور طولی +X ادامه می‌یابد. */
+  /* پایان */
   curOp = "sys";
   curOpId = -1;
-  const bowlInsideOutside = hasInner && p.ops.some((o) => o.type === "inner-rough") && p.ops.some((o) => o.type === "inner-finish");
-  if (bowlInsideOutside) {
-    curHolder = 2;
-    const innerCenter = innerSamples[0];
-    note("END OF PROGRAM - BOWL CENTER +X 500 MM");
-    mv(0, 2 * innerCenter.r, innerCenter.z, 0, "rapid");
-    /* این عقب‌نشینی عمداً مستقیم است؛ مسیر مرکزی کاسه پیش‌تر خالی شده است. */
-    rawRapid(2 * innerCenter.r, innerCenter.z + 500);
-  } else {
-    curHolder = 1;
-    note("END OF PROGRAM");
-    mv(0, retractX, p.blankL + 2 * p.safety, 0, "rapid");
-    mv(0, home.x, home.z, 0, "rapid");
-  }
+  curHolder = 1;
+  note("END OF PROGRAM");
+  mv(0, retractX, p.blankL + 2 * p.safety, 0, "rapid");
+  mv(0, home.x, home.z, 0, "rapid");
 
   /* گسترش G0 در جی‌کد (همه‌جهته): حرکت‌های سریعِ طولیِ روی‌هم با گام ۳mm فقط
      به سمت بیرون (+قطر، ‎(k+1)*3‎، سقف ۳۳) باز می‌شوند تا در سیمکو هیچ دو خط
