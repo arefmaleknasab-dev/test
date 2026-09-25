@@ -696,6 +696,21 @@ export default function ProfileEditor({
     const c = camRef.current;
     if (!c) return null;
     const tol = 7 / c.s;
+
+    /* خط انتخاب‌شده در تمام محدوده hit خودش اولویت قطعی دارد. در غیر این صورت
+       یک خط موازی/نزدیک که چند پیکسل نزدیک‌تر است به‌اشتباه جای آن drag می‌شد. */
+    let selectedBest: SketchSeg | null = null;
+    let selectedBestD = tol;
+    for (const s of segs) {
+      if (!selected.includes(s.id)) continue;
+      const d = distToSeg(s, w);
+      if (d < selectedBestD) {
+        selectedBestD = d;
+        selectedBest = s;
+      }
+    }
+    if (selectedBest) return selectedBest;
+
     let best: SketchSeg | null = null;
     let bestD = tol;
     for (const s of segs) {
@@ -1510,7 +1525,12 @@ export default function ProfileEditor({
         drag.current = seed ? { mode: "eoff", id: os, last: raw, seed, sx: e.clientX, sy: e.clientY, moved: false } : null;
         return;
       }
-      const bl = hitBufLine(ploc.x, ploc.y);
+      /* در محدوده هم‌پوشان، خط فعال/انتخاب‌شده همیشه قبل از نزدیک‌ترین خط دیگر
+         انتخاب می‌شود؛ بنابراین شروع drag هرگز ناخواسته به همسایه منتقل نمی‌شود. */
+      const selectedBl = activeLine != null && nearLines.includes(activeLine)
+        ? activeLine
+        : nearLines.find((id) => selL.includes(id));
+      const bl = selectedBl ?? hitBufLine(ploc.x, ploc.y);
       if (bl != null) {
         let ids: number[];
         if (e.ctrlKey || e.metaKey) {
