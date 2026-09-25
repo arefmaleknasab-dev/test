@@ -7,7 +7,7 @@ import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
-import { PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
+import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
 import type { EditBuf, GcodeOvrMap, GenResult, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
@@ -331,7 +331,20 @@ export default function App() {
     if (editBufRef.current && !pendingParamRebaseRef.current) {
       pendingParamRebaseRef.current = { genBase, params, gcodeOvr };
     }
-    setParams((p) => ({ ...p, ...patch }));
+    setParams((p) => {
+      const next = { ...p, ...patch };
+      /* تعیین Split برای نخستین بار، ذاتاً طرح را دوشاخه می‌کند؛ بنابراین
+         استراتژی داخل+خارج و حداقل آفست معتبر H2 هم‌زمان فعال می‌شوند. */
+      if (patch.split?.enabled && !p.split.enabled) {
+        const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
+        next.ops = makeOps(bowl.types);
+        next.holder2 = {
+          xOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.xOff),
+          yOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.yOff),
+        };
+      }
+      return next;
+    });
   }, [genBase, params, gcodeOvr]);
   const onStrategyCb = useCallback((name: string) => showToast(`استراتژی «${name}» فعال شد`), [showToast]);
 
@@ -417,6 +430,12 @@ export default function App() {
       if (p.strategy) {
         const st = STRATEGIES.find((s) => s.id === p.strategy);
         if (st) next.ops = makeOps(st.types);
+        if (p.strategy === "bowl") {
+          next.holder2 = {
+            xOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.xOff),
+            yOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.yOff),
+          };
+        }
       }
       return next;
     });
@@ -436,8 +455,17 @@ export default function App() {
     const poly = chainPolyline(orderChain(sketch));
     const auto = autoSplitPoint(poly);
     if (auto) {
-      setParams((prev) => ({ ...prev, split: { ...prev.split, enabled: true, z: auto.z, r: auto.r } }));
-      showToast(`نقطه Split روی لبه قرار گرفت (X ${auto.z} • ⌀ ${(auto.r * 2).toFixed(1)})`);
+      const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
+      setParams((prev) => ({
+        ...prev,
+        split: { ...prev.split, enabled: true, z: auto.z, r: auto.r },
+        ops: makeOps(bowl.types),
+        holder2: {
+          xOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.xOff),
+          yOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.yOff),
+        },
+      }));
+      showToast(`نقطه Split تعیین و استراتژی «کاسه داخل+خارج» فعال شد (X ${auto.z} • ⌀ ${(auto.r * 2).toFixed(1)})`);
     } else {
       showToast("زنجیره پروفیل برای Split خودکار کافی نیست", "warn");
     }
@@ -624,7 +652,19 @@ export default function App() {
               params={params}
               gen={gen}
               split={params.split}
-              onSplit={(s) => setParams((p) => ({ ...p, split: s }))}
+              onSplit={(s) => setParams((p) => {
+                if (!s.enabled) return { ...p, split: s };
+                const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
+                return {
+                  ...p,
+                  split: s,
+                  ops: makeOps(bowl.types),
+                  holder2: {
+                    xOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.xOff),
+                    yOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.yOff),
+                  },
+                };
+              })}
               settings={settings}
               onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
               ops={params.ops}

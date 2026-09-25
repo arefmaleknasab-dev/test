@@ -87,7 +87,8 @@ export interface Holder2State {
 export const HOLDER2_ROT = -90;
 
 export const DEFAULT_SPLIT: SplitState = { enabled: false, z: 90, r: 68 };
-export const DEFAULT_HOLDER2: Holder2State = { xOff: 0, yOff: 0 };
+export const DEFAULT_HOLDER2: Holder2State = { xOff: 50, yOff: 50 };
+export const MIN_HOLDER2_OFFSET = 50;
 
 export interface Params {
   blankD: number; // قطر خام
@@ -381,8 +382,8 @@ export function normalizeParams(
   }
   if (raw.holder2 && typeof raw.holder2 === "object") {
     const h = raw.holder2 as Partial<Holder2State>;
-    if (typeof h.xOff === "number" && Number.isFinite(h.xOff)) base.holder2.xOff = h.xOff;
-    if (typeof h.yOff === "number" && Number.isFinite(h.yOff)) base.holder2.yOff = h.yOff;
+    if (typeof h.xOff === "number" && Number.isFinite(h.xOff)) base.holder2.xOff = Math.max(MIN_HOLDER2_OFFSET, h.xOff);
+    if (typeof h.yOff === "number" && Number.isFinite(h.yOff)) base.holder2.yOff = Math.max(MIN_HOLDER2_OFFSET, h.yOff);
   }
   base.tool = normalizeTool(raw.tool, raw.toolW);
   return base;
@@ -867,6 +868,35 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   /* حرکت سریعِ مستقیم بدون تجزیهٔ امن — فقط برای جابه‌جایی‌های طولی‌ای استفاده   */
   /* می‌شود که امن‌بودنشان جداگانه با clearLongitudinal اثبات شده است (زیگزاگ)      */
   const rawRapid = (x: number, z: number) => pushSeg(0, x, z, 0, "rapid");
+
+  /* ورود اولیه H2 مبنای واقعی جی‌کد کاسه است: از پایان آخرین عملیات H1 ابتدا
+     در +Y تا فاصله امن، سپس در +X تا ۲mm جلوتر از شروع داخل‌تراشی، و سرانجام
+     در −Y تا محور ورود حرکت می‌کند. بازکُدگذاری cur هنگام تعویض هلدر باعث
+     پیوستگی دقیق مختصات ماشین می‌شود و planBridges هیچ حرکت اضافه‌ای نمی‌سازد. */
+  let firstInnerEntryDone = false;
+  const enterFirstInner = (entryX: number, mouthX: number) => {
+    if (firstInnerEntryDone) {
+      mv(0, entryX, mouthX, 0, "rapid");
+      return;
+    }
+    const lastHolder = segs.length ? segs[segs.length - 1].holder : 1;
+    if (lastHolder === 1) {
+      curHolder = 1;
+      const safeD = Math.max(retractX, cur.x);
+      if (safeD > cur.x + 1e-9) rawRapid(safeD, cur.z); // +Y
+      const entryMachineX = mouthX + p.holder2.xOff;
+      rawRapid(safeD, entryMachineX); // +X تا صفحه ورود H2
+      const safeMachineY = safeD / 2;
+      curHolder = 2;
+      /* همان نقطه ماشین، این بار در قاب مختصات H2؛ هیچ بلوک حرکتی تولید نمی‌شود. */
+      cur = { z: mouthX, x: 2 * (safeMachineY + p.holder2.yOff) };
+      rawRapid(entryX, mouthX); // −Y و بلافاصله شروع عملیات
+    } else {
+      curHolder = 2;
+      mv(0, entryX, mouthX, 0, "rapid");
+    }
+    firstInnerEntryDone = true;
+  };
   const z0 = hasOuter ? samples[0].z : 0;
   const zEnd = hasOuter ? samples[samples.length - 1].z : p.blankL;
   const r0 = hasOuter ? samples[0].r : R;
@@ -1312,13 +1342,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         depths.push(zBot);
         note(`INNER DEPTHS ${depths.length} x ${f2(step)} MM`);
         const rEntry = 0.6; // ورود در امتداد محور
-        /* صفحه امن ‎+X‎ بیرون از خط داخلی: همه جابه‌جایی‌های محوری از آن می‌گذرند */
-        const mouthX = Math.max(p.blankL, zRim) + p.safety;
+        /* نقطه ورود دقیقاً ۲mm جلوتر (+X) از شروع اولین عملیات داخل‌تراشی است.
+           mv پیش از آن ابتدا +Y تا صفحه امن، سپس +X و در پایان −Y را می‌سازد. */
+        const mouthX = zRim + 2;
         innerCleared = true;
         depths.forEach((zk, k) => {
           const target = Math.max(0.8, wallInOff(zk));
           if (k === 0) {
-            mv(0, 2 * rEntry, mouthX, 0, "rapid"); // ورود از دهانه
+            enterFirstInner(2 * rEntry, mouthX); // ورود از دهانه
             mv(1, 2 * rEntry, zk, p.feedRough * 0.8, "bore"); // نشست روی صفحه دهانه
           } else {
             rawRapid(2 * rEntry, depths[k - 1]); // بازگشت شعاعی در فضای خالی‌شده
@@ -1344,8 +1375,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = innerOff[0].z;
         const zRimF = innerOff[innerOff.length - 1].z;
         const rEntry = 0.6;
-        const mouthX = Math.max(p.blankL, zRimF) + p.safety + (p.spreadG0 ? 3 : 0);
-        mv(0, 2 * rEntry, mouthX, 0, "rapid");
+        const mouthX = zRimF + 2;
+        enterFirstInner(2 * rEntry, mouthX);
         if (innerCleared) rawRapid(2 * rEntry, zBot);
         else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "boreoff");
         mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
@@ -1374,10 +1405,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = IW[0].z;
         const zRimF = IW[IW.length - 1].z;
         const rEntry = 0.6;
-        /* صفحه امن ‎+X‎ بیرون از خط داخلی (با گسترش G0 سه میلی‌متر بیرون‌تر
-           تا ورود/خروج پرداخت روی خشن نیفتد — بیرون‌تر = امن‌تر) */
-        const mouthX = Math.max(p.blankL, zRimF) + p.safety + (p.spreadG0 ? 3 : 0);
-        mv(0, 2 * rEntry, mouthX, 0, "rapid"); // پشت دهانه، بیرون خط داخلی
+        /* ورود از صفحه امن، دقیقاً ۲mm جلوتر از شروع مسیر داخل‌تراشی */
+        const mouthX = zRimF + 2;
+        enterFirstInner(2 * rEntry, mouthX); // پشت دهانه، بیرون خط داخلی
         if (innerCleared) rawRapid(2 * rEntry, zBot); // حفره خالی است — ورود سریع
         else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
         for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");

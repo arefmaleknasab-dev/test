@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BlankShape, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
-import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
+import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconSplit, IconTool, IconTrash } from "./icons";
 
@@ -38,6 +38,8 @@ function ControlsPanel({
 }: Props) {
   /* امضای استراتژی فعلی برای تشخیص پیش‌تنظیم فعال (با قاعدهٔ پیش‌فرض: بیرونی‌ها اول) */
   const sig = outerFirstOps(params.ops.filter((o) => o.on)).map((o) => o.type).join(",");
+  const bowlStrategy = STRATEGIES.find((st) => st.id === "bowl")!;
+  const bowlActive = sig === outerFirstTypes(bowlStrategy.types).join(",");
 
   /* درگ‌ودراپ برای جابه‌جایی عملیات‌ها (کنار فلش‌ها) */
   const [dragFrom, setDragFrom] = useState<number | null>(null);
@@ -135,7 +137,17 @@ function ControlsPanel({
               <button
                 key={st.id}
                 onClick={() => {
-                  setOps(makeOps(st.types));
+                  onParams({
+                    ops: makeOps(st.types),
+                    ...(st.id === "bowl"
+                      ? {
+                          holder2: {
+                            xOff: Math.max(MIN_HOLDER2_OFFSET, params.holder2.xOff),
+                            yOff: Math.max(MIN_HOLDER2_OFFSET, params.holder2.yOff),
+                          },
+                        }
+                      : {}),
+                  });
                   onStrategy(st.name);
                 }}
                 className={cn(
@@ -417,7 +429,8 @@ function ControlsPanel({
               </div>
             </div>
 
-            {/* هلدر دوم */}
+            {/* هلدر دوم فقط پس از Split معتبر و با استراتژی کاسه داخل+خارج */}
+            {bowlActive && splitInfo && (
             <div className="rounded-lg border border-[#4cc9f0]/30 bg-[#4cc9f0]/5 p-2">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-bold text-[#4cc9f0]">هلدر دوم (داخل‌تراش)</span>
@@ -426,8 +439,8 @@ function ControlsPanel({
                 </span>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <Num label="X Offset (+X)" unit="mm" value={params.holder2.xOff} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, xOff: v } })} />
-                <Num label="Y Offset (−Y)" unit="mm" value={params.holder2.yOff} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, yOff: v } })} />
+                <Num label="X Offset (+X)" unit="mm" value={params.holder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) } })} />
+                <Num label="Y Offset (−Y)" unit="mm" value={params.holder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) } })} />
               </div>
               <p className="mt-1.5 rounded-md bg-bg/60 px-2 py-1 font-mono text-[9px] leading-4 text-mute" dir="ltr">
                 Xm = Xw + Xoff , Ym = Yw/2 − Yoff
@@ -438,6 +451,7 @@ function ControlsPanel({
                 هر آفست مستقیم روی محور خودش اثر می‌گذارد: X مثبت به سمت ‎+X‎ و Y مثبت به سمت ‎−Y‎. چرخش ‎−۹۰°‎ مربوط به جهت ابزار است. تبدیل فقط در جی‌کد اعمال می‌شود؛ شبیه‌سازی در مختصات قطعه است.
               </p>
             </div>
+            )}
           </div>
         ) : (
           <p className="mt-1.5 rounded-md border border-dashed border-edge px-2 py-1.5 text-[10px] leading-5 text-dim">
