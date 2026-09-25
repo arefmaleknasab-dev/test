@@ -1087,8 +1087,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
             } else {
               const prevZ = depths[k - 1];
-              rawRapid(centerD, prevZ); // بازگشت سریع از بیرون به مرکز (−Y)
-              rawRapid(centerD, prevZ + 0.5); // فاصله ۰٫۵mm پیش از شیرجه بعدی
+              /* بازگشت مورب سریع: −Y تا مرکز و هم‌زمان +X به‌اندازه ۰٫۵mm */
+              rawRapid(centerD, prevZ + 0.5);
               mv(1, centerD, zk, p.feedRough * 0.7, "bottom"); // شیرجه −X به عمق بار بعدی
             }
             mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی از مرکز به بیرون (+Y)
@@ -1386,8 +1386,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             mv(1, 2 * rEntry, zk, p.feedRough * 0.8, "bore"); // شیرجه نخست در −X
           } else {
             const prevZ = depths[k - 1];
-            rawRapid(2 * rEntry, prevZ); // بازگشت سریع از دیواره به مرکز (−Y)
-            rawRapid(2 * rEntry, prevZ + 0.5); // فاصله ۰٫۵mm پیش از شیرجه بعدی
+            /* بازگشت مورب سریع: −Y تا مرکز و هم‌زمان +X به‌اندازه ۰٫۵mm */
+            rawRapid(2 * rEntry, prevZ + 0.5);
             mv(1, 2 * rEntry, zk, p.feedRough * 0.7, "bore"); // شیرجه −X به عمق بار بعدی
           }
           if (target > rEntry + 0.05) mv(1, 2 * target, zk, p.feedRough, "bore"); // برداشت از مرکز به بیرون (+Y)
