@@ -111,6 +111,7 @@ interface Props {
   onEditBuf: (next: EditBuf | null, commit: boolean) => void;
   onEditConfirm: () => void;
   onEditCancel: () => void;
+  onEditDiscard: () => void;
 }
 
 interface Cam {
@@ -289,6 +290,7 @@ export default function ProfileEditor({
   onEditBuf,
   onEditConfirm,
   onEditCancel,
+  onEditDiscard,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -3110,6 +3112,14 @@ export default function ProfileEditor({
           >
             <IconCheck className="h-3 w-3" />
             تأیید
+          </button>
+          <button
+            onClick={onEditDiscard}
+            className="flex items-center gap-1 rounded-full border border-red-500/45 bg-red-500/10 px-2.5 py-1 text-[11px] font-bold text-red-300 transition-colors hover:bg-red-500/20 hover:text-red-200"
+            title="حذف کامل پیش‌نویس و خروج از ویرایش مسیر؛ با Undo قابل بازیابی است"
+          >
+            <IconTrash className="h-3 w-3" />
+            حذف پیش‌نویس
           </button>
           <button
             onClick={onEditCancel}

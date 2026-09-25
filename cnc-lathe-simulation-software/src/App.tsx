@@ -8,7 +8,7 @@ import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
 import { PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, Params, PPoint, Preset } from "./lib/lathe";
+import type { EditBuf, GcodeOvrMap, GenResult, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
@@ -119,33 +119,12 @@ export default function App() {
      مسیر وجود داشته باشد باید بعد از تولید برنامهٔ جدید از نو seed شود. */
   const presetReseedRef = useRef(false);
 
-  /* آفست هلدر دوم در مختصات ماشین مستقیماً روی Polyline اثر دارد. هنگام
-     تغییر ورودی‌ها، تمام رأس‌های متعلق به حرکات H2 بدون ازبین‌رفتن ویرایش‌های
-     انجام‌شده جابه‌جا می‌شوند؛ پل‌های متصل نیز به‌واسطه رأس مشترک زنده به‌روز می‌شوند. */
-  const previousHolder2 = useRef({ ...params.holder2 });
-  useEffect(() => {
-    const prev = previousHolder2.current;
-    const dz = params.holder2.xOff - prev.xOff;
-    const dr = params.holder2.yOff - prev.yOff;
-    previousHolder2.current = { ...params.holder2 };
-    if (Math.abs(dz) < 1e-12 && Math.abs(dr) < 1e-12) return;
-    setEditBuf((buf) => {
-      if (!buf) return buf;
-      const holder2Verts = new Set<number>();
-      for (const line of buf.lines) {
-        if (line.holder !== 2 || line.key.startsWith("#")) continue;
-        holder2Verts.add(line.va);
-        holder2Verts.add(line.vb);
-      }
-      if (!holder2Verts.size) return buf;
-      return {
-        ...buf,
-        verts: buf.verts.map((v) =>
-          holder2Verts.has(v.id) ? { ...v, z: v.z + dz, x: v.x - 2 * dr } : v
-        ),
-      };
-    });
-  }, [params.holder2.xOff, params.holder2.yOff]);
+  /* مبنای بازسازی زندهٔ پیش‌نویس هنگام تغییر پارامترهای مولد مسیر. */
+  const pendingParamRebaseRef = useRef<{
+    genBase: GenResult;
+    params: Params;
+    gcodeOvr: GcodeOvrMap;
+  } | null>(null);
 
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
@@ -183,6 +162,45 @@ export default function App() {
   const genBase = useMemo(() => generate(points, params, innerPoints), [points, params, innerPoints]);
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
+
+  /* پارامترهای برداشت مستقیماً توپولوژی مسیر را تغییر می‌دهند. پیش‌نویس فعلی
+     ابتدا نسبت به برنامه قبلی به override تبدیل، سپس روی برنامه جدید اعمال
+     می‌شود؛ بنابراین Polyline زنده به‌روز می‌شود و ویرایش‌های کاربر نیز تا
+     جایی که کلید پایدار Segment وجود دارد حفظ می‌شوند. */
+  useEffect(() => {
+    const pending = pendingParamRebaseRef.current;
+    if (!pending || presetReseedRef.current) return;
+    pendingParamRebaseRef.current = null;
+    setEditBuf((buf) => {
+      if (!buf) return buf;
+      const draftOvr = deriveGcodeOvr(buf.verts, buf.lines, pending.genBase.segs, pending.gcodeOvr, pending.params);
+      const rebuilt = applyGcodeOvr(genBase, draftOvr, params);
+      const seed = seedGcodeEdit(rebuilt.segs, params);
+
+      /* انتخاب‌ها با کلید پایدار + شماره قطعه در همان حرکت منتقل می‌شوند. */
+      const oldCount = new Map<string, number>();
+      const tokenById = new Map<number, string>();
+      for (const line of buf.lines) {
+        const n = oldCount.get(line.key) ?? 0;
+        oldCount.set(line.key, n + 1);
+        tokenById.set(line.id, `${line.key}\u0000${n}`);
+      }
+      const selectedTokens = new Set((buf.selLines ?? []).map((id) => tokenById.get(id)).filter((token): token is string => !!token));
+      const activeToken = buf.activeLine == null ? null : tokenById.get(buf.activeLine) ?? null;
+      const newCount = new Map<string, number>();
+      const selLines: number[] = [];
+      let activeLine: number | null = null;
+      for (const line of seed.lines) {
+        const n = newCount.get(line.key) ?? 0;
+        newCount.set(line.key, n + 1);
+        const token = `${line.key}\u0000${n}`;
+        if (selectedTokens.has(token)) selLines.push(line.id);
+        if (token === activeToken) activeLine = line.id;
+      }
+      return { ...buf, verts: seed.verts, lines: seed.lines, selLines, activeLine };
+    });
+    setHistVer((v) => v + 1);
+  }, [genBase, params]);
 
   /* پس از اعمال preset، مسیر قدیمی با هندسه/ابعاد جدید مخلوط نمی‌شود؛ بافر
      تازه دقیقاً از خروجی جدید ساخته و انتخاب‌های قبلی پاک می‌شود. */
@@ -260,6 +278,16 @@ export default function App() {
     setEditOpen(false);
     showToast("ویرایش مسیر بسته شد — پیش‌نویس تغییرات برای بازگشت بعدی حفظ شد", "warn");
   };
+  const discardEdit = () => {
+    if (!editBufRef.current) return;
+    pushPast(snap());
+    commitRef.current = null;
+    pendingParamRebaseRef.current = null;
+    setEditBuf(null);
+    setEditOpen(false);
+    setHistVer((v) => v + 1);
+    showToast("پیش‌نویس ویرایش مسیر حذف شد", "warn");
+  };
   const confirmEdit = () => {
     const eb = editBufRef.current;
     if (!eb) return;
@@ -299,7 +327,12 @@ export default function App() {
   }, []);
 
   /* کال‌بک‌های پایدار: هویت ثابت تا فرزندهای memo هنگام تیک شبیه‌سازی بازرندر نشوند */
-  const onParamsCb = useCallback((patch: Partial<Params>) => setParams((p) => ({ ...p, ...patch })), []);
+  const onParamsCb = useCallback((patch: Partial<Params>) => {
+    if (editBufRef.current && !pendingParamRebaseRef.current) {
+      pendingParamRebaseRef.current = { genBase, params, gcodeOvr };
+    }
+    setParams((p) => ({ ...p, ...patch }));
+  }, [genBase, params, gcodeOvr]);
   const onStrategyCb = useCallback((name: string) => showToast(`استراتژی «${name}» فعال شد`), [showToast]);
 
   /* ---------- چیدمان داک (پنجره‌ها) ---------- */
@@ -365,6 +398,7 @@ export default function App() {
        قبلی کنار ابعاد و پروفایل جدید علت اصلی آشفتگی مسیر بود. */
     pushPast(snap());
     commitRef.current = null;
+    pendingParamRebaseRef.current = null;
     setSketch(nextSketch);
     setGcodeOvr({});
     if (hadEditDraft) {
@@ -584,6 +618,7 @@ export default function App() {
               onEditBuf={onEditBuf}
               onEditConfirm={confirmEdit}
               onEditCancel={closeEdit}
+              onEditDiscard={discardEdit}
               selected={selectedIds}
               onSelected={setSelectedIds}
               params={params}
