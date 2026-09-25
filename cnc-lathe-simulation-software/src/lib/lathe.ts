@@ -579,6 +579,8 @@ export interface Seg {
   z2: number;
   feed: number;
   feedOvr?: boolean; // فیدِ دستی ویرایش مسیر؛ از ساده‌سازی global feed مستثناست
+  /** تغییر سرعت/نوع حرکت پله‌های G0 مصنوعی پیش از این سگمنت (کلید = شماره پله). */
+  bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>;
   line: number; // اندیس خط در آرایه خطوط جی‌کد
   kind: SegKind;
   op: OpType | "sys"; // عملیات مولد این حرکت
@@ -1810,9 +1812,15 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
       lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
       let pu = br.from.u;
       let pv = br.from.v;
-      for (const leg of br.legs) {
+      for (let j = 0; j < br.legs.length; j++) {
+        const leg = br.legs[j];
         if (Math.hypot(leg.u - pu, leg.v - pv) < 1e-9) continue;
-        emit(`G0 X${f2(leg.v)} Z${f2(leg.u)}`);
+        const move = sg.bridgeMoves?.[j];
+        if (move?.motion === 1) {
+          const F = Math.max(1, Math.round(move.feed));
+          emit(`G1 X${f2(leg.v)} Z${f2(leg.u)} F${F}`);
+          lastFeed = F;
+        } else emit(`G0 X${f2(leg.v)} Z${f2(leg.u)}`);
         pu = leg.u;
         pv = leg.v;
         mu = leg.u;
@@ -1823,7 +1831,12 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
        اول با یک G0 به آن می‌رویم؛ بدون گسترش همیشه صفر است و بلوکی صادر نمی‌شود.
        برای سگمنت جذب‌شده پله نداریم — بلوک خودش از انتهای پل شروع می‌شود. */
     if (!(br && br.absorbed) && Math.hypot(e1.u - mu, e1.v - mv) > 1e-9) {
-      emit(`G0 X${f2(e1.v)} Z${f2(e1.u)}`);
+      const move = sg.bridgeMoves?.[8];
+      if (move?.motion === 1) {
+        const F = Math.max(1, Math.round(move.feed));
+        emit(`G1 X${f2(e1.v)} Z${f2(e1.u)} F${F}`);
+        lastFeed = F;
+      } else emit(`G0 X${f2(e1.v)} Z${f2(e1.u)}`);
       mu = e1.u;
       mv = e1.v;
     }
@@ -1890,15 +1903,24 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
       lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
       let pu = br.from.u;
       let pv = br.from.v;
-      for (const leg of br.legs) {
+      for (let j = 0; j < br.legs.length; j++) {
+        const leg = br.legs[j];
         if (Math.hypot(leg.u - pu, leg.v - pv) < 1e-9) continue;
-        lines.push(`G0 X${f3(leg.u)} Y${f3(leg.v)}`);
+        const move = sg.bridgeMoves?.[j];
+        if (move?.motion === 1) {
+          const F = Math.max(1, Math.round(move.feed));
+          lines.push(`G1 X${f3(leg.u)} Y${f3(leg.v)} F${F}`);
+          mode = 1;
+          mFeed = F;
+        } else {
+          lines.push(`G0 X${f3(leg.u)} Y${f3(leg.v)}`);
+          mode = 0;
+        }
         pu = leg.u;
         pv = leg.v;
         mu = leg.u;
         mv = leg.v;
       }
-      mode = 0;
     }
     /* پله گسترش: اگر شروع اجراشده با موقعیت ماشین فرق دارد (تغییر سطح گسترش)،
        اول با یک G0 به آن می‌رویم؛ بدون گسترش همیشه صفر است و بلوکی صادر نمی‌شود.
@@ -1907,8 +1929,16 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
       const sw: string[] = [];
       if (Math.abs(e1.u - mu) > 1e-9) sw.push(`X${f3(e1.u)}`);
       if (Math.abs(e1.v - mv) > 1e-9) sw.push(`Y${f3(e1.v)}`);
-      lines.push(`G0 ${sw.join(" ")}`);
-      mode = 0;
+      const move = sg.bridgeMoves?.[8];
+      if (move?.motion === 1) {
+        const F = Math.max(1, Math.round(move.feed));
+        lines.push(`G1 ${sw.join(" ")} F${F}`);
+        mode = 1;
+        mFeed = F;
+      } else {
+        lines.push(`G0 ${sw.join(" ")}`);
+        mode = 0;
+      }
       mu = e1.u;
       mv = e1.v;
     }
@@ -2126,6 +2156,8 @@ export interface GcodeOvr {
   via?: GcodeOvrPt[];
   /** نوع حرکت و فید هر قطعه؛ هم‌ردیف با Segmentهای ساخته‌شده از s/via/e */
   moves?: { motion: 0 | 1; feed: number }[];
+  /** تغییر پله‌های مصنوعی اتصال/نزدیک‌شدن که پیش از سگمنت پایه ساخته می‌شوند. */
+  bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>;
   del?: boolean;
 }
 export type GcodeOvrMap = Record<string, GcodeOvr>;
@@ -2143,7 +2175,7 @@ export function applyGcodeOvr(base: GenResult, ovr: GcodeOvrMap, p: Params): Gen
       const move = o?.moves?.[i - 1];
       const motion = move?.motion ?? sg0.motion;
       const feed = motion === 0 ? RAPID_RATE : (move?.feed ?? sg0.feed);
-      expanded.push({ ...sg0, motion, feed, feedOvr: !!move, z1: a.z, x1: a.x, z2: b.z, x2: b.x, note: i === 1 ? sg0.note : undefined });
+      expanded.push({ ...sg0, motion, feed, feedOvr: !!move, bridgeMoves: i === 1 ? o?.bridgeMoves : undefined, z1: a.z, x1: a.x, z2: b.z, x2: b.x, note: i === 1 ? sg0.note : undefined });
     }
   }
   const kept: Seg[] = [];
@@ -2249,12 +2281,21 @@ export function seedGcodeEdit(segs: Seg[], p: Params): Pick<EditBuf, "verts" | "
     lastV = vb;
     current = { ...to };
   };
-  const bridgeMeta = (n: number): Omit<ELine, "id" | "va" | "vb"> => ({ key: `#bridge:${n}`, motion: 0, feed: RAPID_RATE, opId: -1, kind: "rapid", holder: 1 });
+  const bridgeMeta = (baseKey: string, leg: number, move?: { motion: 0 | 1; feed: number }): Omit<ELine, "id" | "va" | "vb"> => ({
+    key: `#bridge:${baseKey}:${leg}`,
+    motion: move?.motion ?? 0,
+    feed: move?.motion === 1 ? move.feed : RAPID_RATE,
+    feedOvr: !!move,
+    opId: -1,
+    kind: "rapid",
+    holder: 1,
+  });
   segs.forEach((sg, i) => {
     const e1 = execUV(sg, false, p), e2 = execUV(sg, true, p);
     const br = bridgeAt.get(i);
-    if (br) for (let j = 0; j < br.legs.length; j++) addLine(br.legs[j], bridgeMeta(i * 10 + j));
-    if (!(br && br.absorbed)) addLine(e1, bridgeMeta(i * 10 + 8));
+    const baseKey = sg.ovrKey ?? `move:${i}`;
+    if (br) for (let j = 0; j < br.legs.length; j++) addLine(br.legs[j], bridgeMeta(baseKey, j, sg.bridgeMoves?.[j]));
+    if (!(br && br.absorbed)) addLine(e1, bridgeMeta(baseKey, 8, sg.bridgeMoves?.[8]));
     addLine(e2, { key: sg.ovrKey ?? `#move:${i}`, motion: sg.motion, feed: sg.feed, feedOvr: sg.feedOvr, opId: sg.opId, kind: sg.kind, holder: sg.holder, note: sg.note, fan: sg.fan, fanU: sg.fanU });
   });
   return normalizeEditBuf(verts, lines);
@@ -2344,8 +2385,21 @@ export function deriveGcodeOvr(verts: EVert[], lines: ELine[], baseSegs: Seg[], 
   const byKey = new Map<string, Seg>();
   for (const sg of baseSegs) if (sg.ovrKey) byKey.set(sg.ovrKey, sg);
   const groups = new Map<string, ELineXY[]>();
-  for (const l of exp) if (!l.key.startsWith("#")) {
-    const g = groups.get(l.key); if (g) g.push(l); else groups.set(l.key, [l]);
+  const bridgeEdits = new Map<string, Record<number, { motion: 0 | 1; feed: number }>>();
+  for (const l of exp) {
+    const bridge = /^#bridge:(.+):(\d+)$/.exec(l.key);
+    if (bridge) {
+      /* پله‌های مصنوعی ذاتاً G0 هستند؛ فقط تبدیل آن‌ها به G1 نیازمند override است. */
+      if (l.motion === 1) {
+        const baseKey = bridge[1];
+        const leg = Number(bridge[2]);
+        const edits = bridgeEdits.get(baseKey) ?? {};
+        edits[leg] = { motion: 1, feed: l.feed };
+        bridgeEdits.set(baseKey, edits);
+      }
+    } else if (!l.key.startsWith("#")) {
+      const g = groups.get(l.key); if (g) g.push(l); else groups.set(l.key, [l]);
+    }
   }
   const toWorld = (z: number, x: number, sg: Seg) => {
     const u = z - (sg.fanU ?? 0), v = x / 2 - (sg.fan ?? 0);
@@ -2357,12 +2411,14 @@ export function deriveGcodeOvr(verts: EVert[], lines: ELine[], baseSegs: Seg[], 
     const e0 = toWorld(group[group.length - 1].z2, group[group.length - 1].x2, b);
     const via = group.slice(0, -1).map((l) => toWorld(l.z2, l.x2, b));
     const o: GcodeOvr = {};
+    const bridgeMoves = bridgeEdits.get(key);
+    if (bridgeMoves && Object.keys(bridgeMoves).length) o.bridgeMoves = bridgeMoves;
     if (Math.hypot(b.z1 - s0.z, b.x1 - s0.x) > 1e-8) o.s = s0;
     if (Math.hypot(b.z2 - e0.z, b.x2 - e0.x) > 1e-8) o.e = e0;
     if (via.length) o.via = via;
     const moves = group.map((l) => ({ motion: l.motion, feed: l.motion === 0 ? RAPID_RATE : l.feed }));
     if (moves.some((m) => m.motion !== b.motion || (m.motion === 1 && Math.abs(m.feed - b.feed) > 1e-8))) o.moves = moves;
-    if (o.s || o.e || o.via || o.moves) next[key] = o; else delete next[key];
+    if (o.s || o.e || o.via || o.moves || o.bridgeMoves) next[key] = o; else delete next[key];
   }
   for (const sg of baseSegs) if (sg.ovrKey && !groups.has(sg.ovrKey)) next[sg.ovrKey] = { del: true };
   return next;

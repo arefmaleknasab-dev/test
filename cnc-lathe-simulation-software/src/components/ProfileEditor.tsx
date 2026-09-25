@@ -1246,8 +1246,10 @@ export default function ProfileEditor({
     const nextLines = edit.lines.map((line) =>
       ids.has(line.id) ? { ...line, motion, feed: motion === 0 ? RAPID_RATE : feed, feedOvr: true } : line
     );
-    /* تغییر چند خط یک تراکنش واحد در history اصلی است. */
+    /* تغییر چند خط یک تراکنش واحد در history اصلی است. نمایش رنگ سرعت نیز
+       همان لحظه روشن می‌شود تا تغییر G0→G1 و رنگ جدید قابل مشاهده باشد. */
     onEditBuf({ ...edit, lines: nextLines }, true);
+    setShowPathBySpeed(true);
     setSpeedMenu(null);
   };
   const applyManualSpeed = () => {
@@ -2807,7 +2809,7 @@ export default function ProfileEditor({
         <div
           dir="rtl"
           className="anim-in absolute z-30 w-64 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
-          style={{ left: Math.max(8, Math.min(speedMenu.x, size.w - 264)), top: Math.max(8, Math.min(speedMenu.y, size.h - 330)) }}
+          style={{ left: Math.max(8, Math.min(speedMenu.x, size.w - 264)), top: Math.max(8, Math.min(speedMenu.y, size.h - 350)) }}
           onPointerDown={(e) => e.stopPropagation()}
         >
           <div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">
@@ -2842,7 +2844,9 @@ export default function ProfileEditor({
             </button>
             {speedError && <p className="w-full text-[9px] font-semibold text-red-400">{speedError}</p>}
           </form>
-          <div className="h-px bg-edge" />
+          <p className="border-t border-edge px-3 py-1 text-[9px] leading-4 text-dim">
+            انتخاب F برای خط G0 آن را به G1 قابل‌کنترل تبدیل می‌کند؛ G0 استاندارد فیدر برنامه‌پذیر ندارد.
+          </p>
           <button onClick={() => applySelectedSpeed(0)} className="flex w-full items-center gap-2 px-3 py-1.5 text-right text-[11.5px] font-semibold text-ink transition-colors hover:bg-panel3">
             <span className="h-2.5 w-2.5 rounded-full" style={{ background: speedStroke(0, RAPID_RATE) }} />
             <span className="font-mono">G0</span>

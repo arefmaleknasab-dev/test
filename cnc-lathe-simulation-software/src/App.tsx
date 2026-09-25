@@ -22,7 +22,7 @@ interface Saved {
   settings?: Partial<EdSettings>;
   layout?: LayoutState;
   activePreset?: string | null;
-  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; del?: boolean }>;
+  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>; del?: boolean }>;
   version?: number;
 }
 
@@ -52,7 +52,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
   if (!raw || typeof raw !== "object") return out;
   for (const [k, v] of Object.entries(raw)) {
     if (!v || typeof v !== "object") continue;
-    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; del?: boolean } = {};
+    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>; del?: boolean } = {};
     const okPt = (q: unknown): q is { z: number; x: number } =>
       !!q &&
       typeof q === "object" &&
@@ -67,8 +67,18 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
       const moves = v.moves.filter((m) => m && (m.motion === 0 || m.motion === 1) && typeof m.feed === "number" && isFinite(m.feed) && m.feed >= 0);
       if (moves.length) o.moves = moves.map((m) => ({ motion: m.motion, feed: m.feed }));
     }
+    if (v.bridgeMoves && typeof v.bridgeMoves === "object") {
+      const bridgeMoves: Record<number, { motion: 0 | 1; feed: number }> = {};
+      for (const [leg, move] of Object.entries(v.bridgeMoves)) {
+        const n = Number(leg);
+        if (Number.isInteger(n) && move && (move.motion === 0 || move.motion === 1) && typeof move.feed === "number" && isFinite(move.feed) && move.feed >= 0) {
+          bridgeMoves[n] = { motion: move.motion, feed: move.feed };
+        }
+      }
+      if (Object.keys(bridgeMoves).length) o.bridgeMoves = bridgeMoves;
+    }
     if (v.del === true) o.del = true;
-    if (o.s || o.e || o.via?.length || o.moves?.length || o.del) out[k] = o;
+    if (o.s || o.e || o.via?.length || o.moves?.length || o.bridgeMoves || o.del) out[k] = o;
   }
   return out;
 }
