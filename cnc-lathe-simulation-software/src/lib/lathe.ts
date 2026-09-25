@@ -98,6 +98,7 @@ export interface Params {
   offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
   innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
   innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
+  innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   feedRough: number; // mm/min
   feedFinish: number; // mm/min
   rpm: number;
@@ -318,6 +319,7 @@ export const DEFAULT_PARAMS: Params = {
   offsetDist: 0.5,
   innerOffsetDist: 0.5,
   innerStartClearance: 2,
+  innerEndTravel: 300,
   feedRough: 220,
   feedFinish: 110,
   rpm: 1500,
@@ -349,13 +351,14 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "innerStartClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
     else if (typeof v === "boolean") (base[k] as boolean) = v as boolean;
   }
   base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
+  base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   /* مهاجرت «اضافه پرداخت» قدیمی به «فاصله آفست» */
   if (typeof raw.finAllow === "number" && Number.isFinite(raw.finAllow)) base.offsetDist = raw.finAllow;
   /* روش خشن‌تراشی + مهاجرت سوئیچ زیگزاگ قدیمی */
@@ -910,6 +913,23 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   /* خط آفست — موازی با خط اصلی طرح در فاصلهٔ offsetDist (مرجع مراحل خشن) */
   const OD = Math.max(0, p.offsetDist);
   const IOD = Math.max(0, p.innerOffsetDist);
+
+  /* آخرین عملیات داخل‌تراشیِ واقعاً قابل اجرا؛ عملیات بی‌اثر (مثلاً کف‌تراشی
+     بدون طول اضافه یا آفست صفر) نقطه پایان برنامه محسوب نمی‌شود. */
+  const lastRunnableInnerOpId = [...p.ops].reverse().find((o) => {
+    if (!o.on) return false;
+    if (o.type === "bottom") return hasOuter && p.blankL - zEnd > 0.05;
+    if (o.type === "inner-offset") return hasInner && IOD > 0.01;
+    return hasInner && (o.type === "inner-rough" || o.type === "inner-finish");
+  })?.id;
+  let endedAtInnerEndpoint = false;
+  const finishLastInner = (opId: number): boolean => {
+    if (opId !== lastRunnableInnerOpId) return false;
+    note(`FINAL INNER END +X ${f2(p.innerEndTravel)} MM`);
+    rawRapid(cur.x, cur.z + p.innerEndTravel);
+    endedAtInnerEndpoint = true;
+    return true;
+  };
   /* خط آفست یکنواخت: آفست نرمال واقعی (نه r+OD شعاعی) + سقف قطر خام */
   const offSamples: Sample[] = normalOffset(samples, OD, true).map((s) => ({ z: s.z, r: Math.min(R, s.r) }));
   const floorR = minR + OD;
@@ -1071,7 +1091,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             }
             mv(1, xEnd, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی تا مرکز
           }
-          mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
+          if (!finishLastInner(op.id)) mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
           physCut(zEnd, p.blankL, 0); // طول اضافی کاملاً برداشته شد
         }
         break;
@@ -1369,10 +1389,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           }
           if (target > rEntry + 0.05) mv(1, 2 * target, zk, p.feedRough, "bore"); // روتراشی تا دیواره
         });
-        /* خروج: بازگشت شعاعی در کف خالی‌شده، سپس خروج محوری به بیرون خط داخلی */
-        rawRapid(2 * rEntry, depths[depths.length - 1]);
-        rawRapid(2 * rEntry, mouthX);
-        mv(0, retractX, mouthX, 0, "rapid");
+        /* اگر این آخرین عملیات داخل است، بدون هیچ حرکت واسط مستقیماً +X می‌رود. */
+        if (!finishLastInner(op.id)) {
+          rawRapid(2 * rEntry, depths[depths.length - 1]);
+          rawRapid(2 * rEntry, mouthX);
+          mv(0, retractX, mouthX, 0, "rapid");
+        }
         break;
       }
       /* آفست داخل‌تراشی — پاس خط‌چینِ موازی دیواره، بین خشن و پرداخت داخل */
@@ -1394,17 +1416,19 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         for (let i = 1; i < innerOff.length; i++) {
           mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
         }
-        if (innerCleared) {
-          rawRapid(2 * rEntry, zRimF);
-          rawRapid(2 * rEntry, mouthX);
-        } else {
-          for (let i = innerOff.length - 2; i >= 0; i--) {
-            mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
+        if (!finishLastInner(op.id)) {
+          if (innerCleared) {
+            rawRapid(2 * rEntry, zRimF);
+            rawRapid(2 * rEntry, mouthX);
+          } else {
+            for (let i = innerOff.length - 2; i >= 0; i--) {
+              mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
+            }
+            mv(1, 2 * rEntry, zBot, p.feedFinish, "boreoff");
+            mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "boreoff");
           }
-          mv(1, 2 * rEntry, zBot, p.feedFinish, "boreoff");
-          mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "boreoff");
+          mv(0, retractX, mouthX, 0, "rapid");
         }
-        mv(0, retractX, mouthX, 0, "rapid");
         break;
       }
       /* پرداخت داخل — دنبال‌کردن دیواره داخلی از کف تا دهانه با هلدر دوم */
@@ -1422,17 +1446,19 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (innerCleared) rawRapid(2 * rEntry, zBot); // حفره خالی است — ورود سریع
         else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
         for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
-        if (innerCleared) {
-          /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
-          rawRapid(2 * rEntry, zRimF);
-          rawRapid(2 * rEntry, mouthX);
-        } else {
-          /* بدون خشن‌کاری حفره پر است: بازگشت با فیدر در شیار برش تا کف، سپس خروج */
-          for (let i = IW.length - 2; i >= 0; i--) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
-          mv(1, 2 * rEntry, zBot, p.feedFinish, "borefin");
-          mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "borefin");
+        if (!finishLastInner(op.id)) {
+          if (innerCleared) {
+            /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
+            rawRapid(2 * rEntry, zRimF);
+            rawRapid(2 * rEntry, mouthX);
+          } else {
+            /* بدون خشن‌کاری حفره پر است: بازگشت با فیدر در شیار برش تا کف، سپس خروج */
+            for (let i = IW.length - 2; i >= 0; i--) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
+            mv(1, 2 * rEntry, zBot, p.feedFinish, "borefin");
+            mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "borefin");
+          }
+          mv(0, retractX, mouthX, 0, "rapid");
         }
-        mv(0, retractX, mouthX, 0, "rapid");
         break;
       }
       /* پرداخت نهایی روی خط اصلی طرح */
@@ -1473,13 +1499,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     }
   }
 
-  /* پایان */
+  /* پایان: پس از پایان مستقیم عملیات داخلی، هیچ جابه‌جایی دیگری مجاز نیست. */
   curOp = "sys";
   curOpId = -1;
-  curHolder = 1;
-  note("END OF PROGRAM");
-  mv(0, retractX, p.blankL + 2 * p.safety, 0, "rapid");
-  mv(0, home.x, home.z, 0, "rapid");
+  if (!endedAtInnerEndpoint) {
+    curHolder = 1;
+    note("END OF PROGRAM");
+    mv(0, retractX, p.blankL + 2 * p.safety, 0, "rapid");
+    mv(0, home.x, home.z, 0, "rapid");
+  }
 
   /* گسترش G0 در جی‌کد (همه‌جهته): حرکت‌های سریعِ طولیِ روی‌هم با گام ۳mm فقط
      به سمت بیرون (+قطر، ‎(k+1)*3‎، سقف ۳۳) باز می‌شوند تا در سیمکو هیچ دو خط
@@ -1752,7 +1780,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
   lines.push("O1001 (KHARRATKOD - 2 AXIS WOOD LATHE)");
   lines.push(`(STOCK D${p.blankD} x L${p.blankL} MM)`);
   lines.push(`(TOOL: ${toolDesc(p.tool)})`);
-  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM)`);
+  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM - INNER END +X ${p.innerEndTravel} MM)`);
   const usesH2 = segs.some((s) => s.motion === 1 && s.holder === 2);
   if (usesH2) {
     lines.push(`(HOLDER2: XOFF ${p.holder2.xOff} YOFF ${p.holder2.yOff} ROT ${HOLDER2_ROT})`);
