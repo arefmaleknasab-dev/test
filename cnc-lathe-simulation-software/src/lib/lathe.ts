@@ -1015,8 +1015,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */
   let innerCleared = false; // آیا حفره داخل با خشن‌کاری خالی شده است؟
-  /* خشن شعاعی اکنون تمام طول خام را پوشش می‌دهد؛ کف‌تراشیِ بعد از آن تکراری است. */
-  let radialRoughCompleted = false;
+  /* کمترین شعاع باقی‌مانده در انتهای خام پس از خشن شعاعی؛ کف‌تراشی بعدی فقط
+     بخش مرکز تا این مرز را می‌تراشد و وارد ناحیه‌ای که قبلاً خالی شده نمی‌شود. */
+  let radialRoughEndR: number | null = null;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1083,14 +1084,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
       case "bottom": {
         curOp = "bottom";
         if (!hasOuter) break;
-        /* قانون عدم تراش اضافه: اگر خشن شعاعی پیش‌تر در ترتیب عملیات اجرا شده،
-           پوشش کل طول خام انجام شده و کف‌تراشی بعدی کاملاً حذف می‌شود. */
-        if (radialRoughCompleted) break;
         const excess = p.blankL - zEnd;
         if (excess > 0.05) {
           note(`BOTTOM FACING - EXCESS ${f2(excess)} (HOLDER ${op.holder})`);
-          /* هر پاس از مرکز به بیرون (+Y) انجام می‌شود. */
-          const outsideD = cornersCleared ? 2 * (R + p.safety) : 2 * (envRot.outR + p.safety);
+          /* هر پاس از مرکز به بیرون (+Y) انجام می‌شود. اگر خشن شعاعی قبلاً
+             اجرا شده، فقط تا مرز مواد باقی‌مانده می‌رویم؛ ناحیه بیرونی پیش‌تر
+             پوشش داده شده و تراش دوباره آن ممنوع است. */
+          const outsideD = radialRoughEndR == null
+            ? (cornersCleared ? 2 * (R + p.safety) : 2 * (envRot.outR + p.safety))
+            : 2 * radialRoughEndR;
           const centerD = 1.2;
           const N = Math.max(1, Math.ceil(excess / p.doc - 1e-9));
           const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? zEnd : p.blankL - (i + 1) * p.doc));
@@ -1121,7 +1123,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
       case "rough-d": {
         curOp = "rough-d";
         if (!hasOuter) break;
-        radialRoughCompleted = true;
 
         /* ------------------------------------------------------------------ */
         /* حالت رفت‌وبرگشتی (زیگزاگ) — مارپیچ دنبال‌کنندهٔ منحنی، فقط بازه‌های فعال:  */
@@ -1193,7 +1194,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               }
               forward = !forward; // گذر بعد در جهت مخالف
             }
-            if (!Number.isNaN(lastEndZ)) mv(0, retractX, lastEndZ, 0, "rapid"); // جمع‌کردن پایانی
+            if (!Number.isNaN(lastEndZ)) {
+              mv(0, retractX, lastEndZ, 0, "rapid"); // جمع‌کردن پایانی
+              /* گذر آخر زیگزاگ تا خط آفست واقعی می‌رسد. */
+              radialRoughEndR = offsetRadiusAt(p.blankL);
+            }
           }
           break;
         }
@@ -1248,6 +1253,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             layer -= p.doc;
           }
         }
+
+        /* مرز واقعی باقی‌مانده در انتهای خام پس از آخرین لایه خشن؛ این مقدار
+           مبنای حذف فقط بخش تکراری از کف‌تراشی بعدی است. */
+        const endCutR = cuts
+          .filter((c) => c.a <= p.blankL + 1e-6 && c.b >= p.blankL - 1e-6)
+          .reduce((best, c) => Math.min(best, c.r), Infinity);
+        if (Number.isFinite(endCutR)) radialRoughEndR = endCutR;
 
         if (p.roughMode === "classic") {
           /* روش کلاسیکِ یک‌طرفه */
