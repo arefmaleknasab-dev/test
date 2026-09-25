@@ -115,6 +115,9 @@ export default function App() {
   editOpenRef.current = editOpen;
   const editBufRef = useRef<EditBuf | null>(editBuf);
   editBufRef.current = editBuf;
+  /* تغییر preset هندسه و پارامترهای مولد را هم‌زمان عوض می‌کند؛ اگر پیش‌نویس
+     مسیر وجود داشته باشد باید بعد از تولید برنامهٔ جدید از نو seed شود. */
+  const presetReseedRef = useRef(false);
 
   /* آفست هلدر دوم در مختصات ماشین مستقیماً روی Polyline اثر دارد. هنگام
      تغییر ورودی‌ها، تمام رأس‌های متعلق به حرکات H2 بدون ازبین‌رفتن ویرایش‌های
@@ -180,6 +183,17 @@ export default function App() {
   const genBase = useMemo(() => generate(points, params, innerPoints), [points, params, innerPoints]);
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
+
+  /* پس از اعمال preset، مسیر قدیمی با هندسه/ابعاد جدید مخلوط نمی‌شود؛ بافر
+     تازه دقیقاً از خروجی جدید ساخته و انتخاب‌های قبلی پاک می‌شود. */
+  useEffect(() => {
+    if (!presetReseedRef.current) return;
+    presetReseedRef.current = false;
+    const seed = seedGcodeEdit(gen.segs, params);
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    commitRef.current = null;
+    setHistVer((v) => v + 1);
+  }, [gen, params, sketch]);
 
   /* ذخیره محلی */
   useEffect(() => {
@@ -342,15 +356,24 @@ export default function App() {
   }, [sketch, gcodeOvr]);
 
   const applyPreset = useCallback((p: Preset) => {
-    if (p.wall) {
-      /* کاسه: دیواره به ترتیب مسیر (خارج ← لبه ← داخل) ساخته می‌شود */
-      onSketchChange(
-        sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth }))),
-        true
-      );
-    } else {
-      onSketchChange(sketchFromPoints(presetPoints(p)), true);
+    const nextSketch = p.wall
+      ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
+      : sketchFromPoints(presetPoints(p));
+    const hadEditDraft = !!editBufRef.current;
+
+    /* preset یک تغییر اتمیکِ طرح است. نگه‌داشتن verts/lines یا overrideهای طرح
+       قبلی کنار ابعاد و پروفایل جدید علت اصلی آشفتگی مسیر بود. */
+    pushPast(snap());
+    commitRef.current = null;
+    setSketch(nextSketch);
+    setGcodeOvr({});
+    if (hadEditDraft) {
+      presetReseedRef.current = true;
+      /* یک render بدون بافر، camera-fit و stateهای تعاملی ویرایشگر را نیز برای
+         هندسهٔ کاملاً جدید reset می‌کند؛ حالت edit در App باز می‌ماند. */
+      setEditBuf(null);
     }
+
     setParams((prev) => {
       const next: Params = { ...prev, blankD: p.blankD, blankL: p.blankL };
       if (p.shape) next.blankShape = p.shape;
@@ -366,11 +389,13 @@ export default function App() {
     setActivePreset(p.id);
     setSelectedIds([]);
     showToast(
-      p.strategy === "bowl"
-        ? `پیش‌تنظیم «${p.name}» + استراتژی داخل/خارج فعال شد`
-        : `پیش‌تنظیم «${p.name}» اعمال شد`
+      hadEditDraft
+        ? `پیش‌تنظیم «${p.name}» اعمال و پیش‌نویس مسیر بازسازی شد`
+        : p.strategy === "bowl"
+          ? `پیش‌تنظیم «${p.name}» + استراتژی داخل/خارج فعال شد`
+          : `پیش‌تنظیم «${p.name}» اعمال شد`
     );
-  }, [onSketchChange, showToast]);
+  }, [showToast]);
 
   /* قرار دادن خودکار نقطه Split روی لبه (بیشترین X زنجیره) */
   const autoSplit = useCallback(() => {
