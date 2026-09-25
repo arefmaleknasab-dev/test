@@ -1074,22 +1074,24 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const excess = p.blankL - zEnd;
         if (excess > 0.05) {
           note(`BOTTOM FACING - EXCESS ${f2(excess)} (HOLDER ${op.holder})`);
-          /* شروع بیرون پوشش دورانی (اگر گوشه‌ها هنوز گرد نشده‌اند) وگرنه بیرون قطر خام */
-          const xStart = cornersCleared ? 2 * (R + p.safety) : 2 * (envRot.outR + p.safety);
-          const xEnd = 1.2; // تا نزدیک مرکز (مثل ورود بور)
+          /* هر پاس از مرکز به بیرون (+Y) انجام می‌شود. */
+          const outsideD = cornersCleared ? 2 * (R + p.safety) : 2 * (envRot.outR + p.safety);
+          const centerD = 1.2;
           const N = Math.max(1, Math.ceil(excess / p.doc - 1e-9));
-          const firstBottomZ = N === 1 ? zEnd : p.blankL - p.doc;
-          /* اگر کف‌تراشی وجود دارد، همین نقطه مبنای فاصله شروع داخل‌تراشی است. */
-          enterFirstInner(xStart, firstBottomZ + p.innerStartClearance);
-          for (let k = 1; k <= N; k++) {
-            const zk = k === N ? zEnd : p.blankL - k * p.doc;
-            if (k === 1) {
-              /* حرکت فیدر از فاصله شروع تا صفحه نخست، خودِ آغاز عملیات است. */
-              if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, xStart, zk, p.feedRough * 0.8, "bottom");
+          const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? zEnd : p.blankL - (i + 1) * p.doc));
+          /* اگر کف‌تراشی وجود دارد، اولین صفحه آن مبنای فاصله شروع داخل‌تراشی است. */
+          enterFirstInner(centerD, depths[0] + p.innerStartClearance);
+          for (let k = 0; k < depths.length; k++) {
+            const zk = depths[k];
+            if (k === 0) {
+              if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
             } else {
-              mv(0, xStart, zk, 0, "rapid"); // موقعیت‌یابی امن در سطح بعد
+              const prevZ = depths[k - 1];
+              rawRapid(centerD, prevZ); // بازگشت سریع از بیرون به مرکز (−Y)
+              rawRapid(centerD, prevZ + 0.5); // فاصله ۰٫۵mm پیش از شیرجه بعدی
+              mv(1, centerD, zk, p.feedRough * 0.7, "bottom"); // شیرجه −X به عمق بار بعدی
             }
-            mv(1, xEnd, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی تا مرکز
+            mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی از مرکز به بیرون (+Y)
           }
           if (!finishLastInner(op.id)) mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
           physCut(zEnd, p.blankL, 0); // طول اضافی کاملاً برداشته شد
@@ -1381,13 +1383,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           const target = Math.max(0.8, wallInOff(zk));
           if (k === 0) {
             enterFirstInner(2 * rEntry, mouthX); // ورود از دهانه
-            mv(1, 2 * rEntry, zk, p.feedRough * 0.8, "bore"); // نشست روی صفحه دهانه
+            mv(1, 2 * rEntry, zk, p.feedRough * 0.8, "bore"); // شیرجه نخست در −X
           } else {
-            rawRapid(2 * rEntry, depths[k - 1]); // بازگشت شعاعی در فضای خالی‌شده
-            rawRapid(2 * rEntry, mouthX); // خروج محوری به بیرون خط داخلی (+X امن)
-            mv(1, 2 * rEntry, zk, p.feedRough * 0.7, "bore"); // فرورفتن با فیدر تا عمق بعد
+            const prevZ = depths[k - 1];
+            rawRapid(2 * rEntry, prevZ); // بازگشت سریع از دیواره به مرکز (−Y)
+            rawRapid(2 * rEntry, prevZ + 0.5); // فاصله ۰٫۵mm پیش از شیرجه بعدی
+            mv(1, 2 * rEntry, zk, p.feedRough * 0.7, "bore"); // شیرجه −X به عمق بار بعدی
           }
-          if (target > rEntry + 0.05) mv(1, 2 * target, zk, p.feedRough, "bore"); // روتراشی تا دیواره
+          if (target > rEntry + 0.05) mv(1, 2 * target, zk, p.feedRough, "bore"); // برداشت از مرکز به بیرون (+Y)
         });
         /* اگر این آخرین عملیات داخل است، بدون هیچ حرکت واسط مستقیماً +X می‌رود. */
         if (!finishLastInner(op.id)) {
