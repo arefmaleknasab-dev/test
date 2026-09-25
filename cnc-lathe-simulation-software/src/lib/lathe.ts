@@ -99,6 +99,7 @@ export interface Params {
   innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
   innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
+  bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   feedRough: number; // mm/min
   feedFinish: number; // mm/min
   rpm: number;
@@ -320,6 +321,7 @@ export const DEFAULT_PARAMS: Params = {
   innerOffsetDist: 0.5,
   innerStartClearance: 2,
   innerEndTravel: 300,
+  bottomRoughOverlap: 3,
   feedRough: 220,
   feedFinish: 110,
   rpm: 1500,
@@ -351,7 +353,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -359,6 +361,7 @@ export function normalizeParams(
   }
   base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
+  base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   /* مهاجرت «اضافه پرداخت» قدیمی به «فاصله آفست» */
   if (typeof raw.finAllow === "number" && Number.isFinite(raw.finAllow)) base.offsetDist = raw.finAllow;
   /* روش خشن‌تراشی + مهاجرت سوئیچ زیگزاگ قدیمی */
@@ -927,6 +930,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   let endedAtInnerEndpoint = false;
   const finishLastInner = (opId: number): boolean => {
     if (opId !== lastRunnableInnerOpId) return false;
+    /* اگر کاربر عملیاتی را بعد از بلوک داخل‌تراشی قرار داده باشد، این نقطه هنوز
+       پایان برنامه نیست و حرکت نهایی +X نباید وسط برنامه تزریق شود. */
+    const at = p.ops.findIndex((o) => o.id === opId);
+    if (at >= 0 && p.ops.slice(at + 1).some((o) => o.on)) return false;
     note(`FINAL INNER END +X ${f2(p.innerEndTravel)} MM`);
     rawRapid(cur.x, cur.z + p.innerEndTravel);
     endedAtInnerEndpoint = true;
@@ -1018,6 +1025,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   /* کمترین شعاع باقی‌مانده در انتهای خام پس از خشن شعاعی؛ کف‌تراشی بعدی فقط
      بخش مرکز تا این مرز را می‌تراشد و وارد ناحیه‌ای که قبلاً خالی شده نمی‌شود. */
   let radialRoughEndR: number | null = null;
+  /* اگر کف‌تراشی زودتر اجرا شود، خشن شعاعی فقط تا مرز آن به‌علاوه همپوشانی می‌رود. */
+  let bottomCoveredFromZ: number | null = null;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1090,9 +1099,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           /* هر پاس از مرکز به بیرون (+Y) انجام می‌شود. اگر خشن شعاعی قبلاً
              اجرا شده، فقط تا مرز مواد باقی‌مانده می‌رویم؛ ناحیه بیرونی پیش‌تر
              پوشش داده شده و تراش دوباره آن ممنوع است. */
-          const outsideD = radialRoughEndR == null
-            ? (cornersCleared ? 2 * (R + p.safety) : 2 * (envRot.outR + p.safety))
-            : 2 * radialRoughEndR;
+          const fullOutsideR = cornersCleared ? R + p.safety : envRot.outR + p.safety;
+          const outsideR = radialRoughEndR == null
+            ? fullOutsideR
+            : Math.min(fullOutsideR, radialRoughEndR + p.bottomRoughOverlap);
+          const outsideD = 2 * outsideR;
           const centerD = 1.2;
           const N = Math.max(1, Math.ceil(excess / p.doc - 1e-9));
           const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? zEnd : p.blankL - (i + 1) * p.doc));
@@ -1112,6 +1123,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           }
           if (!finishLastInner(op.id)) mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
           physCut(zEnd, p.blankL, 0); // طول اضافی کاملاً برداشته شد
+          bottomCoveredFromZ = zEnd;
         }
         break;
       }
@@ -1123,6 +1135,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
       case "rough-d": {
         curOp = "rough-d";
         if (!hasOuter) break;
+        /* قانون متقارن: کف‌تراشیِ قبلی بازه zEnd..blankL را برداشته است؛ خشن
+           شعاعی فقط تا zEnd+همپوشانی ادامه می‌یابد، نه روی کل ناحیه خالی‌شده. */
+        const radialEndZ = bottomCoveredFromZ == null
+          ? p.blankL
+          : Math.min(p.blankL, bottomCoveredFromZ + p.bottomRoughOverlap);
+        const roughRunSamples = roughOffSamples.filter((s) => s.z <= radialEndZ + 1e-9);
+        if (!roughRunSamples.length || roughRunSamples[roughRunSamples.length - 1].z < radialEndZ - 1e-9) {
+          roughRunSamples.push({ z: radialEndZ, r: offsetRadiusAt(radialEndZ) });
+        }
 
         /* ------------------------------------------------------------------ */
         /* حالت رفت‌وبرگشتی (زیگزاگ) — مارپیچ دنبال‌کنندهٔ منحنی، فقط بازه‌های فعال:  */
@@ -1137,7 +1158,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         /* ------------------------------------------------------------------ */
         if (p.roughMode === "zigzag") {
           note("ROUGHING - CONTOUR SERPENTINE (ACTIVE REGIONS, CUTS BOTH WAYS)");
-          const F = roughOffSamples;
+          const F = roughRunSamples;
           let minF = Infinity;
           for (const s of F) if (s.r < minF) minF = s.r;
           const totalDepth = R - minF;
@@ -1150,7 +1171,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               return mx === -Infinity ? minF : mx;
             };
             /* جهت شروع: نزدیک‌تر به موقعیت فعلی ابزار (مثلاً پایان گرد کردن) */
-            let forward = Math.abs(cur.z) <= Math.abs(p.blankL - cur.z);
+            let forward = Math.abs(cur.z) <= Math.abs(radialEndZ - cur.z);
             let first = true;
             let lastEndZ = NaN;
             let lastEndR = 0;
@@ -1197,7 +1218,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             if (!Number.isNaN(lastEndZ)) {
               mv(0, retractX, lastEndZ, 0, "rapid"); // جمع‌کردن پایانی
               /* گذر آخر زیگزاگ تا خط آفست واقعی می‌رسد. */
-              radialRoughEndR = offsetRadiusAt(p.blankL);
+              radialRoughEndR = offsetRadiusAt(radialEndZ);
             }
           }
           break;
@@ -1216,7 +1237,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (p.roughMode === "zone") {
           /* نواحی: مرزهای دستی کاربر (در صورت اعتبار) جایگزین تقسیم خودکار می‌شوند؛ */
           /* سپس ترتیب دستی (در صورت اعتبار) روی همان نواحی اعمال می‌شود.            */
-          let zones = resolveZones(roughOffSamples, p.zoneBounds, 0, p.blankL);
+          let zones = resolveZones(roughRunSamples, p.zoneBounds, 0, radialEndZ);
           const ord = p.zoneOrder;
           const isPerm =
             ord.length === zones.length &&
@@ -1228,7 +1249,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             /* بهینه‌سازی شروع: اگر ترتیب دستی تعیین نشده باشد، نواحی از سمتی       */
             /* پردازش می‌شوند که ابزار اکنون در آن‌جاست (مثلاً بعد از گرد کردن       */
             /* گوشه‌ها که ابزار در انتهای همان مسیر ایستاده) — نه همیشه از چپ.     */
-            const mid = p.blankL / 2;
+            const mid = radialEndZ / 2;
             if (cur.z > mid) zones = [...zones].reverse();
           }
           for (const zone of zones) {
@@ -1236,7 +1257,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             let guard = 0;
             while (layer > floorR + 1e-6 && guard < 80) {
               guard++;
-              for (const iv of cutIntervals(roughOffSamples, layer)) {
+              for (const iv of cutIntervals(roughRunSamples, layer)) {
                 const a = Math.max(iv.a, zone.a);
                 const b = Math.min(iv.b, zone.b);
                 if (b - a > 0.3) cuts.push({ a, b, r: layer });
@@ -1249,7 +1270,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           let guard = 0;
           while (layer > floorR + 1e-6 && guard < 80) {
             guard++;
-            for (const iv of cutIntervals(roughOffSamples, layer)) cuts.push({ a: iv.a, b: iv.b, r: layer });
+            for (const iv of cutIntervals(roughRunSamples, layer)) cuts.push({ a: iv.a, b: iv.b, r: layer });
             layer -= p.doc;
           }
         }
@@ -1257,7 +1278,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         /* مرز واقعی باقی‌مانده در انتهای خام پس از آخرین لایه خشن؛ این مقدار
            مبنای حذف فقط بخش تکراری از کف‌تراشی بعدی است. */
         const endCutR = cuts
-          .filter((c) => c.a <= p.blankL + 1e-6 && c.b >= p.blankL - 1e-6)
+          .filter((c) => c.a <= radialEndZ + 1e-6 && c.b >= radialEndZ - 1e-6)
           .reduce((best, c) => Math.min(best, c.r), Infinity);
         if (Number.isFinite(endCutR)) radialRoughEndR = endCutR;
 
@@ -1811,7 +1832,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
   lines.push("O1001 (KHARRATKOD - 2 AXIS WOOD LATHE)");
   lines.push(`(STOCK D${p.blankD} x L${p.blankL} MM)`);
   lines.push(`(TOOL: ${toolDesc(p.tool)})`);
-  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM - INNER END +X ${p.innerEndTravel} MM)`);
+  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM - INNER END +X ${p.innerEndTravel} MM - BOTTOM/ROUGH OVERLAP ${p.bottomRoughOverlap} MM)`);
   const usesH2 = segs.some((s) => s.motion === 1 && s.holder === 2);
   if (usesH2) {
     lines.push(`(HOLDER2: XOFF ${p.holder2.xOff} YOFF ${p.holder2.yOff} ROT ${HOLDER2_ROT})`);
