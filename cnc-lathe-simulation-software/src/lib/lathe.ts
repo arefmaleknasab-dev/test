@@ -97,6 +97,7 @@ export interface Params {
   doc: number; // عمق بار خشن (شعاع)
   offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
   innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
+  innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
   feedRough: number; // mm/min
   feedFinish: number; // mm/min
   rpm: number;
@@ -316,6 +317,7 @@ export const DEFAULT_PARAMS: Params = {
   doc: 3,
   offsetDist: 0.5,
   innerOffsetDist: 0.5,
+  innerStartClearance: 2,
   feedRough: 220,
   feedFinish: 110,
   rpm: 1500,
@@ -347,12 +349,13 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "innerStartClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
     else if (typeof v === "boolean") (base[k] as boolean) = v as boolean;
   }
+  base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
   /* مهاجرت «اضافه پرداخت» قدیمی به «فاصله آفست» */
   if (typeof raw.finAllow === "number" && Number.isFinite(raw.finAllow)) base.offsetDist = raw.finAllow;
   /* روش خشن‌تراشی + مهاجرت سوئیچ زیگزاگ قدیمی */
@@ -870,7 +873,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   const rawRapid = (x: number, z: number) => pushSeg(0, x, z, 0, "rapid");
 
   /* ورود اولیه H2 مبنای واقعی جی‌کد کاسه است: از پایان آخرین عملیات H1 ابتدا
-     در +Y تا فاصله امن، سپس در +X تا ۲mm جلوتر از شروع داخل‌تراشی، و سرانجام
+     در +Y تا فاصله امن، سپس در +X تا فاصله تنظیم‌شده جلوتر از شروع، و سرانجام
      در −Y تا محور ورود حرکت می‌کند. بازکُدگذاری cur هنگام تعویض هلدر باعث
      پیوستگی دقیق مختصات ماشین می‌شود و planBridges هیچ حرکت اضافه‌ای نمی‌سازد. */
   let firstInnerEntryDone = false;
@@ -1055,9 +1058,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           const xStart = cornersCleared ? 2 * (R + p.safety) : 2 * (envRot.outR + p.safety);
           const xEnd = 1.2; // تا نزدیک مرکز (مثل ورود بور)
           const N = Math.max(1, Math.ceil(excess / p.doc - 1e-9));
+          const firstBottomZ = N === 1 ? zEnd : p.blankL - p.doc;
+          /* اگر کف‌تراشی وجود دارد، همین نقطه مبنای فاصله شروع داخل‌تراشی است. */
+          enterFirstInner(xStart, firstBottomZ + p.innerStartClearance);
           for (let k = 1; k <= N; k++) {
             const zk = k === N ? zEnd : p.blankL - k * p.doc;
-            mv(0, xStart, zk, 0, "rapid"); // موقعیت‌یابی امن در سطح بعد
+            if (k === 1) {
+              /* حرکت فیدر از فاصله شروع تا صفحه نخست، خودِ آغاز عملیات است. */
+              if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, xStart, zk, p.feedRough * 0.8, "bottom");
+            } else {
+              mv(0, xStart, zk, 0, "rapid"); // موقعیت‌یابی امن در سطح بعد
+            }
             mv(1, xEnd, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی تا مرکز
           }
           mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
@@ -1342,9 +1353,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         depths.push(zBot);
         note(`INNER DEPTHS ${depths.length} x ${f2(step)} MM`);
         const rEntry = 0.6; // ورود در امتداد محور
-        /* نقطه ورود دقیقاً ۲mm جلوتر (+X) از شروع اولین عملیات داخل‌تراشی است.
+        /* نقطه ورود به‌اندازه فاصله تنظیم‌شده جلوتر (+X) از شروع اولین عملیات داخل‌تراشی است.
            mv پیش از آن ابتدا +Y تا صفحه امن، سپس +X و در پایان −Y را می‌سازد. */
-        const mouthX = zRim + 2;
+        const mouthX = zRim + p.innerStartClearance;
         innerCleared = true;
         depths.forEach((zk, k) => {
           const target = Math.max(0.8, wallInOff(zk));
@@ -1375,7 +1386,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = innerOff[0].z;
         const zRimF = innerOff[innerOff.length - 1].z;
         const rEntry = 0.6;
-        const mouthX = zRimF + 2;
+        const mouthX = zRimF + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX);
         if (innerCleared) rawRapid(2 * rEntry, zBot);
         else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "boreoff");
@@ -1405,8 +1416,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = IW[0].z;
         const zRimF = IW[IW.length - 1].z;
         const rEntry = 0.6;
-        /* ورود از صفحه امن، دقیقاً ۲mm جلوتر از شروع مسیر داخل‌تراشی */
-        const mouthX = zRimF + 2;
+        /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
+        const mouthX = zRimF + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX); // پشت دهانه، بیرون خط داخلی
         if (innerCleared) rawRapid(2 * rEntry, zBot); // حفره خالی است — ورود سریع
         else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
@@ -1741,7 +1752,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
   lines.push("O1001 (KHARRATKOD - 2 AXIS WOOD LATHE)");
   lines.push(`(STOCK D${p.blankD} x L${p.blankL} MM)`);
   lines.push(`(TOOL: ${toolDesc(p.tool)})`);
-  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM)`);
+  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM)`);
   const usesH2 = segs.some((s) => s.motion === 1 && s.holder === 2);
   if (usesH2) {
     lines.push(`(HOLDER2: XOFF ${p.holder2.xOff} YOFF ${p.holder2.yOff} ROT ${HOLDER2_ROT})`);

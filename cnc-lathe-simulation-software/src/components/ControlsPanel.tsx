@@ -598,6 +598,7 @@ function ControlsPanel({
           <Num label="عمق بار / گام" unit="mm" value={params.doc} min={0.5} max={10} step={0.5} onChange={(v) => onParams({ doc: v })} />
           <Num label="فاصله آفست" unit="mm" value={params.offsetDist} min={0} max={3} step={0.1} onChange={(v) => onParams({ offsetDist: v })} />
           <Num label="فاصله آفست داخل تراش" unit="mm" value={params.innerOffsetDist} min={0} max={3} step={0.1} onChange={(v) => onParams({ innerOffsetDist: v })} />
+          <Num label="فاصله شروع داخل تراشی" unit="mm" value={params.innerStartClearance} min={0} max={20} step={0.5} onChange={(v) => onParams({ innerStartClearance: Math.min(20, Math.max(0, v)) })} />
           <Num label="فیدر خشن" unit="mm/min" value={params.feedRough} min={20} max={1500} step={10} onChange={(v) => onParams({ feedRough: v })} />
           <Num label="فیدر پرداخت" unit="mm/min" value={params.feedFinish} min={10} max={1000} step={10} onChange={(v) => onParams({ feedFinish: v })} />
           <Num label="دور دوک" unit="rpm" value={params.rpm} min={200} max={4000} step={100} onChange={(v) => onParams({ rpm: v })} />
