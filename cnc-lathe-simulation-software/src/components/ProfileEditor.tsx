@@ -322,7 +322,6 @@ export default function ProfileEditor({
   const shiftRef = useRef(false);
   const [selOff, setSelOff] = useState<number[]>([]); // منحنی‌های افست انتخابی
   const [hoverBuf, setHoverBuf] = useState<number | null>(null);
-  const [hoverPathEndpoint, setHoverPathEndpoint] = useState<number | null>(null);
   const [bufMarq, setBufMarq] = useState<{ ids: number[]; vxs: number[] } | null>(null);
   const [hitPicker, setHitPicker] = useState<{ x: number; y: number; lines: number[]; verts: number[] } | null>(null);
   const [pickerHover, setPickerHover] = useState<{ kind: "line" | "vert"; id: number } | null>(null);
@@ -366,7 +365,6 @@ export default function ProfileEditor({
     setSelV([]);
     setSelOff([]);
     setHoverBuf(null);
-    setHoverPathEndpoint(null);
     setBufMarq(null);
     setHitPicker(null);
     setPickerHover(null);
@@ -1081,8 +1079,6 @@ export default function ProfileEditor({
   /* ---------- بافرِ ادیت: رأس‌های مشترک، خطوطِ زنجیرشده ---------- */
   const lines = edit ? edit.lines : ([] as ELine[]);
   const verts = edit ? edit.verts : ([] as EVert[]);
-  const pathStartVid = lines[0]?.va ?? null;
-  const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
   const vertexLineCount = useMemo(() => {
@@ -1202,40 +1198,14 @@ export default function ProfileEditor({
   };
   const hitBufLine = (px: number, py: number) => hitBufLines(px, py)[0] ?? null;
 
-  /* ابتدا/انتها همیشه قابل انتخاب‌اند، حتی وقتی نمایش نقاط خاموش است. مختصات
-     hit با جابه‌جایی نشان‌های S/E در مسیر بسته نیز یکسان نگه داشته می‌شود. */
-  const hitPathEndpoint = (px: number, py: number, allowed?: Set<number>): number | null => {
-    const c = camRef.current;
-    if (!c || pathStartVid == null || pathEndVid == null) return null;
-    const start = vById.get(pathStartVid), end = vById.get(pathEndVid);
-    if (!start || !end) return null;
-    const coincident = Math.hypot(start.z - end.z, start.x - end.x) < 1e-7;
-    const candidates = [
-      { id: pathStartVid, v: start, dx: coincident ? -13 : 0 },
-      { id: pathEndVid, v: end, dx: coincident ? 13 : 0 },
-    ].filter((item) => !allowed || allowed.has(item.id));
-    let best: { id: number; d: number } | null = null;
-    for (const item of candidates) {
-      const [x, y] = screenPt(c, item.v.z, item.v.x / 2);
-      const d = Math.hypot(px - (x + item.dx), py - y);
-      if (d <= 12 && (!best || d < best.d)) best = { id: item.id, d };
-    }
-    return best?.id ?? null;
-  };
-
   /* تمام رأس‌های نزدیک قابل انتخاب‌اند؛ برای هم‌پوشانی، انتخاب‌گر باز می‌شود. */
   const hitBufVerts = (px: number, py: number): number[] => {
     const c = camRef.current;
-    if (!c || !editOpen) return [];
+    if (!c || !editOpen || !showPathPoints) return [];
     const allowed = new Set(lines.filter(bufSelectable).flatMap((l) => [l.va, l.vb]));
-    const endpoint = hitPathEndpoint(px, py, allowed);
-    const hits = showPathPoints
-      ? verts.filter((v) => allowed.has(v.id)).map((v) => {
-          const [x, y] = screenPt(c, v.z, v.x / 2); return { id: v.id, d: Math.hypot(px - x, py - y) };
-        }).filter((h) => h.d <= 8.5).sort((a, b) => a.d - b.d).map((h) => h.id)
-      : [];
-    if (endpoint != null) return [endpoint, ...hits.filter((id) => id !== endpoint)];
-    return hits;
+    return verts.filter((v) => allowed.has(v.id)).map((v) => {
+      const [x, y] = screenPt(c, v.z, v.x / 2); return { id: v.id, d: Math.hypot(px - x, py - y) };
+    }).filter((h) => h.d <= 8.5).sort((a, b) => a.d - b.d).map((h) => h.id);
   };
   const hitBufVx = (px: number, py: number) => hitBufVerts(px, py)[0] ?? null;
 
@@ -1433,18 +1403,6 @@ export default function ProfileEditor({
       const ploc = toLocal(e.clientX, e.clientY);
       const nearVerts = hitBufVerts(ploc.x, ploc.y);
       const nearLines = hitBufLines(ploc.x, ploc.y);
-      const endpointCandidate = nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
-
-      /* نشان‌های ابتدا/انتها همیشه بر Segment زیرین اولویت دارند؛ بنابراین کلیک
-         روی S/E مستقیماً همان رأس را انتخاب و برای جابه‌جایی آماده می‌کند. */
-      if (endpointCandidate != null) {
-        if (e.shiftKey) setSelV(selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate]);
-        else setSelV([endpointCandidate]);
-        setHitPicker(null);
-        setPickerHover(null);
-        drag.current = { mode: "evert", vid: endpointCandidate, start: raw, base: { ...vz(endpointCandidate) }, sx: ploc.x, sy: ploc.y, moved: false };
-        return;
-      }
 
       /* Shift+کلیک: انتخاب قطعی بازهٔ هندسی از Segment فعال تا هدف، همراه با
          حفظ تمام انتخاب‌های قبلی. اولویت آن از انتخاب Vertex بالاتر است. */
@@ -1560,14 +1518,10 @@ export default function ProfileEditor({
         /* اگر نشانگر روی خودِ نقطه باشد، المان زیرین hover نشود تا فقط نقطه سفید شود */
         const onHandle = !editOpen && hitHandle(raw) != null;
         let hb: number | null = null;
-        let endpoint: number | null = null;
         if (editOpen && !onHandle) {
           const ploc = toLocal(e.clientX, e.clientY);
-          const allowed = new Set(lines.filter(bufSelectable).flatMap((line) => [line.va, line.vb]));
-          endpoint = hitPathEndpoint(ploc.x, ploc.y, allowed);
-          hb = endpoint == null && hitOffSeg(ploc.x, ploc.y) == null ? hitBufLine(ploc.x, ploc.y) : null;
+          hb = hitOffSeg(ploc.x, ploc.y) == null ? hitBufLine(ploc.x, ploc.y) : null;
         }
-        setHoverPathEndpoint(endpoint);
         if (editOpen && hb != null) {
           setHoverBuf(hb);
           setHoverId(null);
@@ -2275,10 +2229,7 @@ export default function ProfileEditor({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={() => {
-          if (!drag.current) {
-            setHoverBuf(null);
-            setHoverPathEndpoint(null);
-          }
+          if (!drag.current) setHoverBuf(null);
         }}
         onDoubleClick={onDoubleClick}
         onContextMenu={onContextMenu}
@@ -2425,13 +2376,10 @@ export default function ProfileEditor({
             {/* نشانگرهای ثابت ابتدا و انتهای Polyline */}
             {pathStart && (() => {
               const [x, y] = P(pathStart.z, pathStart.x / 2);
-              const hot = hoverPathEndpoint === pathStartVid;
-              const selected = pathStartVid != null && selV.includes(pathStartVid);
               return (
                 <g transform={`translate(${x + (pathEndsCoincident ? -13 : 0)} ${y})`} pointerEvents="none" filter="url(#curveGlow)">
                   {pathEndsCoincident && <line x1={8} y1={0} x2={13} y2={0} stroke="#45d19f" strokeWidth={2} />}
-                  {(hot || selected) && <circle r={13} fill="#45d19f" fillOpacity={hot ? 0.28 : 0.18} stroke={selected ? "#ffd27a" : "#8fffd7"} strokeWidth={2} />}
-                  <circle r={hot || selected ? 9.5 : 8} fill={selected ? "#ffd27a" : hot ? "#17483b" : "#102b24"} stroke={selected ? "#fff3dc" : "#45d19f"} strokeWidth={2.5} />
+                  <circle r={8} fill="#102b24" stroke="#45d19f" strokeWidth={2.5} />
                   <text y={3.2} textAnchor="middle" fontSize={9} fontWeight={900} fill="#8fffd7">S</text>
                   <text x={11} y={-9} fontSize={9} fontWeight={800} fill="#8fffd7">شروع</text>
                 </g>
@@ -2439,13 +2387,10 @@ export default function ProfileEditor({
             })()}
             {pathEnd && (() => {
               const [x, y] = P(pathEnd.z, pathEnd.x / 2);
-              const hot = hoverPathEndpoint === pathEndVid;
-              const selected = pathEndVid != null && selV.includes(pathEndVid);
               return (
                 <g transform={`translate(${x + (pathEndsCoincident ? 13 : 0)} ${y})`} pointerEvents="none" filter="url(#curveGlow)">
                   {pathEndsCoincident && <line x1={-8} y1={0} x2={-13} y2={0} stroke="#ff756f" strokeWidth={2} />}
-                  {(hot || selected) && <circle r={16} fill="#ff756f" fillOpacity={hot ? 0.25 : 0.16} stroke={selected ? "#ffd27a" : "#ffc0bc"} strokeWidth={2} />}
-                  <path d={hot || selected ? "M 0 -13 L 13 0 L 0 13 L -13 0 Z" : "M 0 -11 L 11 0 L 0 11 L -11 0 Z"} fill={selected ? "#ffd27a" : hot ? "#592325" : "#35191a"} fillOpacity={0.9} stroke={selected ? "#fff3dc" : "#ff756f"} strokeWidth={2.5} />
+                  <path d="M 0 -11 L 11 0 L 0 11 L -11 0 Z" fill="#35191a" fillOpacity={0.82} stroke="#ff756f" strokeWidth={2.5} />
                   <text y={3.2} textAnchor="middle" fontSize={9} fontWeight={900} fill="#ffc0bc">E</text>
                   <text x={13} y={13} fontSize={9} fontWeight={800} fill="#ffc0bc">پایان</text>
                 </g>

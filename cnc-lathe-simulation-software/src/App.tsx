@@ -119,7 +119,33 @@ export default function App() {
      مسیر وجود داشته باشد باید بعد از تولید برنامهٔ جدید از نو seed شود. */
   const presetReseedRef = useRef(false);
 
+  /* آفست هلدر دوم در مختصات ماشین مستقیماً روی Polyline اثر دارد. هنگام
+     تغییر ورودی‌ها، تمام رأس‌های متعلق به حرکات H2 بدون ازبین‌رفتن ویرایش‌های
+     انجام‌شده جابه‌جا می‌شوند؛ پل‌های متصل نیز به‌واسطه رأس مشترک زنده به‌روز می‌شوند. */
   const previousHolder2 = useRef({ ...params.holder2 });
+  useEffect(() => {
+    const prev = previousHolder2.current;
+    const dz = params.holder2.xOff - prev.xOff;
+    const dr = params.holder2.yOff - prev.yOff;
+    previousHolder2.current = { ...params.holder2 };
+    if (Math.abs(dz) < 1e-12 && Math.abs(dr) < 1e-12) return;
+    setEditBuf((buf) => {
+      if (!buf) return buf;
+      const holder2Verts = new Set<number>();
+      for (const line of buf.lines) {
+        if (line.holder !== 2 || line.key.startsWith("#")) continue;
+        holder2Verts.add(line.va);
+        holder2Verts.add(line.vb);
+      }
+      if (!holder2Verts.size) return buf;
+      return {
+        ...buf,
+        verts: buf.verts.map((v) =>
+          holder2Verts.has(v.id) ? { ...v, z: v.z + dz, x: v.x - 2 * dr } : v
+        ),
+      };
+    });
+  }, [params.holder2.xOff, params.holder2.yOff]);
 
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
@@ -157,46 +183,6 @@ export default function App() {
   const genBase = useMemo(() => generate(points, params, innerPoints), [points, params, innerPoints]);
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
-
-  /* تغییر آفست H2 باید کل مسیر ماشین و پل‌های امن را دوباره برنامه‌ریزی کند.
-     جابه‌جایی سادهٔ رأس‌های مشترک، انتهای H1/پل را می‌کشید و Polyline را
-     می‌شکست. ابتدا ویرایش‌های جاری به مختصات قطعه برگردانده، سپس با آفست
-     جدید seed می‌کنیم تا هندسه و تغییرات کاربر هر دو حفظ شوند. */
-  useEffect(() => {
-    const prev = previousHolder2.current;
-    const changed = Math.abs(params.holder2.xOff - prev.xOff) > 1e-12 || Math.abs(params.holder2.yOff - prev.yOff) > 1e-12;
-    previousHolder2.current = { ...params.holder2 };
-    if (!changed) return;
-
-    setEditBuf((buf) => {
-      if (!buf) return buf;
-      const oldParams: Params = { ...params, holder2: { ...prev } };
-      const nextOvr = deriveGcodeOvr(buf.verts, buf.lines, genBase.segs, gcodeOvr, oldParams);
-      const rebuiltGen = applyGcodeOvr(genBase, nextOvr, params);
-      const seed = seedGcodeEdit(rebuiltGen.segs, params);
-
-      const oldCounts = new Map<string, number>();
-      const tokenById = new Map<number, string>();
-      for (const line of buf.lines) {
-        const n = oldCounts.get(line.key) ?? 0;
-        oldCounts.set(line.key, n + 1);
-        tokenById.set(line.id, `${line.key}\u0000${n}`);
-      }
-      const selectedTokens = new Set((buf.selLines ?? []).map((id) => tokenById.get(id)).filter((token): token is string => !!token));
-      const activeToken = buf.activeLine == null ? null : tokenById.get(buf.activeLine) ?? null;
-      const newCounts = new Map<string, number>();
-      const selLines: number[] = [];
-      let activeLine: number | null = null;
-      for (const line of seed.lines) {
-        const n = newCounts.get(line.key) ?? 0;
-        newCounts.set(line.key, n + 1);
-        const token = `${line.key}\u0000${n}`;
-        if (selectedTokens.has(token)) selLines.push(line.id);
-        if (token === activeToken) activeLine = line.id;
-      }
-      return { ...buf, verts: seed.verts, lines: seed.lines, selLines, activeLine };
-    });
-  }, [params.holder2.xOff, params.holder2.yOff, params, genBase, gcodeOvr]);
 
   /* پس از اعمال preset، مسیر قدیمی با هندسه/ابعاد جدید مخلوط نمی‌شود؛ بافر
      تازه دقیقاً از خروجی جدید ساخته و انتخاب‌های قبلی پاک می‌شود. */
