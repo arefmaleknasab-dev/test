@@ -87,14 +87,19 @@ export interface Holder2State {
 export const HOLDER2_ROT = -90;
 
 export const DEFAULT_SPLIT: SplitState = { enabled: false, z: 90, r: 68 };
-export const DEFAULT_HOLDER2: Holder2State = { xOff: 0, yOff: 0 };
+export const DEFAULT_HOLDER2: Holder2State = { xOff: 50, yOff: 50 };
+export const MIN_HOLDER2_OFFSET = 50;
 
 export interface Params {
   blankD: number; // قطر خام
   blankL: number; // طول خام
   blankShape: BlankShape; // شکل مقطع خام
   doc: number; // عمق بار خشن (شعاع)
-  offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت
+  offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
+  innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
+  innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
+  innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
+  bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   feedRough: number; // mm/min
   feedFinish: number; // mm/min
   rpm: number;
@@ -290,7 +295,7 @@ let opUid = 1;
 
 /** گروه‌بندی عملیات برای انتخاب سریع «داخل / خارج / هردو» */
 export const OUTER_OPS: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish"];
-export const INNER_OPS: OpType[] = ["inner-rough", "inner-finish", "bottom"];
+export const INNER_OPS: OpType[] = ["inner-rough", "inner-offset", "inner-finish", "bottom"];
 
 /** هلدر پیش‌فرض هر عملیات: داخل‌تراشی با هلدر دوم، بقیه با هلدر اول */
 export const DEFAULT_HOLDER: Record<OpType, 1 | 2> = {
@@ -302,6 +307,7 @@ export const DEFAULT_HOLDER: Record<OpType, 1 | 2> = {
   offset: 1,
   finish: 1,
   "inner-rough": 2,
+  "inner-offset": 2,
   "inner-finish": 2,
   bottom: 2,
 };
@@ -312,6 +318,10 @@ export const DEFAULT_PARAMS: Params = {
   blankShape: "square",
   doc: 3,
   offsetDist: 0.5,
+  innerOffsetDist: 0.5,
+  innerStartClearance: 2,
+  innerEndTravel: 300,
+  bottomRoughOverlap: 3,
   feedRough: 220,
   feedFinish: 110,
   rpm: 1500,
@@ -343,12 +353,15 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
     else if (typeof v === "boolean") (base[k] as boolean) = v as boolean;
   }
+  base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
+  base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
+  base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   /* مهاجرت «اضافه پرداخت» قدیمی به «فاصله آفست» */
   if (typeof raw.finAllow === "number" && Number.isFinite(raw.finAllow)) base.offsetDist = raw.finAllow;
   /* روش خشن‌تراشی + مهاجرت سوئیچ زیگزاگ قدیمی */
@@ -378,8 +391,8 @@ export function normalizeParams(
   }
   if (raw.holder2 && typeof raw.holder2 === "object") {
     const h = raw.holder2 as Partial<Holder2State>;
-    if (typeof h.xOff === "number" && Number.isFinite(h.xOff)) base.holder2.xOff = h.xOff;
-    if (typeof h.yOff === "number" && Number.isFinite(h.yOff)) base.holder2.yOff = h.yOff;
+    if (typeof h.xOff === "number" && Number.isFinite(h.xOff)) base.holder2.xOff = Math.max(MIN_HOLDER2_OFFSET, h.xOff);
+    if (typeof h.yOff === "number" && Number.isFinite(h.yOff)) base.holder2.yOff = Math.max(MIN_HOLDER2_OFFSET, h.yOff);
   }
   base.tool = normalizeTool(raw.tool, raw.toolW);
   return base;
@@ -453,11 +466,11 @@ function trimOffsetLoops(pts: Sample[]): Sample[] {
   return cur;
 }
 
-export type SegKind = "rapid" | "round" | "face" | "rough" | "roughz" | "copy" | "offset" | "finish" | "bore" | "borefin" | "bottom";
+export type SegKind = "rapid" | "round" | "face" | "rough" | "roughz" | "copy" | "offset" | "finish" | "bore" | "boreoff" | "borefin" | "bottom";
 
 /* ---------------- عملیات و استراتژی‌های تراش ---------------- */
 
-export type OpType = "round" | "face" | "rough-d" | "rough-z" | "copy" | "offset" | "finish" | "inner-rough" | "inner-finish" | "bottom";
+export type OpType = "round" | "face" | "rough-d" | "rough-z" | "copy" | "offset" | "finish" | "inner-rough" | "inner-offset" | "inner-finish" | "bottom";
 
 export interface Op {
   id: number;
@@ -475,11 +488,12 @@ export const OP_INFO: Record<OpType, { name: string; desc: string; color: string
   offset: { name: "آفست", desc: "خط موازی با طرح — مرجع مراحل خشن", color: "#f59a80" },
   finish: { name: "پرداخت نهایی", desc: "حرکت دقیق روی خط اصلی طرح", color: "#e0703c" },
   "inner-rough": { name: "خشن داخل (کاسه)", desc: "خالی‌کردن داخل کاسه با هلدر دوم", color: "#4cc9f0" },
+  "inner-offset": { name: "افست داخل تراشی", desc: "مسیر موازی دیواره داخلی پیش از پرداخت", color: "#c77dff" },
   "inner-finish": { name: "پرداخت داخل", desc: "پرداخت دیواره داخلی با هلدر دوم", color: "#f72585" },
   bottom: { name: "کف‌تراشی", desc: "برداشت طول اضافی خام پشت صفحه دهانه با هلدر داخل‌تراشی", color: "#ffd166" },
 };
 
-export const ALL_OP_TYPES: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish", "inner-rough", "inner-finish", "bottom"];
+export const ALL_OP_TYPES: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish", "inner-rough", "inner-offset", "inner-finish", "bottom"];
 
 export interface Strategy {
   id: string;
@@ -491,7 +505,7 @@ export const STRATEGIES: Strategy[] = [
   { id: "g71", name: "استاندارد شعاعی", types: ["round", "rough-d", "offset", "finish"] },
   { id: "g72", name: "محوری پله‌ای", types: ["round", "rough-z", "offset", "finish"] },
   { id: "copy", name: "کپی‌تراشی", types: ["round", "copy", "offset", "finish"] },
-  { id: "bowl", name: "کاسه داخل+خارج", types: ["round", "face", "rough-d", "bottom", "inner-rough", "offset", "finish", "inner-finish"] },
+  { id: "bowl", name: "کاسه داخل+خارج", types: ["round", "face", "rough-d", "offset", "finish", "bottom", "inner-rough", "inner-offset", "inner-finish"] },
 ];
 
 export function makeOps(types: OpType[]): Op[] {
@@ -540,6 +554,12 @@ export function normalizeOps(raw: unknown, legacy = false): Op[] | null {
       });
     }
   }
+  /* مهاجرت زنجیره‌های کاسه ذخیره‌شده پیش از افزوده‌شدن آفست داخل‌تراشی. */
+  if (out.some((o) => o.type === "inner-rough") && out.some((o) => o.type === "inner-finish") && !out.some((o) => o.type === "inner-offset")) {
+    const roughAt = out.findIndex((o) => o.type === "inner-rough");
+    const id = Math.max(0, ...out.map((o) => o.id)) + 1;
+    out.splice(roughAt + 1, 0, { id, type: "inner-offset", on: true, holder: 2 });
+  }
   if (legacy && out.length) {
     /* «آفست» (پاس فنری سابق) همیشه بعد از پرداخت بود؛ حالا باید قبل از آن باشد */
     const offsets = out.filter((o) => o.type === "offset");
@@ -561,6 +581,9 @@ export interface Seg {
   x2: number; // قطر پایان
   z2: number;
   feed: number;
+  feedOvr?: boolean; // فیدِ دستی ویرایش مسیر؛ از ساده‌سازی global feed مستثناست
+  /** تغییر سرعت/نوع حرکت پله‌های G0 مصنوعی پیش از این سگمنت (کلید = شماره پله). */
+  bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>;
   line: number; // اندیس خط در آرایه خطوط جی‌کد
   kind: SegKind;
   op: OpType | "sys"; // عملیات مولد این حرکت
@@ -569,7 +592,7 @@ export interface Seg {
   note?: string[]; // کامنت‌های قبل از این حرکت (فقط فرمت استاندارد)
   fan?: number; // گسترش G0 این حرکت در جی‌کد (+قطر، فقط حرکت سریع طولی در/بالای رترکت؛ پیش‌فرض ۰)
   fanU?: number; // گسترش G0 در راستای محور (+طول، فقط بیرون قطعه یا رانش داخل‌خط تراورس؛ پیش‌فرض ۰)
-  ovrKey?: string; // کلید پایدار خط برای «ادیت جی‌کد» (عملیات:شماره‌خط در عملیات)
+  ovrKey?: string; // کلید پایدار خط برای «ویرایش مسیر» (عملیات:شماره‌خط در عملیات)
 }
 
 export interface GenResult {
@@ -856,6 +879,35 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   /* حرکت سریعِ مستقیم بدون تجزیهٔ امن — فقط برای جابه‌جایی‌های طولی‌ای استفاده   */
   /* می‌شود که امن‌بودنشان جداگانه با clearLongitudinal اثبات شده است (زیگزاگ)      */
   const rawRapid = (x: number, z: number) => pushSeg(0, x, z, 0, "rapid");
+
+  /* ورود اولیه H2 مبنای واقعی جی‌کد کاسه است: از پایان آخرین عملیات H1 ابتدا
+     در +Y تا فاصله امن، سپس در +X تا فاصله تنظیم‌شده جلوتر از شروع، و سرانجام
+     در −Y تا محور ورود حرکت می‌کند. بازکُدگذاری cur هنگام تعویض هلدر باعث
+     پیوستگی دقیق مختصات ماشین می‌شود و planBridges هیچ حرکت اضافه‌ای نمی‌سازد. */
+  let firstInnerEntryDone = false;
+  const enterFirstInner = (entryX: number, mouthX: number) => {
+    if (firstInnerEntryDone) {
+      mv(0, entryX, mouthX, 0, "rapid");
+      return;
+    }
+    const lastHolder = segs.length ? segs[segs.length - 1].holder : 1;
+    if (lastHolder === 1) {
+      curHolder = 1;
+      const safeD = Math.max(retractX, cur.x);
+      if (safeD > cur.x + 1e-9) rawRapid(safeD, cur.z); // +Y
+      const entryMachineX = mouthX + p.holder2.xOff;
+      rawRapid(safeD, entryMachineX); // +X تا صفحه ورود H2
+      const safeMachineY = safeD / 2;
+      curHolder = 2;
+      /* همان نقطه ماشین، این بار در قاب مختصات H2؛ هیچ بلوک حرکتی تولید نمی‌شود. */
+      cur = { z: mouthX, x: 2 * (safeMachineY + p.holder2.yOff) };
+      rawRapid(entryX, mouthX); // −Y و بلافاصله شروع عملیات
+    } else {
+      curHolder = 2;
+      mv(0, entryX, mouthX, 0, "rapid");
+    }
+    firstInnerEntryDone = true;
+  };
   const z0 = hasOuter ? samples[0].z : 0;
   const zEnd = hasOuter ? samples[samples.length - 1].z : p.blankL;
   const r0 = hasOuter ? samples[0].r : R;
@@ -865,8 +917,38 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 
   /* خط آفست — موازی با خط اصلی طرح در فاصلهٔ offsetDist (مرجع مراحل خشن) */
   const OD = Math.max(0, p.offsetDist);
+  const IOD = Math.max(0, p.innerOffsetDist);
+
+  /* آخرین عملیات داخل‌تراشیِ واقعاً قابل اجرا؛ عملیات بی‌اثر (مثلاً کف‌تراشی
+     بدون طول اضافه یا آفست صفر) نقطه پایان برنامه محسوب نمی‌شود. */
+  const lastRunnableInnerOpId = [...p.ops].reverse().find((o) => {
+    if (!o.on) return false;
+    if (o.type === "bottom") return hasOuter && p.blankL - zEnd > 0.05;
+    if (o.type === "inner-offset") return hasInner && IOD > 0.01;
+    return hasInner && (o.type === "inner-rough" || o.type === "inner-finish");
+  })?.id;
+  let endedAtInnerEndpoint = false;
+  const finishLastInner = (opId: number): boolean => {
+    if (opId !== lastRunnableInnerOpId) return false;
+    /* اگر کاربر عملیاتی را بعد از بلوک داخل‌تراشی قرار داده باشد، این نقطه هنوز
+       پایان برنامه نیست و حرکت نهایی +X نباید وسط برنامه تزریق شود. */
+    const at = p.ops.findIndex((o) => o.id === opId);
+    if (at >= 0 && p.ops.slice(at + 1).some((o) => o.on)) return false;
+    note(`FINAL INNER END +X ${f2(p.innerEndTravel)} MM`);
+    rawRapid(cur.x, cur.z + p.innerEndTravel);
+    endedAtInnerEndpoint = true;
+    return true;
+  };
   /* خط آفست یکنواخت: آفست نرمال واقعی (نه r+OD شعاعی) + سقف قطر خام */
   const offSamples: Sample[] = normalOffset(samples, OD, true).map((s) => ({ z: s.z, r: Math.min(R, s.r) }));
+  /* خشن شعاعی باید کل طول خام را پوشش دهد. اگر پروفیل کاربر از X=0 یا
+     X=طول خام شروع/تمام نشده باشد، شعاع انتهایی آن تا مرز خام امتداد می‌یابد؛
+     این امتداد شکل را حفظ می‌کند و برخلاف یک خط ثابت، پروفیل را بیش‌تراشی نمی‌کند. */
+  const roughOffSamples: Sample[] = [
+    ...(offSamples[0].z > 1e-9 ? [{ z: 0, r: offSamples[0].r }] : []),
+    ...offSamples,
+    ...(offSamples[offSamples.length - 1].z < p.blankL - 1e-9 ? [{ z: p.blankL, r: offSamples[offSamples.length - 1].r }] : []),
+  ];
   const floorR = minR + OD;
 
   /* ردیابی سطحِ واقعی تراش‌خورده برای محاسبهٔ امنِ جابه‌جایی‌های زیگزاگ — همانند   */
@@ -940,6 +1022,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */
   let innerCleared = false; // آیا حفره داخل با خشن‌کاری خالی شده است؟
+  /* کمترین شعاع باقی‌مانده در انتهای خام پس از خشن شعاعی؛ کف‌تراشی بعدی فقط
+     بخش مرکز تا این مرز را می‌تراشد و وارد ناحیه‌ای که قبلاً خالی شده نمی‌شود. */
+  let radialRoughEndR: number | null = null;
+  /* اگر کف‌تراشی زودتر اجرا شود، خشن شعاعی فقط تا مرز آن به‌علاوه همپوشانی می‌رود. */
+  let bottomCoveredFromZ: number | null = null;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1009,17 +1096,34 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const excess = p.blankL - zEnd;
         if (excess > 0.05) {
           note(`BOTTOM FACING - EXCESS ${f2(excess)} (HOLDER ${op.holder})`);
-          /* شروع بیرون پوشش دورانی (اگر گوشه‌ها هنوز گرد نشده‌اند) وگرنه بیرون قطر خام */
-          const xStart = cornersCleared ? 2 * (R + p.safety) : 2 * (envRot.outR + p.safety);
-          const xEnd = 1.2; // تا نزدیک مرکز (مثل ورود بور)
+          /* هر پاس از مرکز به بیرون (+Y) انجام می‌شود. اگر خشن شعاعی قبلاً
+             اجرا شده، فقط تا مرز مواد باقی‌مانده می‌رویم؛ ناحیه بیرونی پیش‌تر
+             پوشش داده شده و تراش دوباره آن ممنوع است. */
+          const fullOutsideR = cornersCleared ? R + p.safety : envRot.outR + p.safety;
+          const outsideR = radialRoughEndR == null
+            ? fullOutsideR
+            : Math.min(fullOutsideR, radialRoughEndR + p.bottomRoughOverlap);
+          const outsideD = 2 * outsideR;
+          const centerD = 1.2;
           const N = Math.max(1, Math.ceil(excess / p.doc - 1e-9));
-          for (let k = 1; k <= N; k++) {
-            const zk = k === N ? zEnd : p.blankL - k * p.doc;
-            mv(0, xStart, zk, 0, "rapid"); // موقعیت‌یابی امن در سطح بعد
-            mv(1, xEnd, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی تا مرکز
+          const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? zEnd : p.blankL - (i + 1) * p.doc));
+          /* اگر کف‌تراشی وجود دارد، اولین صفحه آن مبنای فاصله شروع داخل‌تراشی است. */
+          enterFirstInner(centerD, depths[0] + p.innerStartClearance);
+          for (let k = 0; k < depths.length; k++) {
+            const zk = depths[k];
+            if (k === 0) {
+              if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
+            } else {
+              const prevZ = depths[k - 1];
+              /* بازگشت مورب سریع: −Y تا مرکز و هم‌زمان +X به‌اندازه ۰٫۵mm */
+              rawRapid(centerD, prevZ + 0.5);
+              mv(1, centerD, zk, p.feedRough * 0.7, "bottom"); // شیرجه −X به عمق بار بعدی
+            }
+            mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی از مرکز به بیرون (+Y)
           }
-          mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
+          if (!finishLastInner(op.id)) mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
           physCut(zEnd, p.blankL, 0); // طول اضافی کاملاً برداشته شد
+          bottomCoveredFromZ = zEnd;
         }
         break;
       }
@@ -1031,6 +1135,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
       case "rough-d": {
         curOp = "rough-d";
         if (!hasOuter) break;
+        /* قانون متقارن: کف‌تراشیِ قبلی بازه zEnd..blankL را برداشته است؛ خشن
+           شعاعی فقط تا zEnd+همپوشانی ادامه می‌یابد، نه روی کل ناحیه خالی‌شده. */
+        const radialEndZ = bottomCoveredFromZ == null
+          ? p.blankL
+          : Math.min(p.blankL, bottomCoveredFromZ + p.bottomRoughOverlap);
+        const roughRunSamples = roughOffSamples.filter((s) => s.z <= radialEndZ + 1e-9);
+        if (!roughRunSamples.length || roughRunSamples[roughRunSamples.length - 1].z < radialEndZ - 1e-9) {
+          roughRunSamples.push({ z: radialEndZ, r: offsetRadiusAt(radialEndZ) });
+        }
 
         /* ------------------------------------------------------------------ */
         /* حالت رفت‌وبرگشتی (زیگزاگ) — مارپیچ دنبال‌کنندهٔ منحنی، فقط بازه‌های فعال:  */
@@ -1045,7 +1158,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         /* ------------------------------------------------------------------ */
         if (p.roughMode === "zigzag") {
           note("ROUGHING - CONTOUR SERPENTINE (ACTIVE REGIONS, CUTS BOTH WAYS)");
-          const F = offSamples;
+          const F = roughRunSamples;
           let minF = Infinity;
           for (const s of F) if (s.r < minF) minF = s.r;
           const totalDepth = R - minF;
@@ -1058,7 +1171,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               return mx === -Infinity ? minF : mx;
             };
             /* جهت شروع: نزدیک‌تر به موقعیت فعلی ابزار (مثلاً پایان گرد کردن) */
-            let forward = Math.abs(z0 - cur.z) <= Math.abs(zEnd - cur.z);
+            let forward = Math.abs(cur.z) <= Math.abs(radialEndZ - cur.z);
             let first = true;
             let lastEndZ = NaN;
             let lastEndR = 0;
@@ -1102,7 +1215,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               }
               forward = !forward; // گذر بعد در جهت مخالف
             }
-            if (!Number.isNaN(lastEndZ)) mv(0, retractX, lastEndZ, 0, "rapid"); // جمع‌کردن پایانی
+            if (!Number.isNaN(lastEndZ)) {
+              mv(0, retractX, lastEndZ, 0, "rapid"); // جمع‌کردن پایانی
+              /* گذر آخر زیگزاگ تا خط آفست واقعی می‌رسد. */
+              radialRoughEndR = offsetRadiusAt(radialEndZ);
+            }
           }
           break;
         }
@@ -1120,7 +1237,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (p.roughMode === "zone") {
           /* نواحی: مرزهای دستی کاربر (در صورت اعتبار) جایگزین تقسیم خودکار می‌شوند؛ */
           /* سپس ترتیب دستی (در صورت اعتبار) روی همان نواحی اعمال می‌شود.            */
-          let zones = resolveZones(offSamples, p.zoneBounds, z0, zEnd);
+          let zones = resolveZones(roughRunSamples, p.zoneBounds, 0, radialEndZ);
           const ord = p.zoneOrder;
           const isPerm =
             ord.length === zones.length &&
@@ -1132,7 +1249,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             /* بهینه‌سازی شروع: اگر ترتیب دستی تعیین نشده باشد، نواحی از سمتی       */
             /* پردازش می‌شوند که ابزار اکنون در آن‌جاست (مثلاً بعد از گرد کردن       */
             /* گوشه‌ها که ابزار در انتهای همان مسیر ایستاده) — نه همیشه از چپ.     */
-            const mid = (z0 + zEnd) / 2;
+            const mid = radialEndZ / 2;
             if (cur.z > mid) zones = [...zones].reverse();
           }
           for (const zone of zones) {
@@ -1140,7 +1257,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             let guard = 0;
             while (layer > floorR + 1e-6 && guard < 80) {
               guard++;
-              for (const iv of cutIntervals(offSamples, layer)) {
+              for (const iv of cutIntervals(roughRunSamples, layer)) {
                 const a = Math.max(iv.a, zone.a);
                 const b = Math.min(iv.b, zone.b);
                 if (b - a > 0.3) cuts.push({ a, b, r: layer });
@@ -1153,10 +1270,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           let guard = 0;
           while (layer > floorR + 1e-6 && guard < 80) {
             guard++;
-            for (const iv of cutIntervals(offSamples, layer)) cuts.push({ a: iv.a, b: iv.b, r: layer });
+            for (const iv of cutIntervals(roughRunSamples, layer)) cuts.push({ a: iv.a, b: iv.b, r: layer });
             layer -= p.doc;
           }
         }
+
+        /* مرز واقعی باقی‌مانده در انتهای خام پس از آخرین لایه خشن؛ این مقدار
+           مبنای حذف فقط بخش تکراری از کف‌تراشی بعدی است. */
+        const endCutR = cuts
+          .filter((c) => c.a <= radialEndZ + 1e-6 && c.b >= radialEndZ - 1e-6)
+          .reduce((best, c) => Math.min(best, c.r), Infinity);
+        if (Number.isFinite(endCutR)) radialRoughEndR = endCutR;
 
         if (p.roughMode === "classic") {
           /* روش کلاسیکِ یک‌طرفه */
@@ -1281,7 +1405,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = IW[0].z;
         const zRim = IW[IW.length - 1].z;
         /* خط آفست یکنواخت داخل: آفست نرمال به سمت حفره (نه wallIn−OD شعاعی) */
-        const innerOff = normalOffset(IW, OD, false);
+        const innerOff = normalOffset(IW, IOD, false);
         const wallInOff = (z: number): number => {
           if (z <= innerOff[0].z) return innerOff[0].r;
           for (let i = 1; i < innerOff.length; i++) {
@@ -1300,25 +1424,63 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         depths.push(zBot);
         note(`INNER DEPTHS ${depths.length} x ${f2(step)} MM`);
         const rEntry = 0.6; // ورود در امتداد محور
-        /* صفحه امن ‎+X‎ بیرون از خط داخلی: همه جابه‌جایی‌های محوری از آن می‌گذرند */
-        const mouthX = Math.max(p.blankL, zRim) + p.safety;
+        /* نقطه ورود به‌اندازه فاصله تنظیم‌شده جلوتر (+X) از شروع اولین عملیات داخل‌تراشی است.
+           mv پیش از آن ابتدا +Y تا صفحه امن، سپس +X و در پایان −Y را می‌سازد. */
+        const mouthX = zRim + p.innerStartClearance;
         innerCleared = true;
         depths.forEach((zk, k) => {
           const target = Math.max(0.8, wallInOff(zk));
           if (k === 0) {
-            mv(0, 2 * rEntry, mouthX, 0, "rapid"); // ورود از دهانه
-            mv(1, 2 * rEntry, zk, p.feedRough * 0.8, "bore"); // نشست روی صفحه دهانه
+            enterFirstInner(2 * rEntry, mouthX); // ورود از دهانه
+            mv(1, 2 * rEntry, zk, p.feedRough * 0.8, "bore"); // شیرجه نخست در −X
           } else {
-            rawRapid(2 * rEntry, depths[k - 1]); // بازگشت شعاعی در فضای خالی‌شده
-            rawRapid(2 * rEntry, mouthX); // خروج محوری به بیرون خط داخلی (+X امن)
-            mv(1, 2 * rEntry, zk, p.feedRough * 0.7, "bore"); // فرورفتن با فیدر تا عمق بعد
+            const prevZ = depths[k - 1];
+            /* بازگشت مورب سریع: −Y تا مرکز و هم‌زمان +X به‌اندازه ۰٫۵mm */
+            rawRapid(2 * rEntry, prevZ + 0.5);
+            mv(1, 2 * rEntry, zk, p.feedRough * 0.7, "bore"); // شیرجه −X به عمق بار بعدی
           }
-          if (target > rEntry + 0.05) mv(1, 2 * target, zk, p.feedRough, "bore"); // روتراشی تا دیواره
+          if (target > rEntry + 0.05) mv(1, 2 * target, zk, p.feedRough, "bore"); // برداشت از مرکز به بیرون (+Y)
         });
-        /* خروج: بازگشت شعاعی در کف خالی‌شده، سپس خروج محوری به بیرون خط داخلی */
-        rawRapid(2 * rEntry, depths[depths.length - 1]);
-        rawRapid(2 * rEntry, mouthX);
-        mv(0, retractX, mouthX, 0, "rapid");
+        /* اگر این آخرین عملیات داخل است، بدون هیچ حرکت واسط مستقیماً +X می‌رود. */
+        if (!finishLastInner(op.id)) {
+          rawRapid(2 * rEntry, depths[depths.length - 1]);
+          rawRapid(2 * rEntry, mouthX);
+          mv(0, retractX, mouthX, 0, "rapid");
+        }
+        break;
+      }
+      /* آفست داخل‌تراشی — پاس خط‌چینِ موازی دیواره، بین خشن و پرداخت داخل */
+      case "inner-offset": {
+        curOp = "inner-offset";
+        if (!hasInner || IOD <= 0.01) break;
+        note(`INNER OFFSET PASS ${f2(IOD)} MM (HOLDER ${op.holder})`);
+        const IW = innerSamples;
+        const innerOff = normalOffset(IW, IOD, false);
+        if (innerOff.length < 2) break;
+        const zBot = innerOff[0].z;
+        const zRimF = innerOff[innerOff.length - 1].z;
+        const rEntry = 0.6;
+        const mouthX = zRimF + p.innerStartClearance;
+        enterFirstInner(2 * rEntry, mouthX);
+        if (innerCleared) rawRapid(2 * rEntry, zBot);
+        else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "boreoff");
+        mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
+        for (let i = 1; i < innerOff.length; i++) {
+          mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
+        }
+        if (!finishLastInner(op.id)) {
+          if (innerCleared) {
+            rawRapid(2 * rEntry, zRimF);
+            rawRapid(2 * rEntry, mouthX);
+          } else {
+            for (let i = innerOff.length - 2; i >= 0; i--) {
+              mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
+            }
+            mv(1, 2 * rEntry, zBot, p.feedFinish, "boreoff");
+            mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "boreoff");
+          }
+          mv(0, retractX, mouthX, 0, "rapid");
+        }
         break;
       }
       /* پرداخت داخل — دنبال‌کردن دیواره داخلی از کف تا دهانه با هلدر دوم */
@@ -1330,24 +1492,25 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = IW[0].z;
         const zRimF = IW[IW.length - 1].z;
         const rEntry = 0.6;
-        /* صفحه امن ‎+X‎ بیرون از خط داخلی (با گسترش G0 سه میلی‌متر بیرون‌تر
-           تا ورود/خروج پرداخت روی خشن نیفتد — بیرون‌تر = امن‌تر) */
-        const mouthX = Math.max(p.blankL, zRimF) + p.safety + (p.spreadG0 ? 3 : 0);
-        mv(0, 2 * rEntry, mouthX, 0, "rapid"); // پشت دهانه، بیرون خط داخلی
+        /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
+        const mouthX = zRimF + p.innerStartClearance;
+        enterFirstInner(2 * rEntry, mouthX); // پشت دهانه، بیرون خط داخلی
         if (innerCleared) rawRapid(2 * rEntry, zBot); // حفره خالی است — ورود سریع
         else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
         for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
-        if (innerCleared) {
-          /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
-          rawRapid(2 * rEntry, zRimF);
-          rawRapid(2 * rEntry, mouthX);
-        } else {
-          /* بدون خشن‌کاری حفره پر است: بازگشت با فیدر در شیار برش تا کف، سپس خروج */
-          for (let i = IW.length - 2; i >= 0; i--) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
-          mv(1, 2 * rEntry, zBot, p.feedFinish, "borefin");
-          mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "borefin");
+        if (!finishLastInner(op.id)) {
+          if (innerCleared) {
+            /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
+            rawRapid(2 * rEntry, zRimF);
+            rawRapid(2 * rEntry, mouthX);
+          } else {
+            /* بدون خشن‌کاری حفره پر است: بازگشت با فیدر در شیار برش تا کف، سپس خروج */
+            for (let i = IW.length - 2; i >= 0; i--) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
+            mv(1, 2 * rEntry, zBot, p.feedFinish, "borefin");
+            mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "borefin");
+          }
+          mv(0, retractX, mouthX, 0, "rapid");
         }
-        mv(0, retractX, mouthX, 0, "rapid");
         break;
       }
       /* پرداخت نهایی روی خط اصلی طرح */
@@ -1388,13 +1551,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     }
   }
 
-  /* پایان */
+  /* پایان: پس از پایان مستقیم عملیات داخلی، هیچ جابه‌جایی دیگری مجاز نیست. */
   curOp = "sys";
   curOpId = -1;
-  curHolder = 1;
-  note("END OF PROGRAM");
-  mv(0, retractX, p.blankL + 2 * p.safety, 0, "rapid");
-  mv(0, home.x, home.z, 0, "rapid");
+  if (!endedAtInnerEndpoint) {
+    curHolder = 1;
+    note("END OF PROGRAM");
+    mv(0, retractX, p.blankL + 2 * p.safety, 0, "rapid");
+    mv(0, home.x, home.z, 0, "rapid");
+  }
 
   /* گسترش G0 در جی‌کد (همه‌جهته): حرکت‌های سریعِ طولیِ روی‌هم با گام ۳mm فقط
      به سمت بیرون (+قطر، ‎(k+1)*3‎، سقف ۳۳) باز می‌شوند تا در سیمکو هیچ دو خط
@@ -1469,7 +1634,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     });
   }
 
-  /* کلید پایدار هر خط (برای ادیت جی‌کد): عملیات:شماره در آن عملیات */
+  /* کلید پایدار هر خط (برای ویرایش مسیر): عملیات:شماره در آن عملیات */
   {
     const ctr = new Map<string, number>();
     for (const sg of segs) {
@@ -1526,7 +1691,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     rapidLen,
     timeSec,
     volumeCm3: vol / 1000,
-    roughLayers: p.ops.filter((o) => o.on && (o.type === "rough-d" || o.type === "rough-z" || o.type === "offset" || o.type === "inner-rough")).length,
+    roughLayers: p.ops.filter((o) => o.on && (o.type === "rough-d" || o.type === "rough-z" || o.type === "offset" || o.type === "inner-rough" || o.type === "inner-offset")).length,
     format: p.format,
   };
 }
@@ -1534,9 +1699,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 /* فیدر بهینه: وقتی simpleFeed روشن است، فیدر هر حرکت به یکی از دو فیدر اصلی  */
 /* (خشن برای عملیات‌های برداشت، پرداخت برای پرداخت و آفست) ساده می‌شود تا در  */
 /* جی‌کد فقط دو F باقی بماند و G1/F های تکراری حذف شوند.                     */
-const FINISH_KINDS: SegKind[] = ["finish", "offset", "borefin"];
+const FINISH_KINDS: SegKind[] = ["finish", "offset", "boreoff", "borefin"];
 function normFeed(sg: Seg, p: Params): number {
-  if (!p.simpleFeed) return sg.feed;
+  if (sg.feedOvr || !p.simpleFeed) return sg.feed;
   return FINISH_KINDS.includes(sg.kind) ? p.feedFinish : p.feedRough;
 }
 
@@ -1667,7 +1832,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
   lines.push("O1001 (KHARRATKOD - 2 AXIS WOOD LATHE)");
   lines.push(`(STOCK D${p.blankD} x L${p.blankL} MM)`);
   lines.push(`(TOOL: ${toolDesc(p.tool)})`);
-  lines.push(`(DOC ${p.doc} MM - OFFSET ${p.offsetDist} MM)`);
+  lines.push(`(DOC ${p.doc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM - INNER END +X ${p.innerEndTravel} MM - BOTTOM/ROUGH OVERLAP ${p.bottomRoughOverlap} MM)`);
   const usesH2 = segs.some((s) => s.motion === 1 && s.holder === 2);
   if (usesH2) {
     lines.push(`(HOLDER2: XOFF ${p.holder2.xOff} YOFF ${p.holder2.yOff} ROT ${HOLDER2_ROT})`);
@@ -1694,9 +1859,15 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
       lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
       let pu = br.from.u;
       let pv = br.from.v;
-      for (const leg of br.legs) {
+      for (let j = 0; j < br.legs.length; j++) {
+        const leg = br.legs[j];
         if (Math.hypot(leg.u - pu, leg.v - pv) < 1e-9) continue;
-        emit(`G0 X${f2(leg.v)} Z${f2(leg.u)}`);
+        const move = sg.bridgeMoves?.[j];
+        if (move?.motion === 1) {
+          const F = Math.max(1, Math.round(move.feed));
+          emit(`G1 X${f2(leg.v)} Z${f2(leg.u)} F${F}`);
+          lastFeed = F;
+        } else emit(`G0 X${f2(leg.v)} Z${f2(leg.u)}`);
         pu = leg.u;
         pv = leg.v;
         mu = leg.u;
@@ -1707,7 +1878,12 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
        اول با یک G0 به آن می‌رویم؛ بدون گسترش همیشه صفر است و بلوکی صادر نمی‌شود.
        برای سگمنت جذب‌شده پله نداریم — بلوک خودش از انتهای پل شروع می‌شود. */
     if (!(br && br.absorbed) && Math.hypot(e1.u - mu, e1.v - mv) > 1e-9) {
-      emit(`G0 X${f2(e1.v)} Z${f2(e1.u)}`);
+      const move = sg.bridgeMoves?.[8];
+      if (move?.motion === 1) {
+        const F = Math.max(1, Math.round(move.feed));
+        emit(`G1 X${f2(e1.v)} Z${f2(e1.u)} F${F}`);
+        lastFeed = F;
+      } else emit(`G0 X${f2(e1.v)} Z${f2(e1.u)}`);
       mu = e1.u;
       mv = e1.v;
     }
@@ -1774,15 +1950,24 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
       lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
       let pu = br.from.u;
       let pv = br.from.v;
-      for (const leg of br.legs) {
+      for (let j = 0; j < br.legs.length; j++) {
+        const leg = br.legs[j];
         if (Math.hypot(leg.u - pu, leg.v - pv) < 1e-9) continue;
-        lines.push(`G0 X${f3(leg.u)} Y${f3(leg.v)}`);
+        const move = sg.bridgeMoves?.[j];
+        if (move?.motion === 1) {
+          const F = Math.max(1, Math.round(move.feed));
+          lines.push(`G1 X${f3(leg.u)} Y${f3(leg.v)} F${F}`);
+          mode = 1;
+          mFeed = F;
+        } else {
+          lines.push(`G0 X${f3(leg.u)} Y${f3(leg.v)}`);
+          mode = 0;
+        }
         pu = leg.u;
         pv = leg.v;
         mu = leg.u;
         mv = leg.v;
       }
-      mode = 0;
     }
     /* پله گسترش: اگر شروع اجراشده با موقعیت ماشین فرق دارد (تغییر سطح گسترش)،
        اول با یک G0 به آن می‌رویم؛ بدون گسترش همیشه صفر است و بلوکی صادر نمی‌شود.
@@ -1791,8 +1976,16 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
       const sw: string[] = [];
       if (Math.abs(e1.u - mu) > 1e-9) sw.push(`X${f3(e1.u)}`);
       if (Math.abs(e1.v - mv) > 1e-9) sw.push(`Y${f3(e1.v)}`);
-      lines.push(`G0 ${sw.join(" ")}`);
-      mode = 0;
+      const move = sg.bridgeMoves?.[8];
+      if (move?.motion === 1) {
+        const F = Math.max(1, Math.round(move.feed));
+        lines.push(`G1 ${sw.join(" ")} F${F}`);
+        mode = 1;
+        mFeed = F;
+      } else {
+        lines.push(`G0 ${sw.join(" ")}`);
+        mode = 0;
+      }
       mu = e1.u;
       mv = e1.v;
     }
@@ -1991,7 +2184,7 @@ export function fmtTime(sec: number): string {
   return m > 0 ? `${m}د و ${s}ث` : `${s} ثانیه`;
 }
 
-/* ================= ویرایشِ خطوط جی‌کد (حالت ادیت جی‌کد) =================
+/* ================= ویرایشِ خطوط جی‌کد (حالت ویرایش مسیر) =================
    هر خطِ خروجی کلیدِ ovrKey دارد؛ ویرایش‌ها به‌صورتِ مطلق (مختصات کارِ
    z/r با X قطری) روی همان کلید ذخیره و برنامه از نو ساخته می‌شود:
    - خطِ حذف‌شده (del) از برنامه بیرون می‌رود؛
@@ -2006,60 +2199,58 @@ export interface GcodeOvrPt {
 export interface GcodeOvr {
   s?: GcodeOvrPt;
   e?: GcodeOvrPt;
+  /** نقاط میانی برای شکستن یک حرکت به چند Segment پیوسته */
+  via?: GcodeOvrPt[];
+  /** نوع حرکت و فید هر قطعه؛ هم‌ردیف با Segmentهای ساخته‌شده از s/via/e */
+  moves?: { motion: 0 | 1; feed: number }[];
+  /** تغییر پله‌های مصنوعی اتصال/نزدیک‌شدن که پیش از سگمنت پایه ساخته می‌شوند. */
+  bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>;
   del?: boolean;
 }
 export type GcodeOvrMap = Record<string, GcodeOvr>;
 
 export function applyGcodeOvr(base: GenResult, ovr: GcodeOvrMap, p: Params): GenResult {
   if (!Object.keys(ovr).length) return base;
-  const kept: Seg[] = [];
+  const expanded: Seg[] = [];
   for (const sg0 of base.segs) {
     const o = sg0.ovrKey ? ovr[sg0.ovrKey] : undefined;
     if (o?.del) continue;
-    const sg = { ...sg0 };
-    if (o && (o.s || o.e)) {
-      if (o.s) {
-        sg.z1 = o.s.z;
-        sg.x1 = o.s.x;
-      }
-      if (o.e) {
-        sg.z2 = o.e.z;
-        sg.x2 = o.e.x;
-      }
+    const points = [o?.s ?? { z: sg0.z1, x: sg0.x1 }, ...(o?.via ?? []), o?.e ?? { z: sg0.z2, x: sg0.x2 }];
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i];
+      if (Math.hypot(b.z - a.z, b.x - a.x) < 1e-6) continue;
+      const move = o?.moves?.[i - 1];
+      const motion = move?.motion ?? sg0.motion;
+      const feed = motion === 0 ? RAPID_RATE : (move?.feed ?? sg0.feed);
+      expanded.push({ ...sg0, motion, feed, feedOvr: !!move, bridgeMoves: i === 1 ? o?.bridgeMoves : undefined, z1: a.z, x1: a.x, z2: b.z, x2: b.x, note: i === 1 ? sg0.note : undefined });
     }
-    if (Math.abs(sg.z2 - sg.z1) < 1e-6 && Math.abs(sg.x2 - sg.x1) < 1e-6) continue; // صفرطول
+  }
+  const kept: Seg[] = [];
+  for (const sg0 of expanded) {
+    const sg = { ...sg0 };
     const prev = kept[kept.length - 1];
     if (prev && sg.motion === 1 && (Math.abs(sg.z1 - prev.z2) > 1e-6 || Math.abs(sg.x1 - prev.x2) > 1e-6)) {
       if (prev.motion === 0) {
-        /* حرکتِ سریعِ پیشین خودش جابه‌جا می‌شود تا سرِ بُرش را بگیرد (بی‌درز) */
         prev.z2 = sg.z1;
         prev.x2 = sg.x1;
-        if (Math.abs(prev.z2 - prev.z1) < 1e-6 && Math.abs(prev.x2 - prev.x1) < 1e-6) kept.pop();
+        if (Math.hypot(prev.z2 - prev.z1, prev.x2 - prev.x1) < 1e-6) kept.pop();
       } else {
-        /* اتصالِ ناقص: حرکتِ سریعِ لازم قبل از بُرش تزریق می‌شود */
         kept.push({ ...sg, motion: 0, feed: RAPID_RATE, kind: "rapid", opId: -1, op: "sys", note: undefined, fan: undefined, fanU: undefined, z1: prev.z2, x1: prev.x2, z2: sg.z1, x2: sg.x1, line: -1, holder: sg.holder, ovrKey: undefined });
       }
     }
     kept.push(sg);
   }
   const lines = p.format === "modal" ? buildModalLines(kept, p) : buildStdLines(kept, p);
-  let cutLen = 0;
-  let rapidLen = 0;
-  let timeSec = 0;
-  for (const s of kept) {
-    const d = Math.hypot(s.x2 - s.x1, s.z2 - s.z1);
-    if (s.motion === 1) {
-      cutLen += d;
-      timeSec += (d / Math.max(1, s.feed)) * 60;
-    } else {
-      rapidLen += d;
-      timeSec += (d / RAPID_RATE) * 60;
-    }
+  let cutLen = 0, rapidLen = 0, timeSec = 0;
+  for (const sg of kept) {
+    const d = Math.hypot(sg.x2 - sg.x1, sg.z2 - sg.z1);
+    if (sg.motion === 1) { cutLen += d; timeSec += (d / Math.max(1, sg.feed)) * 60; }
+    else { rapidLen += d; timeSec += (d / RAPID_RATE) * 60; }
   }
   return { ...base, segs: kept, lines, cutLen, rapidLen, timeSec };
 }
 
-/* ---------- بافرِ «ادیت جی‌کد» — پلی‌لاینِ پیوسته با رأس‌های مشترک ----------
+/* ---------- بافرِ «ویرایش مسیر» — پلی‌لاینِ پیوسته با رأس‌های مشترک ----------
    مدل مثل بک‌پلات CIMCO: کل مسیر، یک زنجیرۀ یکپارچه است. نقاط (verts)
    موجودیت‌های مستقل‌اند و هر خط به دو رأس ارجاع می‌دهد؛ جابه‌جایی یک رأس
    خودبه‌خود همهٔ خطوطِ متصل را با خود می‌برد (بدای نقطهٔ دوم و بدون گسست)
@@ -2078,6 +2269,7 @@ export interface ELine {
   vb: number; // رأس مقصد
   motion: 0 | 1;
   feed: number;
+  feedOvr?: boolean;
   opId: number; // -۱ = سیستمی (نزدیک‌سازی/امنیت)
   kind: SegKind;
   holder: 1 | 2;
@@ -2101,6 +2293,9 @@ export interface EditBuf {
   lines: ELine[]; // به همان ترتیب اجرای برنامه؛ همواره vb==vaِ خطِ بعد (زنجیرهٔ بسته)
   sketch: SketchSeg[]; // کپیِ کاریِ پروفایل (تأیید = انتقال به اسکچ اصلی)
   off: Record<number, OffPatch>; // ویرایش مستقل منحنی‌های افست (کلید = id قطعهٔ پروفایل)
+  /** انتخاب Segment جزئی از تاریخچهٔ اصلی است تا Undo/Redo آن را نیز بازیابی کند. */
+  selLines: number[];
+  activeLine: number | null;
 }
 
 export type ELineXY = ELine & { z1: number; x1: number; z2: number; x2: number };
@@ -2117,42 +2312,40 @@ export function expandLines(verts: EVert[], lines: ELine[]): ELineXY[] {
 
 /* زنجیره‌سازی: سرِ هر خط = انتهای خطِ پیشین اگر «تقریباً» یکی بودند → رأسِ مشترک؛
    وگرنه رأسِ تازه (شکافِ واقعی همان‌طور که در سیمکو هم خطِ وصل دیده می‌شود). */
-export function seedGcodeEdit(segs: Seg[]): Pick<EditBuf, "verts" | "lines"> {
+export function seedGcodeEdit(segs: Seg[], p: Params): Pick<EditBuf, "verts" | "lines"> {
   const verts: EVert[] = [];
   const lines: ELine[] = [];
-  let lastV = -1;
-  const EQ = 1e-6;
-  const addV = (z: number, x: number): number => {
-    const v: EVert = { id: verts.length, z, x };
-    verts.push(v);
-    return v.id;
-  };
-  segs.forEach((sg, i) => {
-    let va: number;
-    if (lastV < 0) va = addV(sg.z1, sg.x1);
-    else {
-      const pv = verts[lastV];
-      va = Math.abs(pv.z - sg.z1) < EQ && Math.abs(pv.x - sg.x1) < EQ ? lastV : addV(sg.z1, sg.x1);
-    }
-    const pv = verts[va];
-    const vb = Math.abs(pv.z - sg.z2) < EQ && Math.abs(pv.x - sg.x2) < EQ ? va : addV(sg.z2, sg.x2);
-    lines.push({
-      id: i + 1,
-      key: sg.ovrKey ?? `#bridge:${i}`,
-      va,
-      vb,
-      motion: sg.motion,
-      feed: sg.feed,
-      opId: sg.opId,
-      kind: sg.kind,
-      holder: sg.holder,
-      note: sg.note,
-      fan: sg.fan,
-      fanU: sg.fanU,
-    });
+  const plan = planBridges(segs, p);
+  const bridgeAt = new Map(plan.bridges.map((b) => [b.atIndex, b]));
+  let current = { ...plan.home };
+  let nextLineId = 1;
+  const addV = (u: number, v: number) => { const id = verts.length; verts.push({ id, z: u, x: 2 * v }); return id; };
+  let lastV = addV(current.u, current.v);
+  const addLine = (to: { u: number; v: number }, meta: Omit<ELine, "id" | "va" | "vb">) => {
+    if (Math.hypot(to.u - current.u, to.v - current.v) < 1e-7) return;
+    const vb = addV(to.u, to.v);
+    lines.push({ ...meta, id: nextLineId++, va: lastV, vb });
     lastV = vb;
+    current = { ...to };
+  };
+  const bridgeMeta = (baseKey: string, leg: number, move?: { motion: 0 | 1; feed: number }): Omit<ELine, "id" | "va" | "vb"> => ({
+    key: `#bridge:${baseKey}:${leg}`,
+    motion: move?.motion ?? 0,
+    feed: move?.motion === 1 ? move.feed : RAPID_RATE,
+    feedOvr: !!move,
+    opId: -1,
+    kind: "rapid",
+    holder: 1,
   });
-  return { verts, lines };
+  segs.forEach((sg, i) => {
+    const e1 = execUV(sg, false, p), e2 = execUV(sg, true, p);
+    const br = bridgeAt.get(i);
+    const baseKey = sg.ovrKey ?? `move:${i}`;
+    if (br) for (let j = 0; j < br.legs.length; j++) addLine(br.legs[j], bridgeMeta(baseKey, j, sg.bridgeMoves?.[j]));
+    if (!(br && br.absorbed)) addLine(e1, bridgeMeta(baseKey, 8, sg.bridgeMoves?.[8]));
+    addLine(e2, { key: sg.ovrKey ?? `#move:${i}`, motion: sg.motion, feed: sg.feed, feedOvr: sg.feedOvr, opId: sg.opId, kind: sg.kind, holder: sg.holder, note: sg.note, fan: sg.fan, fanU: sg.fanU });
+  });
+  return normalizeEditBuf(verts, lines);
 }
 
 /* نرمال‌سازیِ بافر بعد از هر تغییر (اعتبارسنجی خواستهٔ ۹):
@@ -2160,59 +2353,120 @@ export function seedGcodeEdit(segs: Seg[]): Pick<EditBuf, "verts" | "lines"> {
    - خط‌هایِ تکراریِ چسبیده یکی می‌شوند؛
    - رأس‌های بی‌استفاده (یتیم) پاک می‌شوند تا «نقطهٔ اضافی» نماند. */
 export function normalizeEditBuf(verts: EVert[], lines: ELine[]): { verts: EVert[]; lines: ELine[]; dropped: number } {
+  const byId = new Map(verts.map((v) => [v.id, v]));
+  const kept: ELine[] = [];
   let dropped = 0;
-  const out: ELine[] = [];
-  for (const l of lines) {
-    if (l.va === l.vb) {
-      dropped++;
-      continue; // صفرطول
-    }
-    const p = out[out.length - 1];
-    if (p && ((p.va === l.va && p.vb === l.vb) || (p.va === l.vb && p.vb === l.va))) {
-      dropped++; // تکراریِ چسبیده
-      continue;
-    }
-    out.push(l);
+  for (const original of lines) {
+    const a = byId.get(original.va), b = byId.get(original.vb);
+    if (!a || !b || Math.hypot(a.z - b.z, a.x - b.x) < 1e-7) { dropped++; continue; }
+    const prev = kept[kept.length - 1];
+    const line = prev ? { ...original, va: prev.vb } : { ...original };
+    const aa = byId.get(line.va);
+    if (!aa || Math.hypot(aa.z - b.z, aa.x - b.x) < 1e-7) { dropped++; continue; }
+    kept.push(line);
   }
-  const used = new Set<number>();
-  for (const l of out) {
-    used.add(l.va);
-    used.add(l.vb);
-  }
+  const order: number[] = [];
+  if (kept.length) { order.push(kept[0].va); for (const l of kept) order.push(l.vb); }
   const remap = new Map<number, number>();
   const vs: EVert[] = [];
-  for (const v of verts) {
-    if (!used.has(v.id)) {
-      dropped++;
-      continue;
-    }
-    remap.set(v.id, vs.length);
-    vs.push({ ...v, id: vs.length });
+  for (const old of order) if (!remap.has(old)) { remap.set(old, vs.length); vs.push({ ...byId.get(old)!, id: vs.length }); }
+  const ls = kept.map((l, i) => ({ ...l, id: i + 1, va: remap.get(l.va)!, vb: remap.get(l.vb)! }));
+  dropped += verts.length - vs.length;
+  return { verts: vs, lines: ls, dropped };
+}
+
+/** حذف رأس‌های منفرد یا متوالی و اتصال مستقیم اولین همسایه معتبر به آخرین همسایه معتبر. */
+export function deleteEditVertices(verts: EVert[], lines: ELine[], ids: number[]) {
+  const remove = new Set(ids);
+  if (!remove.size) return normalizeEditBuf(verts, lines);
+  const keptVerts = verts.filter((v) => !remove.has(v.id));
+  const keptLines: ELine[] = [];
+  let pending: ELine | null = null;
+  for (const l of lines) {
+    const aGone = remove.has(l.va), bGone = remove.has(l.vb);
+    if (!aGone && !bGone) { keptLines.push(l); pending = null; }
+    else if (!aGone && bGone) pending = l;
+    else if (aGone && !bGone && pending) { keptLines.push({ ...pending, vb: l.vb }); pending = null; }
   }
-  return { verts: vs, lines: out.map((l) => ({ ...l, va: remap.get(l.va) ?? l.va, vb: remap.get(l.vb) ?? l.vb })), dropped };
+  return normalizeEditBuf(keptVerts, keptLines);
+}
+
+/** حذف Segment با ادغام دو سر آن در مرکز هندسی، بدون شکستن زنجیره. */
+export function deleteEditLines(verts: EVert[], lines: ELine[], ids: number[]) {
+  const remove = new Set(ids);
+  const vs = verts.map((v) => ({ ...v }));
+  const vm = new Map(vs.map((v) => [v.id, v]));
+  const ls = lines.map((l) => ({ ...l }));
+  for (let i = 0; i < ls.length; i++) {
+    if (!remove.has(ls[i].id)) continue;
+    let j = i;
+    while (j + 1 < ls.length && remove.has(ls[j + 1].id)) j++;
+    const first = ls[i], last = ls[j], a = vm.get(first.va), b = vm.get(last.vb);
+    if (a && b) {
+      const mz = (a.z + b.z) / 2, mx = (a.x + b.x) / 2;
+      a.z = mz; a.x = mx; b.z = mz; b.x = mx;
+      if (i > 0) ls[i - 1].vb = a.id;
+      if (j + 1 < ls.length) ls[j + 1].va = a.id;
+    }
+    ls.splice(i, j - i + 1); i--;
+  }
+  return normalizeEditBuf(vs, ls);
+}
+
+/** درج رأس روی Segment و تقسیم آن به دو Segment با حفظ ترتیب و مشخصات حرکت. */
+export function insertEditVertex(verts: EVert[], lines: ELine[], lineId: number, z: number, x: number) {
+  const i = lines.findIndex((l) => l.id === lineId);
+  if (i < 0) return normalizeEditBuf(verts, lines);
+  const l = lines[i], a = verts.find((v) => v.id === l.va), b = verts.find((v) => v.id === l.vb);
+  if (!a || !b || Math.hypot(z - a.z, x - a.x) < 1e-6 || Math.hypot(z - b.z, x - b.x) < 1e-6) return normalizeEditBuf(verts, lines);
+  const id = Math.max(-1, ...verts.map((v) => v.id)) + 1;
+  const nextVerts = [...verts, { id, z, x }];
+  const nextLines = [...lines.slice(0, i), { ...l, vb: id }, { ...l, id: Math.max(0, ...lines.map((q) => q.id)) + 1, va: id }, ...lines.slice(i + 1)];
+  return normalizeEditBuf(nextVerts, nextLines);
 }
 
 /* patches مطلق روی برنامهٔ پایه + حذف‌ها؛ کلیدهای پل (شروع #) نادیده (مجدداً تزریق می‌شوند) */
-export function deriveGcodeOvr(verts: EVert[], lines: ELine[], baseSegs: Seg[], prev: GcodeOvrMap): GcodeOvrMap {
+export function deriveGcodeOvr(verts: EVert[], lines: ELine[], baseSegs: Seg[], prev: GcodeOvrMap, p: Params): GcodeOvrMap {
   const exp = expandLines(verts, lines);
   const next: GcodeOvrMap = { ...prev };
   const byKey = new Map<string, Seg>();
   for (const sg of baseSegs) if (sg.ovrKey) byKey.set(sg.ovrKey, sg);
-  const live = new Set<string>();
-  for (const L of exp) {
-    if (L.key.startsWith("#")) continue;
-    live.add(L.key);
-    const b = byKey.get(L.key);
-    if (!b) continue;
+  const groups = new Map<string, ELineXY[]>();
+  const bridgeEdits = new Map<string, Record<number, { motion: 0 | 1; feed: number }>>();
+  for (const l of exp) {
+    const bridge = /^#bridge:(.+):(\d+)$/.exec(l.key);
+    if (bridge) {
+      /* پله‌های مصنوعی ذاتاً G0 هستند؛ فقط تبدیل آن‌ها به G1 نیازمند override است. */
+      if (l.motion === 1) {
+        const baseKey = bridge[1];
+        const leg = Number(bridge[2]);
+        const edits = bridgeEdits.get(baseKey) ?? {};
+        edits[leg] = { motion: 1, feed: l.feed };
+        bridgeEdits.set(baseKey, edits);
+      }
+    } else if (!l.key.startsWith("#")) {
+      const g = groups.get(l.key); if (g) g.push(l); else groups.set(l.key, [l]);
+    }
+  }
+  const toWorld = (z: number, x: number, sg: Seg) => {
+    const u = z - (sg.fanU ?? 0), v = x / 2 - (sg.fan ?? 0);
+    return sg.holder === 2 ? { z: u - p.holder2.xOff, x: 2 * (v + p.holder2.yOff) } : { z: u, x: 2 * v };
+  };
+  for (const [key, group] of groups) {
+    const b = byKey.get(key); if (!b) continue;
+    const s0 = toWorld(group[0].z1, group[0].x1, b);
+    const e0 = toWorld(group[group.length - 1].z2, group[group.length - 1].x2, b);
+    const via = group.slice(0, -1).map((l) => toWorld(l.z2, l.x2, b));
     const o: GcodeOvr = {};
-    if (Math.abs(b.z1 - L.z1) > 1e-9 || Math.abs(b.x1 - L.x1) > 1e-9) o.s = { z: L.z1, x: L.x1 };
-    if (Math.abs(b.z2 - L.z2) > 1e-9 || Math.abs(b.x2 - L.x2) > 1e-9) o.e = { z: L.z2, x: L.x2 };
-    if (o.s || o.e) next[L.key] = o;
-    else if (!prev[L.key]) delete next[L.key];
+    const bridgeMoves = bridgeEdits.get(key);
+    if (bridgeMoves && Object.keys(bridgeMoves).length) o.bridgeMoves = bridgeMoves;
+    if (Math.hypot(b.z1 - s0.z, b.x1 - s0.x) > 1e-8) o.s = s0;
+    if (Math.hypot(b.z2 - e0.z, b.x2 - e0.x) > 1e-8) o.e = e0;
+    if (via.length) o.via = via;
+    const moves = group.map((l) => ({ motion: l.motion, feed: l.motion === 0 ? RAPID_RATE : l.feed }));
+    if (moves.some((m) => m.motion !== b.motion || (m.motion === 1 && Math.abs(m.feed - b.feed) > 1e-8))) o.moves = moves;
+    if (o.s || o.e || o.via || o.moves || o.bridgeMoves) next[key] = o; else delete next[key];
   }
-  for (const sg of baseSegs) {
-    const k = sg.ovrKey;
-    if (k && !live.has(k)) next[k] = { ...next[k], del: true };
-  }
+  for (const sg of baseSegs) if (sg.ovrKey && !groups.has(sg.ovrKey)) next[sg.ovrKey] = { del: true };
   return next;
 }

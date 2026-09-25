@@ -17,6 +17,7 @@ const ACI: Record<OpType, number> = {
   offset: 1, // قرمز — آفست
   finish: 30, // نارنجی — پرداخت
   "inner-rough": 6, // سرخابی — خشن داخل
+  "inner-offset": 202, // بنفش — آفست داخل‌تراشی
   "inner-finish": 96, // آبی روشن — پرداخت داخل
   bottom: 7, // سفید — کف‌تراشی
 };

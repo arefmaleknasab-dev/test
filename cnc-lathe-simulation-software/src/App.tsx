@@ -7,8 +7,8 @@ import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
-import { PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, expandLines, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, Params, PPoint, Preset } from "./lib/lathe";
+import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
+import type { EditBuf, GcodeOvrMap, GenResult, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
@@ -22,7 +22,7 @@ interface Saved {
   settings?: Partial<EdSettings>;
   layout?: LayoutState;
   activePreset?: string | null;
-  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; del?: boolean }>;
+  gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>; del?: boolean }>;
   version?: number;
 }
 
@@ -52,7 +52,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
   if (!raw || typeof raw !== "object") return out;
   for (const [k, v] of Object.entries(raw)) {
     if (!v || typeof v !== "object") continue;
-    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; del?: boolean } = {};
+    const o: { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>; del?: boolean } = {};
     const okPt = (q: unknown): q is { z: number; x: number } =>
       !!q &&
       typeof q === "object" &&
@@ -62,8 +62,23 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
       isFinite((q as { x: number }).x);
     if (okPt(v.s)) o.s = { z: v.s!.z, x: v.s!.x };
     if (okPt(v.e)) o.e = { z: v.e!.z, x: v.e!.x };
+    if (Array.isArray(v.via)) o.via = v.via.filter(okPt).map((q) => ({ z: q.z, x: q.x }));
+    if (Array.isArray(v.moves)) {
+      const moves = v.moves.filter((m) => m && (m.motion === 0 || m.motion === 1) && typeof m.feed === "number" && isFinite(m.feed) && m.feed >= 0);
+      if (moves.length) o.moves = moves.map((m) => ({ motion: m.motion, feed: m.feed }));
+    }
+    if (v.bridgeMoves && typeof v.bridgeMoves === "object") {
+      const bridgeMoves: Record<number, { motion: 0 | 1; feed: number }> = {};
+      for (const [leg, move] of Object.entries(v.bridgeMoves)) {
+        const n = Number(leg);
+        if (Number.isInteger(n) && move && (move.motion === 0 || move.motion === 1) && typeof move.feed === "number" && isFinite(move.feed) && move.feed >= 0) {
+          bridgeMoves[n] = { motion: move.motion, feed: move.feed };
+        }
+      }
+      if (Object.keys(bridgeMoves).length) o.bridgeMoves = bridgeMoves;
+    }
     if (v.del === true) o.del = true;
-    if (o.s || o.e || o.del) out[k] = o;
+    if (o.s || o.e || o.via?.length || o.moves?.length || o.bridgeMoves || o.del) out[k] = o;
   }
   return out;
 }
@@ -101,11 +116,25 @@ export default function App() {
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "warn" } | null>(null);
   const [, setHistVer] = useState(0);
 
-  /* حالت ادیت جی‌کد: فایل = برنامهٔ پایه + اوررایدِ تأییدشده (پیش از «تأیید» فایل دست‌نخورده است) */
+  /* حالت ویرایش مسیر: فایل = برنامهٔ پایه + اوررایدِ تأییدشده (پیش از «تأیید» فایل دست‌نخورده است) */
   const [gcodeOvr, setGcodeOvr] = useState<GcodeOvrMap>(() => normGcodeOvr(SAVED?.gcodeOvr));
   const [editBuf, setEditBuf] = useState<EditBuf | null>(null);
+  /* باز/بسته‌بودن UI از وجود پیش‌نویس جداست تا خروج تصادفی، تغییرات تأییدنشده را پاک نکند. */
+  const [editOpen, setEditOpen] = useState(false);
+  const editOpenRef = useRef(editOpen);
+  editOpenRef.current = editOpen;
   const editBufRef = useRef<EditBuf | null>(editBuf);
   editBufRef.current = editBuf;
+  /* تغییر preset هندسه و پارامترهای مولد را هم‌زمان عوض می‌کند؛ اگر پیش‌نویس
+     مسیر وجود داشته باشد باید بعد از تولید برنامهٔ جدید از نو seed شود. */
+  const presetReseedRef = useRef(false);
+
+  /* مبنای بازسازی زندهٔ پیش‌نویس هنگام تغییر پارامترهای مولد مسیر. */
+  const pendingParamRebaseRef = useRef<{
+    genBase: GenResult;
+    params: Params;
+    gcodeOvr: GcodeOvrMap;
+  } | null>(null);
 
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
@@ -144,6 +173,56 @@ export default function App() {
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
 
+  /* پارامترهای برداشت مستقیماً توپولوژی مسیر را تغییر می‌دهند. پیش‌نویس فعلی
+     ابتدا نسبت به برنامه قبلی به override تبدیل، سپس روی برنامه جدید اعمال
+     می‌شود؛ بنابراین Polyline زنده به‌روز می‌شود و ویرایش‌های کاربر نیز تا
+     جایی که کلید پایدار Segment وجود دارد حفظ می‌شوند. */
+  useEffect(() => {
+    const pending = pendingParamRebaseRef.current;
+    if (!pending || presetReseedRef.current) return;
+    pendingParamRebaseRef.current = null;
+    setEditBuf((buf) => {
+      if (!buf) return buf;
+      const draftOvr = deriveGcodeOvr(buf.verts, buf.lines, pending.genBase.segs, pending.gcodeOvr, pending.params);
+      const rebuilt = applyGcodeOvr(genBase, draftOvr, params);
+      const seed = seedGcodeEdit(rebuilt.segs, params);
+
+      /* انتخاب‌ها با کلید پایدار + شماره قطعه در همان حرکت منتقل می‌شوند. */
+      const oldCount = new Map<string, number>();
+      const tokenById = new Map<number, string>();
+      for (const line of buf.lines) {
+        const n = oldCount.get(line.key) ?? 0;
+        oldCount.set(line.key, n + 1);
+        tokenById.set(line.id, `${line.key}\u0000${n}`);
+      }
+      const selectedTokens = new Set((buf.selLines ?? []).map((id) => tokenById.get(id)).filter((token): token is string => !!token));
+      const activeToken = buf.activeLine == null ? null : tokenById.get(buf.activeLine) ?? null;
+      const newCount = new Map<string, number>();
+      const selLines: number[] = [];
+      let activeLine: number | null = null;
+      for (const line of seed.lines) {
+        const n = newCount.get(line.key) ?? 0;
+        newCount.set(line.key, n + 1);
+        const token = `${line.key}\u0000${n}`;
+        if (selectedTokens.has(token)) selLines.push(line.id);
+        if (token === activeToken) activeLine = line.id;
+      }
+      return { ...buf, verts: seed.verts, lines: seed.lines, selLines, activeLine };
+    });
+    setHistVer((v) => v + 1);
+  }, [genBase, params]);
+
+  /* پس از اعمال preset، مسیر قدیمی با هندسه/ابعاد جدید مخلوط نمی‌شود؛ بافر
+     تازه دقیقاً از خروجی جدید ساخته و انتخاب‌های قبلی پاک می‌شود. */
+  useEffect(() => {
+    if (!presetReseedRef.current) return;
+    presetReseedRef.current = false;
+    const seed = seedGcodeEdit(gen.segs, params);
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    commitRef.current = null;
+    setHistVer((v) => v + 1);
+  }, [gen, params, sketch]);
+
   /* ذخیره محلی */
   useEffect(() => {
     try {
@@ -169,6 +248,9 @@ export default function App() {
     setSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
+    /* Undo/Redo نباید پیش‌نویس را در پشت‌صحنه تغییر دهد: هر وضعیت تاریخی که
+       EditBuf دارد، هم‌زمان خودِ حالت ویرایش مسیر را نیز دوباره باز می‌کند. */
+    setEditOpen(!!e.editBuf);
     setHistVer((v) => v + 1);
   };
   const undo = () => {
@@ -184,25 +266,42 @@ export default function App() {
     restore(future.current.pop()!);
   };
 
-  /* ---------- حالت ادیت جی‌کد ---------- */
+  /* ---------- حالت ویرایش مسیر ---------- */
   const openEdit = () => {
-    if (editBufRef.current) return;
+    if (editOpenRef.current) return;
+    /* پیش‌نویس قبلی بدون seed مجدد باز می‌شود؛ انتخاب‌ها و هندسه دقیقاً حفظ شده‌اند. */
+    if (editBufRef.current) {
+      setEditOpen(true);
+      showToast("پیش‌نویس ویرایش مسیر بازیابی شد");
+      return;
+    }
     pushPast(snap());
-    const seed = seedGcodeEdit(gen.segs);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {} });
+    const seed = seedGcodeEdit(gen.segs, params);
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    setEditOpen(true);
     setHistVer((v) => v + 1);
   };
   const closeEdit = () => {
+    if (!editOpenRef.current) return;
+    /* فقط UI بسته می‌شود؛ editBuf به‌عنوان پیش‌نویس برای ورود بعدی باقی می‌ماند. */
+    commitRef.current = null;
+    setEditOpen(false);
+    showToast("ویرایش مسیر بسته شد — پیش‌نویس تغییرات برای بازگشت بعدی حفظ شد", "warn");
+  };
+  const discardEdit = () => {
     if (!editBufRef.current) return;
     pushPast(snap());
+    commitRef.current = null;
+    pendingParamRebaseRef.current = null;
     setEditBuf(null);
+    setEditOpen(false);
     setHistVer((v) => v + 1);
-    showToast("حالت ادیت جی‌کد بسته شد — فایل، آخرین وضعیتِ تأییدشده است", "warn");
+    showToast("پیش‌نویس ویرایش مسیر حذف شد", "warn");
   };
   const confirmEdit = () => {
     const eb = editBufRef.current;
     if (!eb) return;
-    const next = deriveGcodeOvr(eb.verts, eb.lines, gen.segs, gcodeOvr);
+    const next = deriveGcodeOvr(eb.verts, eb.lines, genBase.segs, gcodeOvr, params);
     const sketchChanged = eb.sketch !== sketch;
     if (!sketchChanged && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
       showToast("تغییری برای ثبت نیست", "warn");
@@ -215,7 +314,7 @@ export default function App() {
       setSketch(eb.sketch);
     }
     setHistVer((v) => v + 1);
-    showToast("جی‌کد به‌روز شد ✓ (حالت ادیت باز ماند)");
+    showToast("جی‌کد به‌روز شد ✓ (ویرایش مسیر باز ماند)");
   };
   /* تغییرات بافر (خطوط/پروفایل/افست) — یک‌گام تاریخچه برای هر ژست */
   const onEditBuf = (next: EditBuf | null, commit: boolean) => {
@@ -238,7 +337,25 @@ export default function App() {
   }, []);
 
   /* کال‌بک‌های پایدار: هویت ثابت تا فرزندهای memo هنگام تیک شبیه‌سازی بازرندر نشوند */
-  const onParamsCb = useCallback((patch: Partial<Params>) => setParams((p) => ({ ...p, ...patch })), []);
+  const onParamsCb = useCallback((patch: Partial<Params>) => {
+    if (editBufRef.current && !pendingParamRebaseRef.current) {
+      pendingParamRebaseRef.current = { genBase, params, gcodeOvr };
+    }
+    setParams((p) => {
+      const next = { ...p, ...patch };
+      /* تعیین Split برای نخستین بار، ذاتاً طرح را دوشاخه می‌کند؛ بنابراین
+         استراتژی داخل+خارج و حداقل آفست معتبر H2 هم‌زمان فعال می‌شوند. */
+      if (patch.split?.enabled && !p.split.enabled) {
+        const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
+        next.ops = makeOps(bowl.types);
+        next.holder2 = {
+          xOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.xOff),
+          yOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.yOff),
+        };
+      }
+      return next;
+    });
+  }, [genBase, params, gcodeOvr]);
   const onStrategyCb = useCallback((name: string) => showToast(`استراتژی «${name}» فعال شد`), [showToast]);
 
   /* ---------- چیدمان داک (پنجره‌ها) ---------- */
@@ -272,7 +389,7 @@ export default function App() {
   /* تغییر اسکچ — با commit=false تغییر زنده (کشیدن) و با true ثبت در تاریخچه */
   const onSketchChange = useCallback((next: SketchSeg[], commit: boolean) => {
     /* در حالت ادیت، ویرایش پروفایل روی کپیِ کاریِ بافر می‌نشیند (فایل تا «تأیید» عوض نمی‌شود) */
-    if (editBufRef.current) {
+    if (editOpenRef.current && editBufRef.current) {
       if (!commit && !commitRef.current) commitRef.current = snap();
       onEditBuf({ ...editBufRef.current, sketch: next }, commit);
       return;
@@ -285,20 +402,35 @@ export default function App() {
       commitRef.current = { sketch, gcodeOvr, editBuf: null }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
+    /* اگر پیش‌نویس پنهان وجود دارد، اسکچ جدید را نیز در آن همگام نگه می‌داریم
+       تا بازگشت و تأیید بعدی، تغییرات تازهٔ طراحی را بازنویسی نکند. */
+    if (editBufRef.current && !editOpenRef.current) {
+      setEditBuf({ ...editBufRef.current, sketch: next });
+    }
     setHistVer((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sketch, gcodeOvr]);
 
   const applyPreset = useCallback((p: Preset) => {
-    if (p.wall) {
-      /* کاسه: دیواره به ترتیب مسیر (خارج ← لبه ← داخل) ساخته می‌شود */
-      onSketchChange(
-        sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth }))),
-        true
-      );
-    } else {
-      onSketchChange(sketchFromPoints(presetPoints(p)), true);
+    const nextSketch = p.wall
+      ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
+      : sketchFromPoints(presetPoints(p));
+    const hadEditDraft = !!editBufRef.current;
+
+    /* preset یک تغییر اتمیکِ طرح است. نگه‌داشتن verts/lines یا overrideهای طرح
+       قبلی کنار ابعاد و پروفایل جدید علت اصلی آشفتگی مسیر بود. */
+    pushPast(snap());
+    commitRef.current = null;
+    pendingParamRebaseRef.current = null;
+    setSketch(nextSketch);
+    setGcodeOvr({});
+    if (hadEditDraft) {
+      presetReseedRef.current = true;
+      /* یک render بدون بافر، camera-fit و stateهای تعاملی ویرایشگر را نیز برای
+         هندسهٔ کاملاً جدید reset می‌کند؛ حالت edit در App باز می‌ماند. */
+      setEditBuf(null);
     }
+
     setParams((prev) => {
       const next: Params = { ...prev, blankD: p.blankD, blankL: p.blankL };
       if (p.shape) next.blankShape = p.shape;
@@ -308,25 +440,42 @@ export default function App() {
       if (p.strategy) {
         const st = STRATEGIES.find((s) => s.id === p.strategy);
         if (st) next.ops = makeOps(st.types);
+        if (p.strategy === "bowl") {
+          next.holder2 = {
+            xOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.xOff),
+            yOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.yOff),
+          };
+        }
       }
       return next;
     });
     setActivePreset(p.id);
     setSelectedIds([]);
     showToast(
-      p.strategy === "bowl"
-        ? `پیش‌تنظیم «${p.name}» + استراتژی داخل/خارج فعال شد`
-        : `پیش‌تنظیم «${p.name}» اعمال شد`
+      hadEditDraft
+        ? `پیش‌تنظیم «${p.name}» اعمال و پیش‌نویس مسیر بازسازی شد`
+        : p.strategy === "bowl"
+          ? `پیش‌تنظیم «${p.name}» + استراتژی داخل/خارج فعال شد`
+          : `پیش‌تنظیم «${p.name}» اعمال شد`
     );
-  }, [onSketchChange, showToast]);
+  }, [showToast]);
 
   /* قرار دادن خودکار نقطه Split روی لبه (بیشترین X زنجیره) */
   const autoSplit = useCallback(() => {
     const poly = chainPolyline(orderChain(sketch));
     const auto = autoSplitPoint(poly);
     if (auto) {
-      setParams((prev) => ({ ...prev, split: { ...prev.split, enabled: true, z: auto.z, r: auto.r } }));
-      showToast(`نقطه Split روی لبه قرار گرفت (X ${auto.z} • ⌀ ${(auto.r * 2).toFixed(1)})`);
+      const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
+      setParams((prev) => ({
+        ...prev,
+        split: { ...prev.split, enabled: true, z: auto.z, r: auto.r },
+        ops: makeOps(bowl.types),
+        holder2: {
+          xOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.xOff),
+          yOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.yOff),
+        },
+      }));
+      showToast(`نقطه Split تعیین و استراتژی «کاسه داخل+خارج» فعال شد (X ${auto.z} • ⌀ ${(auto.r * 2).toFixed(1)})`);
     } else {
       showToast("زنجیره پروفیل برای Split خودکار کافی نیست", "warn");
     }
@@ -493,34 +642,39 @@ export default function App() {
           >
             {mode === "design" ? (
             <ProfileEditor
-              segs={editBuf ? editBuf.sketch : sketch}
+              segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
-              edit={editBuf}
+              edit={editOpen ? editBuf : null}
               editChanges={(() => {
-                if (!editBuf) return 0;
-                let n = 0;
-                const byKey = new Map(gen.segs.map((sg) => [sg.ovrKey ?? "", sg]));
-                const live = new Set(editBuf.lines.map((l) => l.key));
-                for (const l of expandLines(editBuf.verts, editBuf.lines)) {
-                  const b = l.key.startsWith("#") ? undefined : byKey.get(l.key);
-                  if (!b) continue;
-                  if (Math.abs(b.z1 - l.z1) > 1e-6 || Math.abs(b.x1 - l.x1) > 1e-6 || Math.abs(b.z2 - l.z2) > 1e-6 || Math.abs(b.x2 - l.x2) > 1e-6) n++;
-                }
-                for (const sg of gen.segs) if (sg.ovrKey && !live.has(sg.ovrKey)) n++;
+                if (!editOpen || !editBuf) return 0;
+                const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
+                let n = JSON.stringify(next) === JSON.stringify(gcodeOvr) ? 0 : 1;
                 if (editBuf.sketch !== sketch) n++;
-                n += Object.keys(editBuf.off).length;
                 return n;
               })()}
               onEditToggle={(open) => (open ? openEdit() : closeEdit())}
               onEditBuf={onEditBuf}
               onEditConfirm={confirmEdit}
               onEditCancel={closeEdit}
+              onEditDiscard={discardEdit}
               selected={selectedIds}
               onSelected={setSelectedIds}
               params={params}
               gen={gen}
               split={params.split}
-              onSplit={(s) => setParams((p) => ({ ...p, split: s }))}
+              onSplit={(s) => setParams((p) => {
+                if (!s.enabled) return { ...p, split: s };
+                const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
+                return {
+                  ...p,
+                  split: s,
+                  ops: makeOps(bowl.types),
+                  holder2: {
+                    xOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.xOff),
+                    yOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.yOff),
+                  },
+                };
+              })}
               settings={settings}
               onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
               ops={params.ops}

@@ -43,6 +43,7 @@ const KIND_FA: Record<string, string> = {
   finish: "پرداخت نهایی",
   offset: "آفست",
   bore: "خشن داخل (H2)",
+  boreoff: "افست داخل تراشی (H2)",
   borefin: "پرداخت داخل (H2)",
   bottom: "کف‌تراشی (H2)",
 };
@@ -56,6 +57,7 @@ const KIND_CLS: Record<string, string> = {
   finish: "text-copper border-copper/50",
   offset: "text-[#f59a80] border-[#f59a80]/50",
   bore: "text-[#4cc9f0] border-[#4cc9f0]/50",
+  boreoff: "text-[#c77dff] border-[#c77dff]/50",
   borefin: "text-[#f72585] border-[#f72585]/50",
   bottom: "text-[#ffd166] border-[#ffd166]/50",
 };
@@ -274,7 +276,7 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
         const sg = g.segs[i];
         const frac = l[i] > 0 ? Math.min(1, (t - start) / l[i]) : 1;
         if (sg.motion === 1 && frac > 0) {
-          const inner = sg.kind === "bore" || sg.kind === "borefin";
+          const inner = sg.kind === "bore" || sg.kind === "boreoff" || sg.kind === "borefin";
           const n = Math.max(1, Math.ceil((l[i] * frac) / (dzg * 0.8)));
           for (let j = 1; j <= n; j++) {
             const tt = (j / n) * frac;
