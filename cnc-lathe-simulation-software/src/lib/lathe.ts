@@ -934,6 +934,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   };
   /* خط آفست یکنواخت: آفست نرمال واقعی (نه r+OD شعاعی) + سقف قطر خام */
   const offSamples: Sample[] = normalOffset(samples, OD, true).map((s) => ({ z: s.z, r: Math.min(R, s.r) }));
+  /* خشن شعاعی باید کل طول خام را پوشش دهد. اگر پروفیل کاربر از X=0 یا
+     X=طول خام شروع/تمام نشده باشد، شعاع انتهایی آن تا مرز خام امتداد می‌یابد؛
+     این امتداد شکل را حفظ می‌کند و برخلاف یک خط ثابت، پروفیل را بیش‌تراشی نمی‌کند. */
+  const roughOffSamples: Sample[] = [
+    ...(offSamples[0].z > 1e-9 ? [{ z: 0, r: offSamples[0].r }] : []),
+    ...offSamples,
+    ...(offSamples[offSamples.length - 1].z < p.blankL - 1e-9 ? [{ z: p.blankL, r: offSamples[offSamples.length - 1].r }] : []),
+  ];
   const floorR = minR + OD;
 
   /* ردیابی سطحِ واقعی تراش‌خورده برای محاسبهٔ امنِ جابه‌جایی‌های زیگزاگ — همانند   */
@@ -1122,7 +1130,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         /* ------------------------------------------------------------------ */
         if (p.roughMode === "zigzag") {
           note("ROUGHING - CONTOUR SERPENTINE (ACTIVE REGIONS, CUTS BOTH WAYS)");
-          const F = offSamples;
+          const F = roughOffSamples;
           let minF = Infinity;
           for (const s of F) if (s.r < minF) minF = s.r;
           const totalDepth = R - minF;
@@ -1135,7 +1143,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               return mx === -Infinity ? minF : mx;
             };
             /* جهت شروع: نزدیک‌تر به موقعیت فعلی ابزار (مثلاً پایان گرد کردن) */
-            let forward = Math.abs(z0 - cur.z) <= Math.abs(zEnd - cur.z);
+            let forward = Math.abs(cur.z) <= Math.abs(p.blankL - cur.z);
             let first = true;
             let lastEndZ = NaN;
             let lastEndR = 0;
@@ -1197,7 +1205,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (p.roughMode === "zone") {
           /* نواحی: مرزهای دستی کاربر (در صورت اعتبار) جایگزین تقسیم خودکار می‌شوند؛ */
           /* سپس ترتیب دستی (در صورت اعتبار) روی همان نواحی اعمال می‌شود.            */
-          let zones = resolveZones(offSamples, p.zoneBounds, z0, zEnd);
+          let zones = resolveZones(roughOffSamples, p.zoneBounds, 0, p.blankL);
           const ord = p.zoneOrder;
           const isPerm =
             ord.length === zones.length &&
@@ -1209,7 +1217,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             /* بهینه‌سازی شروع: اگر ترتیب دستی تعیین نشده باشد، نواحی از سمتی       */
             /* پردازش می‌شوند که ابزار اکنون در آن‌جاست (مثلاً بعد از گرد کردن       */
             /* گوشه‌ها که ابزار در انتهای همان مسیر ایستاده) — نه همیشه از چپ.     */
-            const mid = (z0 + zEnd) / 2;
+            const mid = p.blankL / 2;
             if (cur.z > mid) zones = [...zones].reverse();
           }
           for (const zone of zones) {
@@ -1217,7 +1225,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             let guard = 0;
             while (layer > floorR + 1e-6 && guard < 80) {
               guard++;
-              for (const iv of cutIntervals(offSamples, layer)) {
+              for (const iv of cutIntervals(roughOffSamples, layer)) {
                 const a = Math.max(iv.a, zone.a);
                 const b = Math.min(iv.b, zone.b);
                 if (b - a > 0.3) cuts.push({ a, b, r: layer });
@@ -1230,7 +1238,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           let guard = 0;
           while (layer > floorR + 1e-6 && guard < 80) {
             guard++;
-            for (const iv of cutIntervals(offSamples, layer)) cuts.push({ a: iv.a, b: iv.b, r: layer });
+            for (const iv of cutIntervals(roughOffSamples, layer)) cuts.push({ a: iv.a, b: iv.b, r: layer });
             layer -= p.doc;
           }
         }
