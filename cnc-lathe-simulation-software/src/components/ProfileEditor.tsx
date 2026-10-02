@@ -451,6 +451,9 @@ export default function ProfileEditor({
   const [cursor, setCursor] = useState<SPoint | null>(null);
   const [snapHit, setSnapHit] = useState<SnapPoint | null>(null);
   const [hoverId, setHoverId] = useState<number | null>(null);
+  /* نقطه Split یک موجودیت مستقل است: با کلیک انتخاب و با Delete/سطل حذف می‌شود. */
+  const [splitSelected, setSplitSelected] = useState(false);
+  const [splitHovered, setSplitHovered] = useState(false);
 
   /* ---------- حالت ویرایش مسیر — ویرایشگرِ پلی‌لاینِ پیوسته (مثل بک‌پلات سیمکو) ---------- */
   const editOpen = !!edit;
@@ -503,6 +506,8 @@ export default function ProfileEditor({
       setSnapHit(null);
       onSelected([]);
       setSelPoints([]);
+      setSplitSelected(false);
+      setSplitHovered(false);
       return;
     }
     setSelL([]);
@@ -516,6 +521,17 @@ export default function ProfileEditor({
     setPickerHover(null);
     setSpeedMenu(null);
   }, [editOpen]);
+  useEffect(() => {
+    if (split.enabled) return;
+    setSplitSelected(false);
+    setSplitHovered(false);
+  }, [split.enabled]);
+  useEffect(() => {
+    if (tool !== "select") {
+      setSplitSelected(false);
+      setSplitHovered(false);
+    }
+  }, [tool]);
   /* نقاط جداشده (unjoined) — به‌صورت پیش‌فرض همهٔ نقاطِ هم‌مکان متصل‌اند */
   const [separated, setSeparated] = useState<Set<string>>(new Set());
   /* منوی راست‌کلیک برای اتصال/جداسازی نقطه */
@@ -713,6 +729,7 @@ export default function ProfileEditor({
         if (draft.length) cancelDraft();
         else if (isolatedOpId != null) onClearIsolate();
         else if (tool !== "select") setTool("select");
+        else if (splitSelected) setSplitSelected(false);
         else {
           if (selPoints.length) setSelPoints([]);
           onSelected([]);
@@ -720,6 +737,11 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
+        if (splitSelected) {
+          e.preventDefault();
+          deleteSelectedSplit();
+          return;
+        }
         if (selPoints.length) {
           e.preventDefault();
           deleteSelectedPoints();
@@ -741,7 +763,7 @@ export default function ProfileEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu]);
+  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu]);
 
   /* وضعیت فیزیکی Shift برای پیش‌نمایش بازه؛ مستقل از زبان صفحه‌کلید. */
   useEffect(() => {
@@ -1075,8 +1097,12 @@ export default function ProfileEditor({
   };
 
   const eligibleIds = () => segs.filter((s) => filterAllows(s.kind)).map((s) => s.id);
-  const selectAllEligible = () => onSelected(eligibleIds());
+  const selectAllEligible = () => {
+    setSplitSelected(false);
+    onSelected(eligibleIds());
+  };
   const invertSelection = () => {
+    setSplitSelected(false);
     const elig = eligibleIds();
     const ineligKept = selected.filter((id) => !elig.includes(id));
     onSelected([...ineligKept, ...elig.filter((id) => !selected.includes(id))]);
@@ -1089,6 +1115,13 @@ export default function ProfileEditor({
     if (!selected.length) return;
     commit(segs.filter((s) => !selected.includes(s.id)));
     onSelected([]);
+  };
+
+  const deleteSelectedSplit = () => {
+    if (!splitSelected || !split.enabled) return;
+    onSplit({ ...split, enabled: false });
+    setSplitSelected(false);
+    setSplitHovered(false);
   };
 
   /*
@@ -1558,6 +1591,16 @@ export default function ProfileEditor({
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
+  /* هر دو نشانِ بالا/پایین نمایندهٔ یک Split منطقی‌اند و محدودهٔ کلیک آن‌ها
+     کمی بزرگ‌تر از علامت کوچک بصری است تا انتخاب در هر سطح زوم راحت بماند. */
+  const hitSplitMarker = (px: number, py: number): boolean => {
+    const c = camRef.current;
+    if (!c || editOpen || !split.enabled) return false;
+    const [x, y] = screenPt(c, split.z, split.r);
+    const [, ym] = screenPt(c, split.z, -split.r);
+    return Math.min(Math.hypot(px - x, py - y), Math.hypot(px - x, py - ym)) <= 10;
+  };
+
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!camRef.current) return;
     setCtxMenu(null);
@@ -1588,6 +1631,19 @@ export default function ProfileEditor({
     if (panMode || spaceRef.current) {
       drag.current = { mode: "pan", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false, btn: 0 };
       return;
+    }
+
+    if (!editOpen) {
+      const loc = toLocal(e.clientX, e.clientY);
+      if (hitSplitMarker(loc.x, loc.y)) {
+        /* Split انتخابی مستقل است؛ انتخاب خطوط/نقاط قبلی را پاک می‌کنیم. */
+        setSplitSelected(true);
+        onSelected([]);
+        setSelPoints([]);
+        drag.current = null;
+        return;
+      }
+      setSplitSelected(false);
     }
 
     const h = editOpen ? null : hitHandle(raw);
@@ -1752,12 +1808,14 @@ export default function ProfileEditor({
     const d = drag.current;
     if (!d) {
       if (tool === "select") {
-        /* اگر نشانگر روی خودِ نقطه باشد، المان زیرین hover نشود تا فقط نقطه سفید شود */
-        const onHandle = !editOpen && hitHandle(raw) != null;
+        /* Split و نقاط هندسی بر خط زیرین اولویت دارند تا انتخابشان مبهم نباشد. */
+        const ploc = toLocal(e.clientX, e.clientY);
+        const onSplitMarker = hitSplitMarker(ploc.x, ploc.y);
+        setSplitHovered(onSplitMarker);
+        const onHandle = !editOpen && !onSplitMarker && hitHandle(raw) != null;
         let hb: number | null = null;
         let endpoint: number | null = null;
         if (editOpen && !onHandle) {
-          const ploc = toLocal(e.clientX, e.clientY);
           const allowed = new Set(lines.filter(bufSelectable).flatMap((line) => [line.va, line.vb]));
           endpoint = hitPathEndpoint(ploc.x, ploc.y, allowed);
           hb = endpoint == null && hitOffSeg(ploc.x, ploc.y) == null ? hitBufLine(ploc.x, ploc.y) : null;
@@ -1768,11 +1826,12 @@ export default function ProfileEditor({
           setHoverId(null);
         } else {
           if (editOpen) setHoverBuf(null);
-          const s = editOpen || onHandle ? null : hitSeg(raw);
+          const s = editOpen || onHandle || onSplitMarker ? null : hitSeg(raw);
           setHoverId(s ? s.id : null);
         }
         setSnapHit(null);
       } else if (tool === "split") {
+        setSplitHovered(false);
         /* ابزار Split مغناطیسی به پروفیل می‌چسبد */
         setCursor(nearestOnSketch(raw));
         setSnapHit(null);
@@ -2527,6 +2586,7 @@ export default function ProfileEditor({
           if (!drag.current) {
             setHoverBuf(null);
             setHoverPathEndpoint(null);
+            setSplitHovered(false);
           }
         }}
         onDoubleClick={onDoubleClick}
@@ -2999,8 +3059,28 @@ export default function ProfileEditor({
               return (
                 <g>
                   {[y, ym].map((yy, k) => (
-                    <g key={k}>
-                      <rect x={x - 4} y={yy - 4} width={8} height={8} transform={`rotate(45 ${x} ${yy})`} fill="#f72585" stroke="#120e09" strokeWidth={1.2} />
+                    <g key={k} style={{ cursor: "pointer" }}>
+                      {(splitSelected || splitHovered) && (
+                        <circle
+                          cx={x}
+                          cy={yy}
+                          r={splitSelected ? 8 : 7}
+                          fill="#f72585"
+                          fillOpacity={splitSelected ? 0.2 : 0.1}
+                          stroke={splitSelected ? "#fff3dc" : "#ff84bc"}
+                          strokeWidth={splitSelected ? 1.6 : 1}
+                        />
+                      )}
+                      <rect
+                        x={x - 4}
+                        y={yy - 4}
+                        width={8}
+                        height={8}
+                        transform={`rotate(45 ${x} ${yy})`}
+                        fill={splitSelected ? "#ffd27a" : splitHovered ? "#ff5ba6" : "#f72585"}
+                        stroke="#120e09"
+                        strokeWidth={1.2}
+                      />
                       <circle cx={x} cy={yy} r={1.25} fill="#ffffff" />
                     </g>
                   ))}
@@ -3197,7 +3277,15 @@ export default function ProfileEditor({
           <button onClick={duplicateSelected} disabled={!selected.length} title="کپی المان‌های انتخابی (Ctrl+D)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", selected.length ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
             <IconCopy className="h-3.5 w-3.5" />
           </button>
-          <button onClick={deleteSelected} disabled={!selected.length} title="حذف انتخابی (Delete)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", selected.length ? "text-danger/80 hover:bg-danger/15 hover:text-danger" : "text-dim/40")}>
+          <button
+            onClick={splitSelected ? deleteSelectedSplit : deleteSelected}
+            disabled={!selected.length && !splitSelected}
+            title={splitSelected ? "حذف نقطه Split (Delete)" : "حذف انتخابی (Delete)"}
+            className={cn(
+              "grid h-[27px] w-full place-items-center border-t border-edge transition-colors",
+              selected.length || splitSelected ? "text-danger/80 hover:bg-danger/15 hover:text-danger" : "text-dim/40"
+            )}
+          >
             <IconTrash className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -3232,10 +3320,10 @@ export default function ProfileEditor({
             <span
               className={cn(
                 "rounded-full border px-2 py-0.5 text-[10px] font-bold",
-                selected.length ? "border-teal/50 text-teal" : "border-edge text-dim"
+                selected.length || splitSelected ? "border-teal/50 text-teal" : "border-edge text-dim"
               )}
             >
-              {selected.length ? `${selected.length} انتخاب شده` : "بدون انتخاب"}
+              {splitSelected ? "نقطه Split انتخاب شده" : selected.length ? `${selected.length} انتخاب شده` : "بدون انتخاب"}
             </span>
             {selLocked && (
               <span
@@ -3252,7 +3340,12 @@ export default function ProfileEditor({
             <button onClick={invertSelection} title="معکوس‌کردن انتخاب (Ctrl+I)" className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink">
               معکوس
             </button>
-            <button onClick={() => onSelected([])} disabled={!selected.length} title="لغو انتخاب (Esc)" className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink disabled:opacity-35">
+            <button
+              onClick={() => { onSelected([]); setSplitSelected(false); }}
+              disabled={!selected.length && !splitSelected}
+              title="لغو انتخاب (Esc)"
+              className="rounded px-1.5 py-0.5 text-[10.5px] font-bold text-mute transition-colors hover:bg-panel3 hover:text-ink disabled:opacity-35"
+            >
               پاک
             </button>
           </div>
