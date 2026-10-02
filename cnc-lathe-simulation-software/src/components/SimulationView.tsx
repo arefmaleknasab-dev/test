@@ -578,10 +578,6 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
         ctx.lineTo(tx, ty + barH / 2);
         ctx.closePath();
         ctx.fill();
-        ctx.fillStyle = "#4cc9f0";
-        ctx.font = "bold 9px 'JetBrains Mono', monospace";
-        ctx.textAlign = "left";
-        ctx.fillText("H2", tx + 4, ty - barH / 2 - 4);
         ctx.restore();
       } else {
       /* بدنه ابزار — اینسرت مهندسی با پروفایل واقعی (همان هندسهٔ براده‌برداری) */

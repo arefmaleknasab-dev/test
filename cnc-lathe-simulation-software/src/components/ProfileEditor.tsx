@@ -2650,14 +2650,6 @@ export default function ProfileEditor({
               <g key={i} style={{ opacity: dim ? 0.06 : 1, ...fadeStyle }}>
                 <path d={run.d} fill="none" stroke={color} strokeOpacity={matchIso ? 1 : baseOpacity} strokeWidth={(isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) + (matchIso ? 0.7 : 0)} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" filter={matchIso ? "url(#curveGlow)" : undefined} />
                 {run.arrows && !dim && <path d={run.arrows} fill={color} fillOpacity={0.95} />}
-                {run.holder === 2 && !dim && !isRapid && (
-                  <g>
-                    <rect x={run.sx - 12} y={run.sy - 21} width={24} height={13} rx={3} fill="#120e09" stroke="#4cc9f0" strokeWidth={1} />
-                    <text x={run.sx} y={run.sy - 11} textAnchor="middle" fontSize={8.5} fontWeight={800} fontFamily="JetBrains Mono, monospace" fill="#4cc9f0">
-                      H2
-                    </text>
-                  </g>
-                )}
               </g>
             );
           })}
@@ -2924,18 +2916,6 @@ export default function ProfileEditor({
             );
           })}
 
-          {/* نقاط انتهایی همهٔ المان‌ها — همیشه قابل‌دیدن برای اتصال و راست‌کلیک
-              (المان‌هایی که دسته‌هایشان در بالا رندر شده اینجا تکرار نمی‌شوند) */}
-          {segs.map(
-            (s) =>
-              !selected.includes(s.id) &&
-              !selPointSegIds.includes(s.id) && (
-                <g key={`e${s.id}`} className="opacity-80">
-                  <circle className="pt-hover" cx={P(s.a.z, s.a.r)[0]} cy={P(s.a.z, s.a.r)[1]} r={3.4} fill="#241c12" stroke="#e3a94e" strokeWidth={1.6} />
-                  <circle className="pt-hover" cx={P(s.b.z, s.b.r)[0]} cy={P(s.b.z, s.b.r)[1]} r={3.4} fill="#241c12" stroke="#e3a94e" strokeWidth={1.6} />
-                </g>
-              )
-          )}
         </g>
 
         {/* پیش‌نمایش ترسیم */}
@@ -3019,14 +2999,11 @@ export default function ProfileEditor({
               return (
                 <g>
                   {[y, ym].map((yy, k) => (
-                    <g key={k} filter="url(#curveGlow)">
-                      <rect x={x - 7} y={yy - 7} width={14} height={14} transform={`rotate(45 ${x} ${yy})`} fill="#f72585" stroke="#120e09" strokeWidth={1.8} />
-                      <circle cx={x} cy={yy} r={2.2} fill="#ffffff" />
+                    <g key={k}>
+                      <rect x={x - 4} y={yy - 4} width={8} height={8} transform={`rotate(45 ${x} ${yy})`} fill="#f72585" stroke="#120e09" strokeWidth={1.2} />
+                      <circle cx={x} cy={yy} r={1.25} fill="#ffffff" />
                     </g>
                   ))}
-                  <text x={x + 13} y={y - 9} fontSize={10} fontFamily="Vazirmatn, sans-serif" fontWeight={800} fill="#f72585" stroke="#120e09" strokeWidth={3} paintOrder="stroke">
-                    Split
-                  </text>
                 </g>
               );
             })()}
