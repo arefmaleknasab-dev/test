@@ -1,0 +1,59 @@
+name: Update Windows portable package
+
+on:
+  push:
+    branches:
+      - arena/01a0fddd-test
+    paths-ignore:
+      - KharratCode-Windows10-Portable.zip
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-portable-arena-01a0fddd-test
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the session branch
+        uses: actions/checkout@v4
+        with:
+          ref: arena/01a0fddd-test
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cnc-lathe-simulation-software/package-lock.json
+
+      - name: Install reproducible Windows cross-compiler
+        run: |
+          mkdir -p "$RUNNER_TEMP/kharraat-zig"
+          npm install --prefix "$RUNNER_TEMP/kharraat-zig" --no-save --ignore-scripts @oven/zig-linux-x64@0.12.0-dev.1286
+          echo "ZIG_BIN=$RUNNER_TEMP/kharraat-zig/node_modules/@oven/zig-linux-x64/zig" >> "$GITHUB_ENV"
+
+      - name: Install web dependencies
+        working-directory: cnc-lathe-simulation-software
+        run: npm ci
+
+      - name: Build portable Windows ZIP
+        working-directory: cnc-lathe-simulation-software
+        run: npm run build:portable:win
+
+      - name: Replace the ZIP on this branch
+        run: |
+          git add KharratCode-Windows10-Portable.zip
+          if git diff --cached --quiet; then
+            echo "Portable package is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update Windows portable package [skip ci]"
+          git push origin HEAD:arena/01a0fddd-test

@@ -1,4 +1,5 @@
 node_modules/
 dist/
+.portable-build/
 *.local
 .DS_Store
