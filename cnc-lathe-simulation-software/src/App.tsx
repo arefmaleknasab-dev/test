@@ -10,7 +10,7 @@ import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
 import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset, SplitState } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
-import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
+import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, segMid, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
 
 const STORE_KEY = "kharraatcode-v1";
@@ -297,6 +297,41 @@ export default function App() {
   useEffect(() => {
     setActiveLine(-1);
   }, [gen]);
+
+  /* در طراحی پروفایل، انتخاب خط نیز نزدیک‌ترین حرکت پرداختیِ متناظر را در جی‌کد
+     نشان می‌دهد. در Edit path نگاشت دقیق‌تر بر پایهٔ ovrKey داخل ProfileEditor است. */
+  useEffect(() => {
+    if (mode !== "design" || editOpen) return;
+    const selectedSeg = selectedIds.length
+      ? sketch.find((segment) => segment.id === selectedIds[selectedIds.length - 1])
+      : null;
+    if (!selectedSeg) {
+      setActiveLine(-1);
+      return;
+    }
+    const target = segMid(selectedSeg);
+    const finalPasses = gen.segs.filter((segment) =>
+      segment.line >= 0 && segment.motion === 1 && (segment.kind === "finish" || segment.kind === "borefin")
+    );
+    const candidates = finalPasses.length
+      ? finalPasses
+      : gen.segs.filter((segment) => segment.line >= 0 && segment.motion === 1);
+    let bestLine = -1;
+    let bestDistance = Infinity;
+    for (const segment of candidates) {
+      const az = segment.z1, ar = segment.x1 / 2;
+      const bz = segment.z2, br = segment.x2 / 2;
+      const dz = bz - az, dr = br - ar;
+      const len2 = dz * dz + dr * dr || 1;
+      const t = Math.min(1, Math.max(0, ((target.z - az) * dz + (target.r - ar) * dr) / len2));
+      const distance = Math.hypot(target.z - (az + dz * t), target.r - (ar + dr * t));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestLine = segment.line;
+      }
+    }
+    setActiveLine(bestLine);
+  }, [mode, editOpen, selectedIds, sketch, gen.segs]);
 
   /* اگر عملیاتِ ایزوله‌شده حذف شد، از حالت ایزوله خارج شو */
   useEffect(() => {
@@ -779,6 +814,7 @@ export default function App() {
               ops={params.ops}
               isolatedOpId={isolatedOpId}
               onClearIsolate={() => setIsolatedOpId(null)}
+              onActiveGCodeLine={setActiveLine}
               onUndo={undo}
               onRedo={redo}
               canUndo={past.current.length > 0}

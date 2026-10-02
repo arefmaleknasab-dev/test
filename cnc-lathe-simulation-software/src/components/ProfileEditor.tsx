@@ -110,6 +110,8 @@ interface Props {
   ops: Op[];
   isolatedOpId: number | null;
   onClearIsolate: () => void;
+  /** انتخاب هندسه، بلوک متناظر را در پنجرهٔ جی‌کد فعال و اسکرول می‌کند. */
+  onActiveGCodeLine: (line: number) => void;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -152,6 +154,33 @@ const speedStroke = (motion: 0 | 1, feed: number) => {
   const hue = 195 + Math.min(95, Math.max(0, (feed / 1500) * 95));
   return `hsl(${hue.toFixed(0)} 72% 62%)`;
 };
+
+/** خطِ هندسی EditBuf را با کلید پایدار و شمارهٔ وقوع به بلوک جی‌کد وصل می‌کند. */
+function editLineGCodeIndex(lineId: number, editLines: ELine[], gen: GenResult): number {
+  const editIndex = editLines.findIndex((line) => line.id === lineId);
+  if (editIndex < 0) return -1;
+  const line = editLines[editIndex];
+  const bridge = /^#bridge:(.+):(\d+)$/.exec(line.key);
+  if (bridge) {
+    const baseKey = bridge[1];
+    const moveIndex = /^move:(\d+)$/.exec(baseKey);
+    const seg = moveIndex
+      ? gen.segs[Number(moveIndex[1])]
+      : gen.segs.find((candidate) => candidate.ovrKey === baseKey);
+    return seg?.line ?? -1;
+  }
+  const move = /^#move:(\d+)$/.exec(line.key);
+  if (move) return gen.segs[Number(move[1])]?.line ?? -1;
+  if (line.key.startsWith("#")) return -1;
+
+  let occurrence = -1;
+  for (let i = 0; i <= editIndex; i++) {
+    if (editLines[i].key === line.key) occurrence++;
+  }
+  const matches = gen.segs.filter((segment) => segment.ovrKey === line.key);
+  if (!matches.length) return -1;
+  return matches[Math.min(Math.max(0, occurrence), matches.length - 1)].line;
+}
 
 const SEG_COLOR: Record<SegKind, string> = {
   rapid: "#93a1ad",
@@ -548,6 +577,7 @@ export default function ProfileEditor({
   ops,
   isolatedOpId,
   onClearIsolate,
+  onActiveGCodeLine,
   onUndo,
   onRedo,
   canUndo,
@@ -605,6 +635,25 @@ export default function ProfileEditor({
   const [hitPicker, setHitPicker] = useState<{ x: number; y: number; lines: number[]; verts: number[] } | null>(null);
   const [pickerHover, setPickerHover] = useState<{ kind: "line" | "vert"; id: number } | null>(null);
 
+  const focusEditLineInGCode = (lineId: number | null) => {
+    if (!edit || lineId == null) {
+      onActiveGCodeLine(-1);
+      return;
+    }
+    const index = editLineGCodeIndex(lineId, edit.lines, gen);
+    onActiveGCodeLine(index >= 0 && index < gen.lines.length ? index : -1);
+  };
+  const focusEditVertexInGCode = (vertexId: number) => {
+    if (!edit) return;
+    /* بلوکی که به نقطه می‌رسد بر بلوک خروجی اولویت دارد. */
+    let owner: ELine | undefined;
+    for (let i = edit.lines.length - 1; i >= 0; i--) {
+      if (edit.lines[i].vb === vertexId) { owner = edit.lines[i]; break; }
+    }
+    owner ??= edit.lines.find((line) => line.va === vertexId);
+    focusEditLineInGCode(owner?.id ?? null);
+  };
+
   /* انتخاب Segment در خود EditBuf نگه‌داری می‌شود تا بخشی از تاریخچه اصلی باشد. */
   const selectEditLines = (ids: number[], requestedActive: number | null, record = true) => {
     const ordered = edit ? edit.lines
@@ -615,6 +664,7 @@ export default function ProfileEditor({
       : ordered[ordered.length - 1] ?? null;
     setSelL(ordered);
     setActiveLine(active);
+    focusEditLineInGCode(active);
     if (!edit) return;
     const stored = edit.selLines ?? [];
     if ((edit.activeLine ?? null) === active && stored.length === ordered.length && stored.every((id, i) => id === ordered[i])) return;
@@ -627,6 +677,21 @@ export default function ProfileEditor({
     setSelL(edit.selLines ?? []);
     setActiveLine(edit.activeLine ?? null);
   }, [edit?.selLines, edit?.activeLine]);
+
+  /* Undo/Redo یا بازتولید جی‌کد نیز باید هایلایت پنجرهٔ متن را با انتخاب نگه دارد؛
+     اگر نقطه‌ای انتخاب است، خطِ ورودیِ همان نقطه بر activeLine قبلی اولویت دارد. */
+  useEffect(() => {
+    if (!editOpen || !edit) return;
+    let lineId = edit.activeLine ?? null;
+    const vertexId = selV[selV.length - 1];
+    if (vertexId != null) {
+      const incoming = [...edit.lines].reverse().find((line) => line.vb === vertexId);
+      lineId = (incoming ?? edit.lines.find((line) => line.va === vertexId))?.id ?? lineId;
+    }
+    if (lineId == null) return;
+    const index = editLineGCodeIndex(lineId, edit.lines, gen);
+    onActiveGCodeLine(index >= 0 && index < gen.lines.length ? index : -1);
+  }, [editOpen, edit?.activeLine, edit?.lines, selV, gen.segs, gen.lines.length, onActiveGCodeLine]);
 
   useEffect(() => {
     if (editOpen) {
@@ -1866,6 +1931,7 @@ export default function ProfileEditor({
       if (endpointCandidate != null) {
         if (e.shiftKey) setSelV(selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate]);
         else setSelV([endpointCandidate]);
+        focusEditVertexInGCode(endpointCandidate);
         setHitPicker(null);
         setPickerHover(null);
         drag.current = { mode: "evert", vid: endpointCandidate, start: raw, base: { ...vz(endpointCandidate) }, sx: ploc.x, sy: ploc.y, moved: false };
@@ -1916,6 +1982,7 @@ export default function ProfileEditor({
       if (bv != null) {
         if (e.shiftKey) setSelV(selV.includes(bv) ? selV.filter((x) => x !== bv) : [...selV, bv]);
         else if (!selV.includes(bv)) setSelV([bv]);
+        focusEditVertexInGCode(bv);
         drag.current = { mode: "evert", vid: bv, start: raw, base: { ...vz(bv) }, sx: ploc.x, sy: ploc.y, moved: false };
         return;
       }
@@ -2367,15 +2434,20 @@ export default function ProfileEditor({
           const add = e.shiftKey;
           if (remove) {
             const nextLines = selL.filter((id) => !bh.ids.includes(id));
+            const nextVerts = selV.filter((id) => !bh.vxs.includes(id));
             selectEditLines(nextLines, nextLines.includes(activeLine ?? -1) ? activeLine : null, true);
-            setSelV(selV.filter((id) => !bh.vxs.includes(id)));
+            setSelV(nextVerts);
+            if (!nextLines.length && nextVerts.length) focusEditVertexInGCode(nextVerts[nextVerts.length - 1]);
           } else if (add) {
             const nextLines = [...selL, ...bh.ids.filter((id) => !selL.includes(id))];
+            const nextVerts = [...selV, ...bh.vxs.filter((id) => !selV.includes(id))];
             selectEditLines(nextLines, bh.ids[bh.ids.length - 1] ?? activeLine, true);
-            setSelV([...selV, ...bh.vxs.filter((id) => !selV.includes(id))]);
+            setSelV(nextVerts);
+            if (!nextLines.length && nextVerts.length) focusEditVertexInGCode(nextVerts[nextVerts.length - 1]);
           } else {
             selectEditLines(bh.ids, bh.ids[bh.ids.length - 1] ?? null, true);
             setSelV(bh.vxs);
+            if (!bh.ids.length && bh.vxs.length) focusEditVertexInGCode(bh.vxs[bh.vxs.length - 1]);
           }
           setBufMarq(null);
           return;
@@ -3760,7 +3832,7 @@ export default function ProfileEditor({
                 onMouseLeave={() => setPickerHover(null)}
                 onFocus={() => setPickerHover({ kind: "vert", id })}
                 onBlur={() => setPickerHover(null)}
-                onClick={() => { setSelV([id]); selectEditLines([], null, true); setHitPicker(null); setPickerHover(null); }}
+                onClick={() => { setSelV([id]); selectEditLines([], null, true); focusEditVertexInGCode(id); setHitPicker(null); setPickerHover(null); }}
               >
                 نقطه {id.toLocaleString("fa-IR")} · X {vz(id).z.toFixed(2)} · Y { (vz(id).x / 2).toFixed(2) }
               </button>
