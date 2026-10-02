@@ -591,7 +591,8 @@ export default function ProfileEditor({
   const [selL, setSelL] = useState<number[]>([]); // خطوط انتخابی
   const [activeLine, setActiveLine] = useState<number | null>(null); // مبنای پیمایش Arrow
   const [selV, setSelV] = useState<number[]>([]); // رأس‌های انتخابی (نقاط مشترک)
-  const [showPathPoints, setShowPathPoints] = useState(true);
+  /* نقاط مسیر در ورود اولیه خاموش‌اند تا برنامه‌های چند هزارخطی سبک باز شوند. */
+  const [showPathPoints, setShowPathPoints] = useState(false);
   const [showPathBySpeed, setShowPathBySpeed] = useState(false);
   const [speedMenu, setSpeedMenu] = useState<{ x: number; y: number } | null>(null);
   const [manualSpeed, setManualSpeed] = useState("");
@@ -607,8 +608,9 @@ export default function ProfileEditor({
 
   /* انتخاب Segment در خود EditBuf نگه‌داری می‌شود تا بخشی از تاریخچه اصلی باشد. */
   const selectEditLines = (ids: number[], requestedActive: number | null, record = true) => {
+    const wanted = new Set(ids);
     const ordered = edit ? edit.lines
-      .filter((l) => ids.includes(l.id) && (isolatedOpId == null || l.opId === isolatedOpId))
+      .filter((l) => wanted.has(l.id) && (isolatedOpId == null || l.opId === isolatedOpId))
       .map((l) => l.id) : [];
     const active = requestedActive != null && ordered.includes(requestedActive)
       ? requestedActive
@@ -630,8 +632,10 @@ export default function ProfileEditor({
 
   useEffect(() => {
     if (editOpen) {
-      /* ابزارهای ترسیم پروفایل در ویرایش مسیر مجاز نیستند. */
+      /* ابزارهای ترسیم پروفایل در ویرایش مسیر مجاز نیستند و نقاط هر بار به‌صورت
+         پیش‌فرض خاموش باز می‌شوند. */
       setTool("select");
+      setShowPathPoints(false);
       setDraft([]);
       setCursor(null);
       setSnapHit(null);
@@ -1474,7 +1478,13 @@ export default function ProfileEditor({
   const verts = edit ? edit.verts : ([] as EVert[]);
   const pathStartVid = lines[0]?.va ?? null;
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
-  const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
+  /* توپولوژی رأس‌ها هنگام درگ ثابت است؛ جدول id→index فقط با تغییر خطوط/تعداد
+     رأس‌ها ساخته می‌شود و برای هر فریم مختصات دوباره Map نمی‌سازد. */
+  const vIndexById = useMemo(() => {
+    const indexes = new Map<number, number>();
+    verts.forEach((vertex, index) => indexes.set(vertex.id, index));
+    return indexes;
+  }, [lines, verts.length]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
   const vertexLineCount = useMemo(() => {
     const count = new Map<number, number>();
@@ -1496,7 +1506,10 @@ export default function ProfileEditor({
       .filter((line) => isolatedOpId == null || line.opId === isolatedOpId)
       .map((l) => l.id);
   }, [editOpen, toolpathLayersVisible, shiftDown, activeLine, hoverBuf, lines, isolatedOpId]);
-  const vz = (vid: number): EVert => vById.get(vid) ?? { id: vid, z: 0, x: 0 };
+  const vz = (vid: number): EVert => {
+    const index = vIndexById.get(vid);
+    return index == null ? { id: vid, z: 0, x: 0 } : verts[index];
+  };
   const bufVisible = (l: ELine) => settings[KIND_VISIBLE[l.motion === 0 ? "rapid" : l.kind]];
   const bufPx = (c: Cam, l: ELine): [number, number, number, number] => {
     const a = vz(l.va);
@@ -1559,7 +1572,7 @@ export default function ProfileEditor({
       }
       cur = null;
     };
-    for (const l of edit!.lines) {
+    for (const l of lines) {
       const kind: SegKind = l.motion === 0 ? "rapid" : l.kind;
       if (!settings[KIND_VISIBLE[kind]]) {
         flush();
@@ -1576,20 +1589,46 @@ export default function ProfileEditor({
     flush();
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit, cam, layerVisibilityKey, editOpen, toolpathLayersVisible]);
+  }, [lines, verts, vIndexById, cam, layerVisibilityKey, editOpen, toolpathLayersVisible]);
 
   const lineHitDistance = (c: Cam, l: ELine, px: number, py: number) => {
     const [x1, y1, x2, y2] = bufPx(c, l);
+    /* رد سریع اکثر خطوط دور از نشانگر، پیش از محاسبهٔ projection و hypot. */
+    if (px < Math.min(x1, x2) - 6 || px > Math.max(x1, x2) + 6 || py < Math.min(y1, y2) - 6 || py > Math.max(y1, y2) + 6) return Infinity;
     const len2 = (x2 - x1) ** 2 + (y2 - y1) ** 2 || 1;
     const t = Math.min(1, Math.max(0, ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / len2));
     return Math.hypot(px - (x1 + (x2 - x1) * t), py - (y1 + (y2 - y1) * t));
   };
   const bufSelectable = (l: ELine) => bufVisible(l) && (isolatedOpId == null || l.opId === isolatedOpId);
+  /* فهرست‌های انتخاب‌پذیر فقط با تغییر واقعی لایه/ایزوله/توپولوژی ساخته می‌شوند؛
+     pointermove دیگر برای هر پیکسل Set تمام رأس‌ها را از نو نمی‌سازد. */
+  const selectableBufLines = useMemo(() => {
+    if (!editOpen || !toolpathLayersVisible) return [] as ELine[];
+    return lines.filter((line) =>
+      settings[KIND_VISIBLE[line.motion === 0 ? "rapid" : line.kind]] &&
+      (isolatedOpId == null || line.opId === isolatedOpId)
+    );
+    // layerVisibilityKey تمام فلگ‌های استفاده‌شده در settings را نمایندگی می‌کند.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editOpen, toolpathLayersVisible, lines, isolatedOpId, layerVisibilityKey]);
+  const selectableBufVertexIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const line of selectableBufLines) {
+      ids.add(line.va);
+      ids.add(line.vb);
+    }
+    return ids;
+  }, [selectableBufLines]);
   const hitBufLines = (px: number, py: number): number[] => {
     const c = camRef.current;
     if (!c || !editOpen || !toolpathLayersVisible) return [];
-    return lines.filter(bufSelectable).map((l) => ({ id: l.id, d: lineHitDistance(c, l, px, py) }))
-      .filter((h) => h.d <= 6).sort((a, b) => a.d - b.d).map((h) => h.id);
+    const hits: { id: number; d: number }[] = [];
+    for (const line of selectableBufLines) {
+      const d = lineHitDistance(c, line, px, py);
+      if (d <= 6) hits.push({ id: line.id, d });
+    }
+    hits.sort((a, b) => a.d - b.d);
+    return hits.map((hit) => hit.id);
   };
   const hitBufLine = (px: number, py: number) => hitBufLines(px, py)[0] ?? null;
 
@@ -1598,8 +1637,9 @@ export default function ProfileEditor({
   const hitPathEndpoint = (px: number, py: number, allowed?: Set<number>): number | null => {
     const c = camRef.current;
     if (!c || pathStartVid == null || pathEndVid == null) return null;
-    const start = vById.get(pathStartVid), end = vById.get(pathEndVid);
-    if (!start || !end) return null;
+    const startIndex = vIndexById.get(pathStartVid), endIndex = vIndexById.get(pathEndVid);
+    if (startIndex == null || endIndex == null) return null;
+    const start = verts[startIndex], end = verts[endIndex];
     const coincident = Math.hypot(start.z - end.z, start.x - end.x) < 1e-7;
     const candidates = [
       { id: pathStartVid, v: start, dx: coincident ? -13 : 0 },
@@ -1618,13 +1658,20 @@ export default function ProfileEditor({
   const hitBufVerts = (px: number, py: number): number[] => {
     const c = camRef.current;
     if (!c || !editOpen || !toolpathLayersVisible) return [];
-    const allowed = new Set(lines.filter(bufSelectable).flatMap((l) => [l.va, l.vb]));
-    const endpoint = hitPathEndpoint(px, py, allowed);
-    const hits = showPathPoints
-      ? verts.filter((v) => allowed.has(v.id)).map((v) => {
-          const [x, y] = screenPt(c, v.z, v.x / 2); return { id: v.id, d: Math.hypot(px - x, py - y) };
-        }).filter((h) => h.d <= 8.5).sort((a, b) => a.d - b.d).map((h) => h.id)
-      : [];
+    const endpoint = hitPathEndpoint(px, py, selectableBufVertexIds);
+    if (!showPathPoints) return endpoint == null ? [] : [endpoint];
+    const nearby: { id: number; d: number }[] = [];
+    for (const id of selectableBufVertexIds) {
+      const vertex = vz(id);
+      const [x, y] = screenPt(c, vertex.z, vertex.x / 2);
+      const dx = px - x;
+      const dy = py - y;
+      if (Math.abs(dx) > 8.5 || Math.abs(dy) > 8.5) continue;
+      const d = Math.hypot(dx, dy);
+      if (d <= 8.5) nearby.push({ id, d });
+    }
+    nearby.sort((a, b) => a.d - b.d);
+    const hits = nearby.map((hit) => hit.id);
     return endpoint == null ? hits : [endpoint, ...hits.filter((id) => id !== endpoint)];
   };
   const hitBufVx = (px: number, py: number) => hitBufVerts(px, py)[0] ?? null;
@@ -1744,10 +1791,13 @@ export default function ProfileEditor({
     const vxs: number[] = [];
     if (!toolpathLayersVisible) return { ids, vxs };
     const inR = (z: number, r: number) => z >= rectW.z0 - 1e-9 && z <= rectW.z1 + 1e-9 && r >= rectW.r0 - 1e-9 && r <= rectW.r1 + 1e-9;
-    const selectableLines = edit!.lines.filter(bufSelectable);
-    const allowedVerts = new Set(selectableLines.flatMap((line) => [line.va, line.vb]));
-    for (const v of edit!.verts) if (allowedVerts.has(v.id) && inR(v.z, v.x / 2)) vxs.push(v.id);
-    for (const l of selectableLines) {
+    if (showPathPoints) {
+      for (const id of selectableBufVertexIds) {
+        const vertex = vz(id);
+        if (inR(vertex.z, vertex.x / 2)) vxs.push(id);
+      }
+    }
+    for (const l of selectableBufLines) {
       const a = { z: vz(l.va).z, r: vz(l.va).x / 2 };
       const b = { z: vz(l.vb).z, r: vz(l.vb).x / 2 };
       const both = inR(a.z, a.r) && inR(b.z, b.r);
@@ -1777,10 +1827,12 @@ export default function ProfileEditor({
         sx: number;
         sy: number;
         moved: boolean;
+        /** آخرین جابه‌جایی کوانتیزه‌شده؛ رویدادهای تکراری بدون تغییر حذف می‌شوند. */
+        lastQ?: { z: number; r: number };
         /** Drag روی Segmentهای H2 یعنی تغییر سراسری آفست، نه اعوجاج یک خط. */
         holder2?: { base: Holder2State; next: Holder2State; latestVerts: EVert[] };
       }
-    | { mode: "evert"; vid: number; start: SPoint; base: EVert; sx: number; sy: number; moved: boolean }
+    | { mode: "evert"; vid: number; start: SPoint; base: EVert; sx: number; sy: number; moved: boolean; lastQ?: { z: number; r: number } }
     | { mode: "eoff"; id: number; last: SPoint; seed: SketchSeg; sx: number; sy: number; moved: boolean }
     | { mode: "eoffh"; id: number; part: "a" | "b" | "c1" | "c2" | "via"; sx: number; sy: number; moved: boolean }
     | null
@@ -1868,7 +1920,7 @@ export default function ProfileEditor({
         else setSelV([endpointCandidate]);
         setHitPicker(null);
         setPickerHover(null);
-        drag.current = { mode: "evert", vid: endpointCandidate, start: raw, base: { ...vz(endpointCandidate) }, sx: ploc.x, sy: ploc.y, moved: false };
+        drag.current = { mode: "evert", vid: endpointCandidate, start: raw, base: { ...vz(endpointCandidate) }, sx: ploc.x, sy: ploc.y, moved: false, lastQ: { z: 0, r: 0 } };
         return;
       }
 
@@ -1916,7 +1968,7 @@ export default function ProfileEditor({
       if (bv != null) {
         if (e.shiftKey) setSelV(selV.includes(bv) ? selV.filter((x) => x !== bv) : [...selV, bv]);
         else if (!selV.includes(bv)) setSelV([bv]);
-        drag.current = { mode: "evert", vid: bv, start: raw, base: { ...vz(bv) }, sx: ploc.x, sy: ploc.y, moved: false };
+        drag.current = { mode: "evert", vid: bv, start: raw, base: { ...vz(bv) }, sx: ploc.x, sy: ploc.y, moved: false, lastQ: { z: 0, r: 0 } };
         return;
       }
       const oh = hitOffHandle(ploc.x, ploc.y);
@@ -1949,7 +2001,8 @@ export default function ProfileEditor({
         }
         if (e.shiftKey) ids = selL.includes(bl) ? selL.filter((x) => x !== bl) : [...selL, bl];
         else ids = selL.includes(bl) ? selL : [bl];
-        ids = lines.filter((line) => ids.includes(line.id) && bufSelectable(line)).map((line) => line.id);
+        const wanted = new Set(ids);
+        ids = lines.filter((line) => wanted.has(line.id) && bufSelectable(line)).map((line) => line.id);
         selectEditLines(ids, bl, true);
         setSelV([]);
         const selectedLines = ids.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
@@ -1973,6 +2026,7 @@ export default function ProfileEditor({
           sx: e.clientX,
           sy: e.clientY,
           moved: false,
+          lastQ: { z: 0, r: 0 },
           ...(holder2Drag
             ? { holder2: { base: { ...holderBase }, next: { ...holderBase }, latestVerts: verts } }
             : {}),
@@ -2017,8 +2071,7 @@ export default function ProfileEditor({
         let hb: number | null = null;
         let endpoint: number | null = null;
         if (editOpen && !onHandle) {
-          const allowed = new Set(lines.filter(bufSelectable).flatMap((line) => [line.va, line.vb]));
-          endpoint = hitPathEndpoint(ploc.x, ploc.y, allowed);
+          endpoint = hitPathEndpoint(ploc.x, ploc.y, selectableBufVertexIds);
           hb = endpoint == null && hitOffSeg(ploc.x, ploc.y) == null ? hitBufLine(ploc.x, ploc.y) : null;
         }
         setHoverPathEndpoint(endpoint);
@@ -2065,6 +2118,9 @@ export default function ProfileEditor({
       /* رأس‌های مشترک = یک‌جا جابه‌جا می‌شوند → همسایه‌ها بی‌درز دنباله می‌آیند؛
          جابه‌جایی از مبنایِ لحظهٔ کلیک و با گامِ شبکه (فقط «میزان» حرکت) */
       const { z: qz, r: qr } = quantStep(raw, d.start);
+      if (d.lastQ?.z === qz && d.lastQ.r === qr) return;
+      d.lastQ = { z: qz, r: qr };
+      if (qz !== 0 || qr !== 0) d.moved = true;
       if (d.holder2 && edit) {
         /* نگاشت نمایش: حرکت راست = Xoff بیشتر؛ حرکت بالا (v بیشتر) = Yoff کمتر،
            چون Ym = Yw/2 − Yoff. آفست و هندسه از یک دلتا ساخته می‌شوند. */
@@ -2083,10 +2139,11 @@ export default function ProfileEditor({
            می‌خواند و اعداد X/Y در همین فریم به‌صورت زنده عوض می‌شوند. */
         onEditBuf({ ...edit, verts: nv, lines, holder2: next }, false);
       } else {
-        const nv = verts.map((v) => {
-          const b0 = d.base.get(v.id);
-          return b0 ? { ...v, z: b0.z + qz, x: b0.x + 2 * qr } : v;
-        });
+        const nv = verts.slice();
+        for (const [vid, b0] of d.base) {
+          const index = vIndexById.get(vid);
+          if (index != null) nv[index] = { ...nv[index], z: b0.z + qz, x: b0.x + 2 * qr };
+        }
         setBufGeom(nv, lines, false);
       }
       return;
@@ -2094,12 +2151,18 @@ export default function ProfileEditor({
     if (d.mode === "evert") {
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
       const { z: qz, r: qr } = quantStep(raw, d.start);
-      const nv = verts.map((v) => (v.id === d.vid ? { ...v, z: d.base.z + qz, x: d.base.x + 2 * qr } : v));
+      if (d.lastQ?.z === qz && d.lastQ.r === qr) return;
+      d.lastQ = { z: qz, r: qr };
+      if (qz !== 0 || qr !== 0) d.moved = true;
+      const nv = verts.slice();
+      const index = vIndexById.get(d.vid);
+      if (index != null) nv[index] = { ...nv[index], z: d.base.z + qz, x: d.base.x + 2 * qr };
       setBufGeom(nv, lines, false);
       return;
     }
     if (d.mode === "eoff") {
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
+      if (!d.moved) return;
       const dz = raw.z - d.last.z;
       const dr = raw.r - d.last.r;
       const base = edit?.off[d.id] ?? {};
@@ -2118,6 +2181,7 @@ export default function ProfileEditor({
     }
     if (d.mode === "eoffh") {
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
+      if (!d.moved) return;
       patchOff(d.id, { [d.part]: { z: raw.z, r: raw.r } } as OffPatch, false);
       return;
     }
@@ -2682,9 +2746,10 @@ export default function ProfileEditor({
   let activeLinePath = "";
   let activeLineSpeedColor = "";
   const selectedSpeedPaths = new Map<string, string>();
-  if (editOpen && toolpathLayersVisible && selectedLineIds.size) {
-    for (const line of lines) {
-      if (!selectedLineIds.has(line.id)) continue;
+  if (editOpen && toolpathLayersVisible && selL.length) {
+    for (const id of selL) {
+      const line = lineById.get(id);
+      if (!line) continue;
       const d = `${lineD(line)} `;
       if (line.id === activeLine) {
         activeLinePath += d;
@@ -2706,7 +2771,7 @@ export default function ProfileEditor({
   const pathEnd = editOpen && lines.length ? vz(lines[lines.length - 1].vb) : null;
   const pathEndsCoincident = !!pathStart && !!pathEnd && Math.hypot(pathStart.z - pathEnd.z, pathStart.x - pathEnd.x) < 1e-7;
   const selVids = new Set<number>();
-  if (editOpen) {
+  if (editOpen && showPathPoints) {
     for (const id of selL) {
       const l = lineById.get(id);
       if (l) {
@@ -2715,6 +2780,33 @@ export default function ProfileEditor({
       }
     }
     for (const v of selV) selVids.add(v);
+  }
+  /* هزاران رأس انتخابی به‌جای هزاران <circle> در چند path مرکب رسم می‌شوند؛
+     تعداد nodeهای DOM هنگام روشن‌بودن نقاط ثابت می‌ماند. */
+  const selectedVertexIds = new Set(selV);
+  let pointOuterSelectedPath = "";
+  let pointOuterPath = "";
+  let pointSelectedPath = "";
+  let pointSharedPath = "";
+  let pointSoloPath = "";
+  const circleD = (x: number, y: number, radius: number) => {
+    const left = (x - radius).toFixed(1);
+    const cy = y.toFixed(1);
+    const diameter = (radius * 2).toFixed(1);
+    return `M ${left} ${cy} a ${radius} ${radius} 0 1 0 ${diameter} 0 a ${radius} ${radius} 0 1 0 -${diameter} 0 `;
+  };
+  for (const vid of selVids) {
+    const vertex = vz(vid);
+    const [x, y] = P(vertex.z, vertex.x / 2);
+    const selected = selectedVertexIds.has(vid);
+    if (selected) {
+      pointOuterSelectedPath += circleD(x, y, 8);
+      pointSelectedPath += circleD(x, y, 5.5);
+    } else {
+      pointOuterPath += circleD(x, y, 8);
+      if ((vertexLineCount.get(vid) ?? 0) > 1) pointSharedPath += circleD(x, y, 5.5);
+      else pointSoloPath += circleD(x, y, 5.5);
+    }
   }
   type GridTick = { value: number; major: boolean };
   const makeGridTicks = (min: number, max: number, step: number, divisions: number): GridTick[] => {
@@ -3001,7 +3093,7 @@ export default function ProfileEditor({
                 />
               );
             })()}
-            {showPathPoints && pickerHover?.kind === "vert" && vById.get(pickerHover.id) && (() => {
+            {showPathPoints && pickerHover?.kind === "vert" && vIndexById.has(pickerHover.id) && (() => {
               const vertex = vz(pickerHover.id);
               const [x, y] = P(vertex.z, vertex.x / 2);
               return (
@@ -3118,19 +3210,16 @@ export default function ProfileEditor({
                 <path d={rangePreviewPath} fill="none" stroke="#fff3dc" strokeOpacity={0.82} strokeWidth={5.2} strokeLinecap="round" pointerEvents="none" />
               </>
             )}
-            {/* رأس‌های خطوط انتخابی — هر رأس یک نقطه (اشتراک‌ها هم‌مکان‌اند، دو‌تایی نمی‌شود) */}
-            {showPathPoints && [...selVids].map((vid) => {
-              const v = vz(vid);
-              const [x, y] = P(v.z, v.x / 2);
-              const on = selV.includes(vid);
-              const shared = (vertexLineCount.get(vid) ?? 0) > 1;
-              return (
-                <g key={`bv${vid}`} opacity={pickerHover ? 0.1 : 1}>
-                  <circle cx={x} cy={y} r={8} fill={on ? "#ffd27a" : "#45b394"} fillOpacity={0.12} pointerEvents="none" />
-                  <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={on ? "#ffd27a" : shared ? "#0f2a22" : "#120e09"} stroke={on ? "#120e09" : "#45b394"} strokeWidth={2.4} />
-                </g>
-              );
-            })}
+            {/* رأس‌های خطوط انتخابی در pathهای مرکب: ظاهر قبلی با تعداد node ثابت. */}
+            {showPathPoints && selVids.size > 0 && (
+              <g opacity={pickerHover ? 0.1 : 1} pointerEvents="none">
+                {pointOuterPath && <path d={pointOuterPath} fill="#45b394" fillOpacity={0.12} />}
+                {pointOuterSelectedPath && <path d={pointOuterSelectedPath} fill="#ffd27a" fillOpacity={0.12} />}
+                {pointSoloPath && <path d={pointSoloPath} fill="#120e09" stroke="#45b394" strokeWidth={2.4} />}
+                {pointSharedPath && <path d={pointSharedPath} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />}
+                {pointSelectedPath && <path d={pointSelectedPath} fill="#ffd27a" stroke="#120e09" strokeWidth={2.4} />}
+              </g>
+            )}
           </g>
         )}
 
