@@ -2293,6 +2293,8 @@ export interface EditBuf {
   lines: ELine[]; // به همان ترتیب اجرای برنامه؛ همواره vb==vaِ خطِ بعد (زنجیرهٔ بسته)
   sketch: SketchSeg[]; // کپیِ کاریِ پروفایل (تأیید = انتقال به اسکچ اصلی)
   off: Record<number, OffPatch>; // ویرایش مستقل منحنی‌های افست (کلید = id قطعهٔ پروفایل)
+  /** آفست کاری H2؛ تا زمان «تأیید» پیش‌نویس است و Params/فایل را تغییر نمی‌دهد. */
+  holder2: Holder2State;
   /** انتخاب Segment جزئی از تاریخچهٔ اصلی است تا Undo/Redo آن را نیز بازیابی کند. */
   selLines: number[];
   activeLine: number | null;
@@ -2308,6 +2310,86 @@ export function expandLines(verts: EVert[], lines: ELine[]): ELineXY[] {
     const b = m.get(l.vb) ?? { z: 0, x: 0, id: -1 };
     return { ...l, z1: a.z, x1: a.x, z2: b.z, x2: b.x };
   });
+}
+
+/**
+ * جابه‌جایی سبکِ تمام مسیرهای هلدر دوم در فضای ماشین.
+ *
+ * تغییر آفست هلدر یک تبدیل سراسری است؛ بنابراین فقط Segment کلیک‌شده جابه‌جا
+ * نمی‌شود و همهٔ رأس‌های H2 با هم حرکت می‌کنند. تعداد خط‌ها و شناسه‌ها مطلقاً
+ * دست‌نخورده می‌ماند. پله‌های مصنوعیِ اتصال H1/H2 نیز با حفظ جهت اصلی‌شان
+ * دوباره هم‌راستا می‌شوند تا هنگام Drag هیچ خط موربی ساخته نشود:
+ *   - پلهٔ افقی: X قطری دو سر برابر می‌ماند؛
+ *   - پلهٔ عمودی: Z دو سر برابر می‌ماند.
+ *
+ * dz در محور طولی ماشین و dv در محور شعاعی ماشین است (EVert.x قطری است، پس
+ * جابه‌جایی شعاعی با ضریب ۲ روی آن اعمال می‌شود).
+ */
+export function translateHolder2Edit(verts: EVert[], lines: ELine[], dz: number, dv: number): EVert[] {
+  if (Math.abs(dz) < 1e-12 && Math.abs(dv) < 1e-12) return verts;
+
+  const original = new Map(verts.map((v) => [v.id, v]));
+  const movedH2 = new Set<number>();
+  const fixedH1 = new Set<number>();
+  for (const line of lines) {
+    /* #bridgeها مختصات مصنوعی ماشین‌اند و holder=1 آن‌ها به معنی مسیر H1 نیست. */
+    if (line.key.startsWith("#bridge:")) continue;
+    const target = line.holder === 2 ? movedH2 : fixedH1;
+    target.add(line.va);
+    target.add(line.vb);
+  }
+  /* در مرز نادرِ بدون پل، H2 اولویت دارد؛ H1 نباید مانع تبدیل سراسری آن شود. */
+  for (const id of movedH2) fixedH1.delete(id);
+  if (!movedH2.size) return verts;
+
+  const out = verts.map((v) =>
+    movedH2.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dv } : { ...v }
+  );
+  const byId = new Map(out.map((v) => [v.id, v]));
+  const axis = lines
+    .filter((line) => line.key.startsWith("#bridge:"))
+    .map((line) => {
+      const a = original.get(line.va), b = original.get(line.vb);
+      if (!a || !b) return null;
+      if (Math.abs(a.x - b.x) < 1e-7) return { line, kind: "h" as const };
+      if (Math.abs(a.z - b.z) < 1e-7) return { line, kind: "v" as const };
+      return null;
+    })
+    .filter((item): item is { line: ELine; kind: "h" | "v" } => !!item);
+
+  /* حداکثر سه پله در هر پل وجود دارد. چند گذر کوچک و ثابت برای انتشار قید از
+     رأس H2 تا رأس‌های میانی کافی است و برخلاف بازتولید جی‌کد در هر pointermove
+     هزینه‌اش ناچیز و مستقل از پیچیدگی هندسهٔ قطعه است. */
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    for (const { line, kind } of axis) {
+      const a = byId.get(line.va), b = byId.get(line.vb);
+      const a0 = original.get(line.va), b0 = original.get(line.vb);
+      if (!a || !b || !a0 || !b0) continue;
+      const field: "x" | "z" = kind === "h" ? "x" : "z";
+      if (Math.abs(a[field] - b[field]) < 1e-9) continue;
+      const aAnchor = movedH2.has(a.id) || fixedH1.has(a.id);
+      const bAnchor = movedH2.has(b.id) || fixedH1.has(b.id);
+      if (aAnchor && !bAnchor) {
+        b[field] = a[field];
+        changed = true;
+      } else if (bAnchor && !aAnchor) {
+        a[field] = b[field];
+        changed = true;
+      } else if (!aAnchor && !bAnchor) {
+        const aChanged = Math.abs(a[field] - a0[field]) > 1e-9;
+        const bChanged = Math.abs(b[field] - b0[field]) > 1e-9;
+        if (aChanged && !bChanged) b[field] = a[field];
+        else if (bChanged && !aChanged) a[field] = b[field];
+        else b[field] = a[field];
+        changed = true;
+      }
+      /* دو رأس لنگر به عمد جابه‌جا نمی‌شوند؛ چنین حالتی فقط در دادهٔ قدیمیِ
+         بدون پل ممکن است و تغییر هندسهٔ واقعی H1 از ساخت خط مورب خطرناک‌تر است. */
+    }
+    if (!changed) break;
+  }
+  return out;
 }
 
 /* زنجیره‌سازی: سرِ هر خط = انتهای خطِ پیشین اگر «تقریباً» یکی بودند → رأسِ مشترک؛

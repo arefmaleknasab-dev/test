@@ -7,8 +7,8 @@ import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
-import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, GenResult, Params, PPoint, Preset } from "./lib/lathe";
+import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
+import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
@@ -44,6 +44,8 @@ interface HistEntry {
   sketch: SketchSeg[];
   gcodeOvr: GcodeOvrMap;
   editBuf: EditBuf | null;
+  /** آفست تأییدشدهٔ H2 نیز همراه ویرایش مسیر Undo/Redo می‌شود. */
+  holder2: Holder2State;
 }
 
 /* بازخوانی ایمنِ اوررایدها از حافظهٔ محلی (سنجش نوع پس از پارس) */
@@ -139,8 +141,8 @@ export default function App() {
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);
-  const stateRef = useRef({ sketch, gcodeOvr, editBuf });
-  stateRef.current = { sketch, gcodeOvr, editBuf };
+  const stateRef = useRef({ sketch, gcodeOvr, editBuf, holder2: params.holder2 });
+  stateRef.current = { sketch, gcodeOvr, editBuf, holder2: params.holder2 };
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -173,6 +175,23 @@ export default function App() {
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
 
+  /* هنگام Drag هلدر دوم، اختلاف آفست به‌تنهایی برای فعال‌کردن «تأیید» کافی است؛
+     در این مسیر داغ عمداً deriveGcodeOvr (پیمایش کل برنامه) اجرا نمی‌شود تا
+     حرکت حتی روی برنامه‌های چند هزار خطی روان بماند. */
+  const editChanges = useMemo(() => {
+    if (!editOpen || !editBuf) return 0;
+    const draftHolder2 = editBuf.holder2 ?? params.holder2;
+    const holder2Changed =
+      draftHolder2.xOff !== params.holder2.xOff || draftHolder2.yOff !== params.holder2.yOff;
+    let n = holder2Changed ? 1 : 0;
+    if (!holder2Changed) {
+      const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
+      if (JSON.stringify(next) !== JSON.stringify(gcodeOvr)) n++;
+    }
+    if (editBuf.sketch !== sketch) n++;
+    return n;
+  }, [editOpen, editBuf, params, genBase.segs, gcodeOvr, sketch]);
+
   /* پارامترهای برداشت مستقیماً توپولوژی مسیر را تغییر می‌دهند. پیش‌نویس فعلی
      ابتدا نسبت به برنامه قبلی به override تبدیل، سپس روی برنامه جدید اعمال
      می‌شود؛ بنابراین Polyline زنده به‌روز می‌شود و ویرایش‌های کاربر نیز تا
@@ -183,9 +202,14 @@ export default function App() {
     pendingParamRebaseRef.current = null;
     setEditBuf((buf) => {
       if (!buf) return buf;
-      const draftOvr = deriveGcodeOvr(buf.verts, buf.lines, pending.genBase.segs, pending.gcodeOvr, pending.params);
-      const rebuilt = applyGcodeOvr(genBase, draftOvr, params);
-      const seed = seedGcodeEdit(rebuilt.segs, params);
+      /* آفست H2 در حالت ادیت بخشی از پیش‌نویس است. هنگام تغییر پارامترهای دیگر
+         نباید به override هندسی تبدیل یا با مقدار تأییدشده بازنویسی شود. */
+      const draftHolder2 = buf.holder2 ?? pending.params.holder2;
+      const oldDraftParams: Params = { ...pending.params, holder2: draftHolder2 };
+      const newDraftParams: Params = { ...params, holder2: draftHolder2 };
+      const draftOvr = deriveGcodeOvr(buf.verts, buf.lines, pending.genBase.segs, pending.gcodeOvr, oldDraftParams);
+      const rebuilt = applyGcodeOvr(genBase, draftOvr, newDraftParams);
+      const seed = seedGcodeEdit(rebuilt.segs, newDraftParams);
 
       /* انتخاب‌ها با کلید پایدار + شماره قطعه در همان حرکت منتقل می‌شوند. */
       const oldCount = new Map<string, number>();
@@ -218,7 +242,7 @@ export default function App() {
     if (!presetReseedRef.current) return;
     presetReseedRef.current = false;
     const seed = seedGcodeEdit(gen.segs, params);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null });
     commitRef.current = null;
     setHistVer((v) => v + 1);
   }, [gen, params, sketch]);
@@ -248,6 +272,11 @@ export default function App() {
     setSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
+    setParams((p) =>
+      p.holder2.xOff === e.holder2.xOff && p.holder2.yOff === e.holder2.yOff
+        ? p
+        : { ...p, holder2: { ...e.holder2 } }
+    );
     /* Undo/Redo نباید پیش‌نویس را در پشت‌صحنه تغییر دهد: هر وضعیت تاریخی که
        EditBuf دارد، هم‌زمان خودِ حالت ویرایش مسیر را نیز دوباره باز می‌کند. */
     setEditOpen(!!e.editBuf);
@@ -277,7 +306,7 @@ export default function App() {
     }
     pushPast(snap());
     const seed = seedGcodeEdit(gen.segs, params);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null });
     setEditOpen(true);
     setHistVer((v) => v + 1);
   };
@@ -301,20 +330,34 @@ export default function App() {
   const confirmEdit = () => {
     const eb = editBufRef.current;
     if (!eb) return;
-    const next = deriveGcodeOvr(eb.verts, eb.lines, genBase.segs, gcodeOvr, params);
+    const draftHolder2 = eb.holder2 ?? params.holder2;
+    const draftParams: Params = { ...params, holder2: draftHolder2 };
+    /* مختصات بافر در فضای ماشین‌اند؛ تبدیل معکوس باید با آفست زندهٔ همان
+       پیش‌نویس انجام شود تا جابه‌جایی سراسری H2 به override هندسی تبدیل نشود. */
+    const next = deriveGcodeOvr(eb.verts, eb.lines, genBase.segs, gcodeOvr, draftParams);
     const sketchChanged = eb.sketch !== sketch;
-    if (!sketchChanged && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
+    const holder2Changed =
+      draftHolder2.xOff !== params.holder2.xOff || draftHolder2.yOff !== params.holder2.yOff;
+    if (!sketchChanged && !holder2Changed && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
       showToast("تغییری برای ثبت نیست", "warn");
       return;
     }
     pushPast(snap());
     setGcodeOvr(next);
+    if (holder2Changed) {
+      /* عمداً از onParamsCb عبور نمی‌کند: بافر از قبل با همین آفست در فضای
+         ماشین جابه‌جا شده و rebase دوباره باعث دوبرابرشدن حرکت می‌شود. */
+      pendingParamRebaseRef.current = null;
+      setParams((p) => ({ ...p, holder2: { ...draftHolder2 } }));
+    }
     if (sketchChanged) {
       setActivePreset(null);
       setSketch(eb.sketch);
     }
     setHistVer((v) => v + 1);
-    showToast("جی‌کد به‌روز شد ✓ (ویرایش مسیر باز ماند)");
+    showToast(holder2Changed
+      ? "جی‌کد و آفست هلدر دوم به‌روز شد ✓ (ویرایش مسیر باز ماند)"
+      : "جی‌کد به‌روز شد ✓ (ویرایش مسیر باز ماند)");
   };
   /* تغییرات بافر (خطوط/پروفایل/افست) — یک‌گام تاریخچه برای هر ژست */
   const onEditBuf = (next: EditBuf | null, commit: boolean) => {
@@ -356,6 +399,27 @@ export default function App() {
       return next;
     });
   }, [genBase, params, gcodeOvr]);
+  const onHolder2SettingsCb = useCallback((value: Holder2State) => {
+    const next: Holder2State = {
+      xOff: Math.max(MIN_HOLDER2_OFFSET, value.xOff),
+      yOff: Math.max(MIN_HOLDER2_OFFSET, value.yOff),
+    };
+    const eb = editBufRef.current;
+    if (editOpenRef.current && eb) {
+      const prev = eb.holder2 ?? stateRef.current.holder2;
+      const verts = translateHolder2Edit(
+        eb.verts,
+        eb.lines,
+        next.xOff - prev.xOff,
+        prev.yOff - next.yOff
+      );
+      onEditBuf({ ...eb, verts, holder2: next }, true);
+      return;
+    }
+    onParamsCb({ holder2: next });
+    // onEditBuf بر پایه refهای پایدار کار می‌کند؛ هویت callback فقط با پارامتر مولد عوض می‌شود.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onParamsCb]);
   const onStrategyCb = useCallback((name: string) => showToast(`استراتژی «${name}» فعال شد`), [showToast]);
 
   /* ---------- چیدمان داک (پنجره‌ها) ---------- */
@@ -395,11 +459,11 @@ export default function App() {
       return;
     }
     if (commit) {
-      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null });
+      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 } });
       commitRef.current = null;
       setActivePreset(null);
     } else if (!commitRef.current) {
-      commitRef.current = { sketch, gcodeOvr, editBuf: null }; // وضعیت پیش از شروع کشیدن
+      commitRef.current = { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 } }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
     /* اگر پیش‌نویس پنهان وجود دارد، اسکچ جدید را نیز در آن همگام نگه می‌داریم
@@ -608,6 +672,8 @@ export default function App() {
         >
           <ControlsPanel
             params={params}
+            holder2Draft={editOpen && editBuf ? editBuf.holder2 : null}
+            onHolder2={onHolder2SettingsCb}
             onParams={onParamsCb}
             points={points}
             innerPoints={innerPoints}
@@ -645,13 +711,7 @@ export default function App() {
               segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
               edit={editOpen ? editBuf : null}
-              editChanges={(() => {
-                if (!editOpen || !editBuf) return 0;
-                const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
-                let n = JSON.stringify(next) === JSON.stringify(gcodeOvr) ? 0 : 1;
-                if (editBuf.sketch !== sketch) n++;
-                return n;
-              })()}
+              editChanges={editChanges}
               onEditToggle={(open) => (open ? openEdit() : closeEdit())}
               onEditBuf={onEditBuf}
               onEditConfirm={confirmEdit}

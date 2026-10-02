@@ -1,11 +1,14 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { BlankShape, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
+import type { BlankShape, Holder2State, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
 import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconSplit, IconTool, IconTrash } from "./icons";
 
 interface Props {
   params: Params;
+  /** مقدار پیش‌نویس در حالت ویرایش مسیر؛ فقط نمایش زنده تا زمان تأیید. */
+  holder2Draft: Holder2State | null;
+  onHolder2: (value: Holder2State) => void;
   onParams: (patch: Partial<Params>) => void;
   points: PPoint[];
   innerPoints: PPoint[];
@@ -23,6 +26,8 @@ interface Props {
 
 function ControlsPanel({
   params,
+  holder2Draft,
+  onHolder2,
   onParams,
   points,
   innerPoints,
@@ -59,7 +64,10 @@ function ControlsPanel({
     );
   const outerActive = params.ops.some((o) => o.on && OUTER_OPS.includes(o.type));
   const innerActive = params.ops.some((o) => o.on && INNER_OPS.includes(o.type));
-  const h2example = machineUV(80, 120, 2, params);
+  const shownHolder2 = holder2Draft ?? params.holder2;
+  const holder2IsDraft = !!holder2Draft &&
+    (holder2Draft.xOff !== params.holder2.xOff || holder2Draft.yOff !== params.holder2.yOff);
+  const h2example = machineUV(80, 120, 2, holder2IsDraft ? { ...params, holder2: shownHolder2 } : params);
   const moveOp = (i: number, dir: -1 | 1) => {
     const j = i + dir;
     if (j < 0 || j >= params.ops.length) return;
@@ -434,13 +442,20 @@ function ControlsPanel({
             <div className="rounded-lg border border-[#4cc9f0]/30 bg-[#4cc9f0]/5 p-2">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-bold text-[#4cc9f0]">هلدر دوم (داخل‌تراش)</span>
-                <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
-                  ROT {HOLDER2_ROT}°
-                </span>
+                <div className="flex items-center gap-1">
+                  {holder2IsDraft && (
+                    <span className="rounded-full border border-teal/50 bg-teal/10 px-2 py-0.5 text-[8.5px] font-bold text-teal">
+                      زنده · پیش‌نویس
+                    </span>
+                  )}
+                  <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
+                    ROT {HOLDER2_ROT}°
+                  </span>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <Num label="X Offset (+X)" unit="mm" value={params.holder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) } })} />
-                <Num label="Y Offset (−Y)" unit="mm" value={params.holder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) } })} />
+                <Num label="X Offset (+X)" unit="mm" value={shownHolder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
+                <Num label="Y Offset (−Y)" unit="mm" value={shownHolder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
               </div>
               <p className="mt-1.5 rounded-md bg-bg/60 px-2 py-1 font-mono text-[9px] leading-4 text-mute" dir="ltr">
                 Xm = Xw + Xoff , Ym = Yw/2 − Yoff

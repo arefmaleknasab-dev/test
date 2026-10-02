@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { EditBuf, ELine, EVert, GenResult, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
-import { deleteEditLines, deleteEditVertices, insertEditVertex, normalizeEditBuf, OP_INFO, RAPID_RATE } from "../lib/lathe";
+import type { EditBuf, ELine, EVert, GenResult, Holder2State, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
+import { deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, translateHolder2Edit } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
 import {
   arcRadius,
@@ -1394,7 +1394,17 @@ export default function ProfileEditor({
     | { mode: "draw"; sx: number; sy: number; cam0: Cam; moved: boolean }
     | { mode: "marquee"; sx: number; sy: number; base: number[]; moved: boolean }
     | { mode: "rwait"; sx: number; sy: number; cam0: Cam; moved: boolean }
-    | { mode: "eline"; ids: number[]; start: SPoint; base: Map<number, EVert>; sx: number; sy: number; moved: boolean }
+    | {
+        mode: "eline";
+        ids: number[];
+        start: SPoint;
+        base: Map<number, EVert>;
+        sx: number;
+        sy: number;
+        moved: boolean;
+        /** Drag روی Segmentهای H2 یعنی تغییر سراسری آفست، نه اعوجاج یک خط. */
+        holder2?: { base: Holder2State; next: Holder2State; latestVerts: EVert[] };
+      }
     | { mode: "evert"; vid: number; start: SPoint; base: EVert; sx: number; sy: number; moved: boolean }
     | { mode: "eoff"; id: number; last: SPoint; seed: SketchSeg; sx: number; sy: number; moved: boolean }
     | { mode: "eoffh"; id: number; part: "a" | "b" | "c1" | "c2" | "via"; sx: number; sy: number; moved: boolean }
@@ -1544,11 +1554,31 @@ export default function ProfileEditor({
         ids = lines.filter((line) => ids.includes(line.id) && bufSelectable(line)).map((line) => line.id);
         selectEditLines(ids, bl, true);
         setSelV([]);
+        const selectedLines = ids.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
+        const holder2Drag = selectedLines.length > 0 && selectedLines.every((line) => line.holder === 2);
         const vset = new Set<number>();
-        for (const l of lines) if (ids.includes(l.id)) { vset.add(l.va); vset.add(l.vb); }
+        if (holder2Drag) {
+          /* آفست H2 یک تبدیل سراسری است؛ مبنا باید کل Polyline باشد تا با
+             انتخاب تنها یک Segment، بقیهٔ داخل‌تراشی عقب نماند. */
+          for (const v of verts) vset.add(v.id);
+        } else {
+          for (const l of selectedLines) { vset.add(l.va); vset.add(l.vb); }
+        }
         const base = new Map<number, EVert>();
         for (const vid of vset) base.set(vid, { ...vz(vid) });
-        drag.current = { mode: "eline", ids, start: raw, base, sx: e.clientX, sy: e.clientY, moved: false };
+        const holderBase = edit?.holder2 ?? params.holder2;
+        drag.current = {
+          mode: "eline",
+          ids,
+          start: raw,
+          base,
+          sx: e.clientX,
+          sy: e.clientY,
+          moved: false,
+          ...(holder2Drag
+            ? { holder2: { base: { ...holderBase }, next: { ...holderBase }, latestVerts: verts } }
+            : {}),
+        };
         return;
       }
     }
@@ -1633,11 +1663,30 @@ export default function ProfileEditor({
       /* رأس‌های مشترک = یک‌جا جابه‌جا می‌شوند → همسایه‌ها بی‌درز دنباله می‌آیند؛
          جابه‌جایی از مبنایِ لحظهٔ کلیک و با گامِ شبکه (فقط «میزان» حرکت) */
       const { z: qz, r: qr } = quantStep(raw, d.start);
-      const nv = verts.map((v) => {
-        const b0 = d.base.get(v.id);
-        return b0 ? { ...v, z: b0.z + qz, x: b0.x + 2 * qr } : v;
-      });
-      setBufGeom(nv, lines, false);
+      if (d.holder2 && edit) {
+        /* نگاشت نمایش: حرکت راست = Xoff بیشتر؛ حرکت بالا (v بیشتر) = Yoff کمتر،
+           چون Ym = Yw/2 − Yoff. آفست و هندسه از یک دلتا ساخته می‌شوند. */
+        const round2 = (v: number) => Math.round(v * 100) / 100;
+        const next: Holder2State = {
+          xOff: Math.max(MIN_HOLDER2_OFFSET, round2(d.holder2.base.xOff + qz)),
+          yOff: Math.max(MIN_HOLDER2_OFFSET, round2(d.holder2.base.yOff - qr)),
+        };
+        const dz = next.xOff - d.holder2.base.xOff;
+        const dv = d.holder2.base.yOff - next.yOff;
+        const baseVerts = Array.from(d.base.values());
+        const nv = translateHolder2Edit(baseVerts, lines, dz, dv);
+        d.holder2.next = next;
+        d.holder2.latestVerts = nv;
+        /* پیش‌نویس Params را عوض نمی‌کند؛ ControlsPanel مقدار را از EditBuf
+           می‌خواند و اعداد X/Y در همین فریم به‌صورت زنده عوض می‌شوند. */
+        onEditBuf({ ...edit, verts: nv, lines, holder2: next }, false);
+      } else {
+        const nv = verts.map((v) => {
+          const b0 = d.base.get(v.id);
+          return b0 ? { ...v, z: b0.z + qz, x: b0.x + 2 * qr } : v;
+        });
+        setBufGeom(nv, lines, false);
+      }
       return;
     }
     if (d.mode === "evert") {
@@ -1820,7 +1869,12 @@ export default function ProfileEditor({
 
     /* --- حالت ویرایش مسیر: ثبت ژست (نرمال‌سازی + تاریخچه) --- */
     if (d?.mode === "eline" || d?.mode === "evert") {
-      if (edit && d.moved) setBufGeom(edit.verts, edit.lines, true);
+      if (edit && d.moved) {
+        if (d.mode === "eline" && d.holder2) {
+          const fin = normalizeEditBuf(d.holder2.latestVerts, edit.lines);
+          onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, holder2: d.holder2.next }, true);
+        } else setBufGeom(edit.verts, edit.lines, true);
+      }
       return;
     }
     if (d?.mode === "eoff") {
