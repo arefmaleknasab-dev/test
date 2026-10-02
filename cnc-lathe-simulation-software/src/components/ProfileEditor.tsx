@@ -57,12 +57,16 @@ export interface EdSettings {
   showRough: boolean;
   showFinish: boolean;
   showOffset: boolean;
-  showBore: boolean;
+  showInnerRough: boolean;
+  showInnerOffset: boolean;
+  showInnerFinish: boolean;
   showRound: boolean;
   showFace: boolean;
   showBottom: boolean;
   showRapids: boolean;
   showGhost: boolean;
+  /** شفافیت مشترک همهٔ لایه‌های مسیر و سایهٔ طرح (۰٫۱ تا ۱). */
+  layerOpacity: number;
   /** گرید مستقل حالت ویرایش مسیر (نمایش + فاصله خطوط اصلی + تقسیمات داخلی). */
   editGridVisible: boolean;
   editGridSize: number;
@@ -163,19 +167,33 @@ const SEG_COLOR: Record<SegKind, string> = {
   bottom: "#ffd166",
 };
 
-type LayerKey = "showRough" | "showFinish" | "showOffset" | "showBore" | "showRound" | "showFace" | "showBottom" | "showRapids" | "showGhost";
+type LayerKey =
+  | "showRough"
+  | "showFinish"
+  | "showOffset"
+  | "showInnerRough"
+  | "showInnerOffset"
+  | "showInnerFinish"
+  | "showRound"
+  | "showFace"
+  | "showBottom"
+  | "showRapids"
+  | "showGhost";
 
 const CHIPS: { key: LayerKey; label: string; color: string }[] = [
   { key: "showRound", label: "گرد کردن", color: "#b48ee0" },
   { key: "showRough", label: "مسیر خشن", color: "#45b394" },
-  { key: "showBore", label: "داخل‌تراشی", color: "#4cc9f0" },
+  { key: "showInnerRough", label: "خشن داخل (کاسه)", color: "#4cc9f0" },
   { key: "showOffset", label: "آفست", color: "#f59a80" },
+  { key: "showInnerOffset", label: "آفست داخل‌تراشی", color: "#c77dff" },
   { key: "showFinish", label: "پرداخت", color: "#e0703c" },
+  { key: "showInnerFinish", label: "پرداخت داخل", color: "#f72585" },
   { key: "showFace", label: "پیشانی", color: "#e3a94e" },
   { key: "showBottom", label: "کف‌تراشی", color: "#ffd166" },
   { key: "showRapids", label: "حرکت سریع", color: "#93a1ad" },
   { key: "showGhost", label: "سایه طرح", color: "#c9955a" },
 ];
+const TOOLPATH_LAYER_KEYS = CHIPS.filter((chip) => chip.key !== "showGhost").map((chip) => chip.key);
 
 /* منوی کرکره‌ای لایه‌های نمایش — جایگزین نوار چیپ‌های افقی */
 function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings: (p: Partial<EdSettings>) => void }) {
@@ -197,6 +215,14 @@ function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings:
     };
   }, [open]);
   const activeN = CHIPS.filter((c) => settings[c.key]).length;
+  const allLayersOff = activeN === 0;
+  const opacity = Math.min(1, Math.max(0.1, settings.layerOpacity));
+  const toggleAllLayers = () => {
+    const next = allLayersOff;
+    const patch: Partial<EdSettings> = {};
+    for (const chip of CHIPS) Object.assign(patch, { [chip.key]: next });
+    onSettings(patch);
+  };
   return (
     <div ref={ref} className="anim-in relative">
       <button
@@ -222,8 +248,44 @@ function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings:
         </svg>
       </button>
       {open && (
-        <div className="absolute top-[calc(100%+6px)] right-0 w-52 rounded-lg border border-edge bg-panel/95 p-1.5 shadow-xl shadow-black/50 backdrop-blur">
+        <div className="absolute top-[calc(100%+6px)] right-0 max-h-[calc(100vh-100px)] w-64 overflow-y-auto rounded-lg border border-edge bg-panel/95 p-1.5 shadow-xl shadow-black/50 backdrop-blur">
           <div className="px-2 pt-0.5 pb-1 text-[10px] font-bold text-dim">نمایش مسیرهای عملیات روی بوم</div>
+          <div className="mb-1.5 rounded-md border border-edge bg-bg/45 p-2">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={toggleAllLayers}
+                className={cn(
+                  "rounded-md border px-2 py-1 text-[10px] font-bold transition-colors",
+                  allLayersOff
+                    ? "border-teal/50 bg-teal/10 text-teal hover:bg-teal/20"
+                    : "border-danger/40 bg-danger/8 text-danger/90 hover:bg-danger/15"
+                )}
+              >
+                {allLayersOff ? "روشن کردن همه" : "خاموش کردن همه"}
+              </button>
+              <span className="font-mono text-[9px] text-mute" dir="ltr">{Math.round(opacity * 100)}%</span>
+            </div>
+            <label className="mt-1.5 flex items-center gap-2 text-[9.5px] text-dim">
+              <span className="shrink-0">کمرنگ</span>
+              <input
+                type="range"
+                min={10}
+                max={100}
+                step={5}
+                value={Math.round(opacity * 100)}
+                onChange={(e) => onSettings({ layerOpacity: Number(e.target.value) / 100 })}
+                className="h-1.5 min-w-0 flex-1 cursor-pointer accent-[#e3a94e]"
+                aria-label="شدت نمایش لایه‌ها"
+              />
+              <span className="shrink-0">پررنگ</span>
+            </label>
+            {allLayersOff && (
+              <p className="mt-1.5 rounded border border-teal/25 bg-teal/8 px-1.5 py-1 text-[8.5px] leading-4 text-teal">
+                حالت سبک فعال است؛ مسیرها هنگام ترسیم/درگ محاسبه و رندر زنده نمی‌شوند.
+              </p>
+            )}
+          </div>
           {CHIPS.map((c) => (
             <button
               key={c.key}
@@ -391,9 +453,9 @@ const KIND_VISIBLE: Record<SegKind, LayerKey> = {
   face: "showFace",
   finish: "showFinish",
   offset: "showOffset",
-  bore: "showBore",
-  boreoff: "showBore",
-  borefin: "showBore",
+  bore: "showInnerRough",
+  boreoff: "showInnerOffset",
+  borefin: "showInnerFinish",
   bottom: "showBottom",
 };
 
@@ -457,6 +519,11 @@ export default function ProfileEditor({
 
   /* ---------- حالت ویرایش مسیر — ویرایشگرِ پلی‌لاینِ پیوسته (مثل بک‌پلات سیمکو) ---------- */
   const editOpen = !!edit;
+  const toolpathLayersVisible = TOOLPATH_LAYER_KEYS.some((key) => settings[key]);
+  const layerOpacity = Math.min(1, Math.max(0.1, settings.layerOpacity));
+  /* فقط تغییر روشن/خاموشی مسیرها هندسهٔ SVG را بازسازی می‌کند؛ اسلایدر شفافیت
+     نباید روی برنامه‌های چند هزارخطی useMemo سنگین را دوباره اجرا کند. */
+  const layerVisibilityKey = TOOLPATH_LAYER_KEYS.map((key) => settings[key] ? "1" : "0").join("");
   const [selL, setSelL] = useState<number[]>([]); // خطوط انتخابی
   const [activeLine, setActiveLine] = useState<number | null>(null); // مبنای پیمایش Arrow
   const [selV, setSelV] = useState<number[]>([]); // رأس‌های انتخابی (نقاط مشترک)
@@ -522,6 +589,21 @@ export default function ProfileEditor({
     setPickerHover(null);
     setSpeedMenu(null);
   }, [editOpen]);
+  useEffect(() => {
+    if (toolpathLayersVisible) return;
+    /* با خاموشی کامل مسیرها هیچ انتخاب/hover پنهانی باقی نمی‌ماند؛ بنابراین
+       pointermove و pan به پیمایش هزاران خط وارد نمی‌شوند. */
+    setSelL([]);
+    setActiveLine(null);
+    setSelV([]);
+    setSelOff([]);
+    setHoverBuf(null);
+    setHoverPathEndpoint(null);
+    setBufMarq(null);
+    setHitPicker(null);
+    setPickerHover(null);
+    setSpeedMenu(null);
+  }, [toolpathLayersVisible]);
   useEffect(() => {
     if (split.enabled) return;
     setSplitSelected(false);
@@ -1298,7 +1380,7 @@ export default function ProfileEditor({
   /* Set و جدول degree مانع جست‌وجوی O(n²) هنگام هر فریم pan می‌شوند. */
   const selectedLineIds = useMemo(() => new Set(selL), [selL]);
   const rangePreview = useMemo(() => {
-    if (!editOpen || !shiftDown || activeLine == null || hoverBuf == null) return [] as number[];
+    if (!editOpen || !toolpathLayersVisible || !shiftDown || activeLine == null || hoverBuf == null) return [] as number[];
     const from = lines.findIndex((l) => l.id === activeLine);
     const to = lines.findIndex((l) => l.id === hoverBuf);
     if (from < 0 || to < 0) return [] as number[];
@@ -1306,7 +1388,7 @@ export default function ProfileEditor({
     return lines.slice(lo, hi + 1)
       .filter((line) => isolatedOpId == null || line.opId === isolatedOpId)
       .map((l) => l.id);
-  }, [editOpen, shiftDown, activeLine, hoverBuf, lines, isolatedOpId]);
+  }, [editOpen, toolpathLayersVisible, shiftDown, activeLine, hoverBuf, lines, isolatedOpId]);
   const vz = (vid: number): EVert => vById.get(vid) ?? { id: vid, z: 0, x: 0 };
   const bufVisible = (l: ELine) => settings[KIND_VISIBLE[l.motion === 0 ? "rapid" : l.kind]];
   const bufPx = (c: Cam, l: ELine): [number, number, number, number] => {
@@ -1359,7 +1441,7 @@ export default function ProfileEditor({
 
   /* ران‌های بافر برای رسم — مسیرِ کامل، یک زنجیرۀ پیوسته (اتصال‌ها رأسِ مشترک‌اند) */
   const bufRuns = useMemo(() => {
-    if (!editOpen || !cam) return [] as { kind: SegKind; opId: number; motion: 0 | 1; feed: number; d: string }[];
+    if (!editOpen || !cam || !toolpathLayersVisible) return [] as { kind: SegKind; opId: number; motion: 0 | 1; feed: number; d: string }[];
     const out: { kind: SegKind; opId: number; motion: 0 | 1; feed: number; d: string }[] = [];
     let cur: { kind: SegKind; opId: number; motion: 0 | 1; feed: number; pts: [number, number][] } | null = null;
     const flush = () => {
@@ -1387,7 +1469,7 @@ export default function ProfileEditor({
     flush();
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [edit, cam, settings, editOpen]);
+  }, [edit, cam, layerVisibilityKey, editOpen, toolpathLayersVisible]);
 
   const lineHitDistance = (c: Cam, l: ELine, px: number, py: number) => {
     const [x1, y1, x2, y2] = bufPx(c, l);
@@ -1398,7 +1480,7 @@ export default function ProfileEditor({
   const bufSelectable = (l: ELine) => bufVisible(l) && (isolatedOpId == null || l.opId === isolatedOpId);
   const hitBufLines = (px: number, py: number): number[] => {
     const c = camRef.current;
-    if (!c || !editOpen) return [];
+    if (!c || !editOpen || !toolpathLayersVisible) return [];
     return lines.filter(bufSelectable).map((l) => ({ id: l.id, d: lineHitDistance(c, l, px, py) }))
       .filter((h) => h.d <= 6).sort((a, b) => a.d - b.d).map((h) => h.id);
   };
@@ -1428,7 +1510,7 @@ export default function ProfileEditor({
   /* S/E حتی با خاموش‌بودن نقاط قابل انتخاب‌اند؛ بقیه رأس‌ها تابع سوییچ نقاط‌اند. */
   const hitBufVerts = (px: number, py: number): number[] => {
     const c = camRef.current;
-    if (!c || !editOpen) return [];
+    if (!c || !editOpen || !toolpathLayersVisible) return [];
     const allowed = new Set(lines.filter(bufSelectable).flatMap((l) => [l.va, l.vb]));
     const endpoint = hitPathEndpoint(px, py, allowed);
     const hits = showPathPoints
@@ -1553,6 +1635,7 @@ export default function ProfileEditor({
   const bufMarqueeHits = (rectW: { z0: number; z1: number; r0: number; r1: number }, mode: "window" | "crossing") => {
     const ids: number[] = [];
     const vxs: number[] = [];
+    if (!toolpathLayersVisible) return { ids, vxs };
     const inR = (z: number, r: number) => z >= rectW.z0 - 1e-9 && z <= rectW.z1 + 1e-9 && r >= rectW.r0 - 1e-9 && r <= rectW.r1 + 1e-9;
     const selectableLines = edit!.lines.filter(bufSelectable);
     const allowedVerts = new Set(selectableLines.flatMap((line) => [line.va, line.vb]));
@@ -2320,7 +2403,7 @@ export default function ProfileEditor({
 
   /* ---------- مسیر ابزار ---------- */
   const runs = useMemo(() => {
-    if (!cam) return [] as { kind: SegKind; motion: 0 | 1; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[];
+    if (!cam || !toolpathLayersVisible) return [] as { kind: SegKind; motion: 0 | 1; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[];
     const out: { kind: SegKind; motion: 0 | 1; opId: number; holder: 1 | 2; d: string; arrows: string; sx: number; sy: number }[] = [];
     let curKind: SegKind | null = null;
     let curMotion: 0 | 1 = 0;
@@ -2360,6 +2443,10 @@ export default function ProfileEditor({
     };
     for (const sg of gen.segs) {
       const kind: SegKind = sg.motion === 0 ? "rapid" : sg.kind;
+      if (!settings[KIND_VISIBLE[kind]]) {
+        flush();
+        continue;
+      }
       /* آفست نمایشی = همان گسترش جی‌کد (فقط قطر، فقط حرکت سریع) */
       const fan = sg.motion === 0 ? sg.fan ?? 0 : 0;
       const fanU = sg.motion === 0 ? sg.fanU ?? 0 : 0;
@@ -2378,10 +2465,10 @@ export default function ProfileEditor({
     flush();
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen.segs, cam]);
+  }, [gen.segs, cam, layerVisibilityKey, toolpathLayersVisible]);
 
   const ghostPath = useMemo(() => {
-    if (!cam || gen.samples.length < 2) return "";
+    if (!settings.showGhost || !cam || gen.samples.length < 2) return "";
     let d = "";
     gen.samples.forEach((s, i) => {
       const [x, y] = screenPt(cam, s.z, s.r);
@@ -2393,10 +2480,10 @@ export default function ProfileEditor({
     }
     return d + "Z";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen.samples, cam]);
+  }, [gen.samples, cam, settings.showGhost]);
 
   const innerGhost = useMemo(() => {
-    if (!cam || gen.innerSamples.length < 2) return "";
+    if (!settings.showGhost || !cam || gen.innerSamples.length < 2) return "";
     let d = "";
     gen.innerSamples.forEach((s, i) => {
       const [x, y] = screenPt(cam, s.z, s.r);
@@ -2408,7 +2495,7 @@ export default function ProfileEditor({
     }
     return d + "Z";
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen.innerSamples, cam]);
+  }, [gen.innerSamples, cam, settings.showGhost]);
 
   /* ---------- مسیر SVG المان‌های اسکچ ---------- */
   const segPath = (s: SketchSeg, c: Cam, mirror = false): string => {
@@ -2457,7 +2544,7 @@ export default function ProfileEditor({
   let activeLinePath = "";
   let activeLineSpeedColor = "";
   const selectedSpeedPaths = new Map<string, string>();
-  if (editOpen && selectedLineIds.size) {
+  if (editOpen && toolpathLayersVisible && selectedLineIds.size) {
     for (const line of lines) {
       if (!selectedLineIds.has(line.id)) continue;
       const d = `${lineD(line)} `;
@@ -2709,12 +2796,12 @@ export default function ProfileEditor({
         )}
 
         {!editOpen && settings.showGhost && ghostPath && (
-          <g style={{ opacity: iso ? 0.15 : 1, ...fadeStyle }}>
+          <g style={{ opacity: (iso ? 0.15 : 1) * layerOpacity, ...fadeStyle }}>
             <path d={ghostPath} fill="rgba(227,169,78,0.12)" stroke="rgba(227,169,78,0.4)" strokeWidth={1} />
           </g>
         )}
         {!editOpen && settings.showGhost && innerGhost && (
-          <g style={{ opacity: iso ? 0.15 : 1, ...fadeStyle }}>
+          <g style={{ opacity: (iso ? 0.15 : 1) * layerOpacity, ...fadeStyle }}>
             <path d={innerGhost} fill="rgba(76,201,240,0.10)" stroke="rgba(76,201,240,0.55)" strokeWidth={1} strokeDasharray="5 4" />
           </g>
         )}
@@ -2730,7 +2817,7 @@ export default function ProfileEditor({
             const color = SEG_COLOR[run.kind];
             const baseOpacity = isRapid ? 0.28 : run.kind === "offset" || run.kind === "boreoff" ? 0.9 : 0.8;
             return (
-              <g key={i} style={{ opacity: dim ? 0.06 : 1, ...fadeStyle }}>
+              <g key={i} style={{ opacity: (dim ? 0.06 : 1) * layerOpacity, ...fadeStyle }}>
                 <path d={run.d} fill="none" stroke={color} strokeOpacity={matchIso ? 1 : baseOpacity} strokeWidth={(isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) + (matchIso ? 0.7 : 0)} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" filter={matchIso ? "url(#curveGlow)" : undefined} />
                 {run.arrows && !dim && <path d={run.arrows} fill={color} fillOpacity={0.95} />}
               </g>
@@ -2752,7 +2839,7 @@ export default function ProfileEditor({
                   d={run.d}
                   fill="none"
                   stroke={showPathBySpeed ? speedStroke(run.motion, run.feed) : SEG_COLOR[run.kind]}
-                  strokeOpacity={pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9}
+                  strokeOpacity={(pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9) * layerOpacity}
                   strokeWidth={(isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5) + (matchIso ? 0.7 : 0)}
                   strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined}
                   strokeLinejoin="round"
@@ -2791,7 +2878,7 @@ export default function ProfileEditor({
             })()}
 
             {/* نشانگرهای ثابت ابتدا و انتهای Polyline */}
-            {pathStart && (() => {
+            {toolpathLayersVisible && pathStart && (() => {
               const [x, y] = P(pathStart.z, pathStart.x / 2);
               const hot = hoverPathEndpoint === pathStartVid;
               const selected = pathStartVid != null && selV.includes(pathStartVid);
@@ -2805,7 +2892,7 @@ export default function ProfileEditor({
                 </g>
               );
             })()}
-            {pathEnd && (() => {
+            {toolpathLayersVisible && pathEnd && (() => {
               const [x, y] = P(pathEnd.z, pathEnd.x / 2);
               const hot = hoverPathEndpoint === pathEndVid;
               const selected = pathEndVid != null && selV.includes(pathEndVid);

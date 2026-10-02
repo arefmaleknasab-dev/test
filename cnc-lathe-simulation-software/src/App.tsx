@@ -94,21 +94,30 @@ export default function App() {
     if (SAVED?.points && SAVED.points.length >= 2) return sketchFromPoints(SAVED.points);
     return sketchFromPoints(presetPoints(PRESETS[0]));
   });
+  /* منبع مولد مسیر از اسکچ نمایشی جداست تا وقتی همهٔ لایه‌ها خاموش‌اند، درگ
+     پروفایل بدون اجرای generate در هر فریم انجام شود؛ در pointerup همگام می‌شود. */
+  const [generationSketch, setGenerationSketch] = useState<SketchSeg[]>(sketch);
   const [params, setParams] = useState<Params>(() => normalizeParams(SAVED?.params, IS_LEGACY));
   const [settings, setSettings] = useState<EdSettings>(() => {
     const s = SAVED?.settings;
+    const legacyShowBore = (s as (Partial<EdSettings> & { showBore?: boolean }) | undefined)?.showBore;
     return {
       snap: s?.snap ?? 1,
       smartSnap: s?.smartSnap ?? true,
       showRough: s?.showRough ?? true,
       showFinish: s?.showFinish ?? true,
       showOffset: s?.showOffset ?? true,
-      showBore: s?.showBore ?? true,
+      showInnerRough: s?.showInnerRough ?? legacyShowBore ?? true,
+      showInnerOffset: s?.showInnerOffset ?? legacyShowBore ?? true,
+      showInnerFinish: s?.showInnerFinish ?? legacyShowBore ?? true,
       showRound: s?.showRound ?? true,
       showFace: s?.showFace ?? true,
       showBottom: s?.showBottom ?? true,
       showRapids: s?.showRapids ?? true,
       showGhost: s?.showGhost ?? true,
+      layerOpacity: typeof s?.layerOpacity === "number" && isFinite(s.layerOpacity)
+        ? Math.min(1, Math.max(0.1, s.layerOpacity))
+        : 1,
       editGridVisible: s?.editGridVisible ?? true,
       editGridSize: typeof s?.editGridSize === "number" && isFinite(s.editGridSize)
         ? Math.min(500, Math.max(1, s.editGridSize))
@@ -118,6 +127,18 @@ export default function App() {
         : 5,
     };
   });
+  const allProfileLayersHidden =
+    !settings.showRough &&
+    !settings.showFinish &&
+    !settings.showOffset &&
+    !settings.showInnerRough &&
+    !settings.showInnerOffset &&
+    !settings.showInnerFinish &&
+    !settings.showRound &&
+    !settings.showFace &&
+    !settings.showBottom &&
+    !settings.showRapids &&
+    !settings.showGhost;
   const [layout, setLayout] = useState<LayoutState>(() => normalizeLayout(SAVED?.layout));
   const [mode, setMode] = useState<"design" | "sim">("design");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -166,7 +187,7 @@ export default function App() {
   const { points, innerPoints, splitInfo } = useMemo(() => {
     const blankR = params.blankD / 2;
     if (params.split.enabled) {
-      const poly = chainPolyline(orderChain(sketch));
+      const poly = chainPolyline(orderChain(generationSketch));
       if (poly.length >= 3) {
         const sp = splitChainAt(poly, { z: params.split.z, r: params.split.r });
         return {
@@ -177,8 +198,12 @@ export default function App() {
       }
     }
     const none: { outerDir: 1 | -1; innerDir: 1 | -1; at: { z: number; r: number } } | null = null;
-    return { points: flattenSketch(sketch, blankR, params.blankL), innerPoints: [] as PPoint[], splitInfo: none };
-  }, [sketch, params.split, params.blankD, params.blankL]);
+    return { points: flattenSketch(generationSketch, blankR, params.blankL), innerPoints: [] as PPoint[], splitInfo: none };
+  }, [generationSketch, params.split, params.blankD, params.blankL]);
+
+  useEffect(() => {
+    if (!allProfileLayersHidden && generationSketch !== sketch) setGenerationSketch(sketch);
+  }, [allProfileLayersHidden, generationSketch, sketch]);
 
   const genBase = useMemo(() => generate(points, params, innerPoints), [points, params, innerPoints]);
 
@@ -279,6 +304,7 @@ export default function App() {
   const commitRef = useRef<HistEntry | null>(null);
   const restore = (e: HistEntry) => {
     setSketch(e.sketch);
+    setGenerationSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
     setParams((p) => {
@@ -365,6 +391,7 @@ export default function App() {
     if (sketchChanged) {
       setActivePreset(null);
       setSketch(eb.sketch);
+      setGenerationSketch(eb.sketch);
     }
     setHistVer((v) => v + 1);
     showToast(holder2Changed
@@ -487,6 +514,7 @@ export default function App() {
       commitRef.current = { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 }, split: { ...params.split } }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
+    if (commit || !allProfileLayersHidden) setGenerationSketch(next);
     /* اگر پیش‌نویس پنهان وجود دارد، اسکچ جدید را نیز در آن همگام نگه می‌داریم
        تا بازگشت و تأیید بعدی، تغییرات تازهٔ طراحی را بازنویسی نکند. */
     if (editBufRef.current && !editOpenRef.current) {
@@ -494,7 +522,7 @@ export default function App() {
     }
     setHistVer((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sketch, gcodeOvr]);
+  }, [sketch, gcodeOvr, allProfileLayersHidden]);
 
   const applyPreset = useCallback((p: Preset) => {
     const nextSketch = p.empty
@@ -510,6 +538,7 @@ export default function App() {
     commitRef.current = null;
     pendingParamRebaseRef.current = null;
     setSketch(nextSketch);
+    setGenerationSketch(nextSketch);
     setGcodeOvr({});
     if (hadEditDraft) {
       presetReseedRef.current = true;
