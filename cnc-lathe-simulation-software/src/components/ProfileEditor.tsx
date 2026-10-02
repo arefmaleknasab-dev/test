@@ -2732,13 +2732,14 @@ export default function ProfileEditor({
   };
   const editGridMain = Math.min(500, Math.max(1, settings.editGridSize));
   const editGridDivisions = Math.min(20, Math.max(1, Math.round(settings.editGridDivisions)));
-  const gridStep = editOpen ? editGridMain / editGridDivisions : 10;
+  /* طراحی پروفایل و ویرایش مسیر دقیقاً از یک اندازهٔ گرید و تقسیمات استفاده می‌کنند. */
+  const gridStep = editGridMain / editGridDivisions;
   const gridZ = editOpen
     ? makeGridTicks((0 - cam.ox) / cam.s, (size.w - cam.ox) / cam.s, gridStep, editGridDivisions)
-    : makeGridTicks(0, L, gridStep, 5);
+    : makeGridTicks(0, L, gridStep, editGridDivisions);
   const gridR = editOpen
     ? makeGridTicks((cam.oy - size.h) / cam.s, cam.oy / cam.s, gridStep, editGridDivisions)
-    : makeGridTicks(-R, R, gridStep, 5);
+    : makeGridTicks(-R, R, gridStep, editGridDivisions);
   const gridVisible = !editOpen || settings.editGridVisible;
 
   const iso = isolatedOpId != null;
@@ -2870,10 +2871,8 @@ export default function ProfileEditor({
                   y1={editOpen ? 0 : cam.oy - R * cam.s}
                   x2={sx}
                   y2={editOpen ? size.h : cam.oy + R * cam.s}
-                  stroke={editOpen
-                    ? tick.major ? "rgba(63,79,101,0.42)" : "rgba(31,45,63,0.42)"
-                    : tick.major ? "rgba(69,179,148,0.24)" : "rgba(209,183,134,0.075)"}
-                  strokeWidth={editOpen ? (tick.major ? 1 : 0.75) : (tick.major ? 1.15 : 0.8)}
+                  stroke={tick.major ? "rgba(63,79,101,0.42)" : "rgba(31,45,63,0.42)"}
+                  strokeWidth={tick.major ? 1 : 0.75}
                 />
               );
             })}
@@ -2886,10 +2885,8 @@ export default function ProfileEditor({
                   y1={sy}
                   x2={editOpen ? size.w : cam.ox + L * cam.s}
                   y2={sy}
-                  stroke={editOpen
-                    ? tick.major ? "rgba(63,79,101,0.42)" : "rgba(31,45,63,0.42)"
-                    : tick.major ? "rgba(69,179,148,0.22)" : "rgba(209,183,134,0.07)"}
-                  strokeWidth={editOpen ? (tick.major ? 1 : 0.75) : (tick.major ? 1.15 : 0.8)}
+                  stroke={tick.major ? "rgba(63,79,101,0.42)" : "rgba(31,45,63,0.42)"}
+                  strokeWidth={tick.major ? 1 : 0.75}
                 />
               );
             })}

@@ -26,7 +26,7 @@ interface Saved {
   version?: number;
 }
 
-const SAVE_VERSION = 6;
+const SAVE_VERSION = 7;
 
 let SAVED: Saved | null = null;
 try {
@@ -101,6 +101,9 @@ export default function App() {
   const [settings, setSettings] = useState<EdSettings>(() => {
     const s = SAVED?.settings;
     const legacyShowBore = (s as (Partial<EdSettings> & { showBore?: boolean }) | undefined)?.showBore;
+    /* ۵۰/۵ پیش‌فرض نسخهٔ قبل بود؛ فقط همین جفت مقدار در ارتقای نسخه به ۱۰۰/۱۰ مهاجرت می‌کند. */
+    const legacyGridDefaults =
+      (SAVED?.version ?? 0) < 7 && s?.editGridSize === 50 && s?.editGridDivisions === 5;
     return {
       snap: s?.snap ?? 1,
       smartSnap: s?.smartSnap ?? true,
@@ -119,12 +122,12 @@ export default function App() {
         ? Math.min(1, Math.max(0.1, s.layerOpacity))
         : 1,
       editGridVisible: s?.editGridVisible ?? true,
-      editGridSize: typeof s?.editGridSize === "number" && isFinite(s.editGridSize)
+      editGridSize: !legacyGridDefaults && typeof s?.editGridSize === "number" && isFinite(s.editGridSize)
         ? Math.min(500, Math.max(1, s.editGridSize))
-        : 50,
-      editGridDivisions: typeof s?.editGridDivisions === "number" && isFinite(s.editGridDivisions)
+        : 100,
+      editGridDivisions: !legacyGridDefaults && typeof s?.editGridDivisions === "number" && isFinite(s.editGridDivisions)
         ? Math.min(20, Math.max(1, Math.round(s.editGridDivisions)))
-        : 5,
+        : 10,
     };
   });
   const allProfileLayersHidden =
@@ -548,8 +551,13 @@ export default function App() {
     }
 
     setParams((prev) => {
-      const next: Params = { ...prev, blankD: p.blankD, blankL: p.blankL };
-      if (p.shape) next.blankShape = p.shape;
+      const next: Params = {
+        ...prev,
+        blankD: p.blankD,
+        blankL: p.blankL,
+        /* همهٔ پیش‌تنظیم‌ها با مقطع خام مربعی شروع می‌شوند. */
+        blankShape: p.shape,
+      };
       next.split = p.split
         ? { enabled: true, z: p.split.z, r: p.split.r }
         : { ...prev.split, enabled: false };

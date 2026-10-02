@@ -2059,8 +2059,8 @@ export interface Preset {
   split?: { z: number; r: number };
   /** استراتژی پیشنهادی هنگام اعمال پریست */
   strategy?: string;
-  /** شکل مقطع خام پیشنهادی */
-  shape?: BlankShape;
+  /** شکل مقطع خام پیش‌فرض؛ برای همهٔ پیش‌تنظیم‌ها صریحاً تعیین می‌شود. */
+  shape: BlankShape;
 }
 
 export const PRESETS: Preset[] = [
@@ -2083,6 +2083,7 @@ export const PRESETS: Preset[] = [
     name: "گلدان",
     blankD: 64,
     blankL: 200,
+    shape: "square",
     pts: [
       [0, 9, true], [8, 14, true], [20, 24, true], [36, 30, true],
       [54, 27, true], [76, 15, true], [96, 10, true], [114, 11, true],
@@ -2095,6 +2096,7 @@ export const PRESETS: Preset[] = [
     name: "پیاله",
     blankD: 150,
     blankL: 90,
+    shape: "square",
     pts: [
       [0, 10, true], [12, 22, true], [30, 42, true], [52, 58, true],
       [70, 67, true], [82, 71, true], [90, 72, false],
@@ -2105,7 +2107,7 @@ export const PRESETS: Preset[] = [
     name: "کاسه (داخل+خارج)",
     blankD: 150,
     blankL: 90,
-    shape: "circle",
+    shape: "square",
     strategy: "bowl",
     split: { z: 90, r: 68 },
     pts: [
@@ -2128,6 +2130,7 @@ export const PRESETS: Preset[] = [
     name: "ستون نرده",
     blankD: 70,
     blankL: 240,
+    shape: "square",
     pts: [
       [0, 18, false], [8, 24, true], [18, 24, true], [26, 32, true],
       [40, 32, true], [50, 20, true], [62, 14, true], [76, 14, true],
@@ -2142,6 +2145,7 @@ export const PRESETS: Preset[] = [
     name: "مهره تسبیح",
     blankD: 40,
     blankL: 60,
+    shape: "square",
     pts: [
       [0, 5, true], [8, 11, true], [18, 17, true], [30, 19, true],
       [42, 17, true], [52, 11, true], [60, 5, true],
@@ -2152,6 +2156,7 @@ export const PRESETS: Preset[] = [
     name: "استوانه خام",
     blankD: 60,
     blankL: 180,
+    shape: "square",
     pts: [
       [0, 30, false], [180, 30, false],
     ],
