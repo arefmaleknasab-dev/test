@@ -107,6 +107,13 @@ export default function App() {
       showBottom: s?.showBottom ?? true,
       showRapids: s?.showRapids ?? true,
       showGhost: s?.showGhost ?? true,
+      editGridVisible: s?.editGridVisible ?? true,
+      editGridSize: typeof s?.editGridSize === "number" && isFinite(s.editGridSize)
+        ? Math.min(500, Math.max(1, s.editGridSize))
+        : 50,
+      editGridDivisions: typeof s?.editGridDivisions === "number" && isFinite(s.editGridDivisions)
+        ? Math.min(20, Math.max(1, Math.round(s.editGridDivisions)))
+        : 5,
     };
   });
   const [layout, setLayout] = useState<LayoutState>(() => normalizeLayout(SAVED?.layout));

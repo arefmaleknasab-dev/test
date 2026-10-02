@@ -35,6 +35,7 @@ import {
   IconCubic,
   IconCursor,
   IconFit,
+  IconGrid,
   IconHand,
   IconLayers,
   IconLine,
@@ -62,6 +63,10 @@ export interface EdSettings {
   showBottom: boolean;
   showRapids: boolean;
   showGhost: boolean;
+  /** گرید مستقل حالت ویرایش مسیر (نمایش + فاصله خطوط اصلی + تقسیمات داخلی). */
+  editGridVisible: boolean;
+  editGridSize: number;
+  editGridDivisions: number;
 }
 
 type Tool = "select" | "line" | "quad" | "cubic" | "arc" | "split";
@@ -234,6 +239,143 @@ function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings:
               )}
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* کلید دو‌بخشی گریدِ حالت Edit: کلیک روی آیکن نمایش را عوض می‌کند و فلش
+   کوچک فقط تنظیمات فاصلهٔ خطوط اصلی/تقسیمات داخلی را باز می‌کند. */
+function EditGridControl({
+  settings,
+  onSettings,
+}: {
+  settings: EdSettings;
+  onSettings: (patch: Partial<EdSettings>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  const main = Math.min(500, Math.max(1, settings.editGridSize));
+  const divisions = Math.min(20, Math.max(1, Math.round(settings.editGridDivisions)));
+  const minor = main / divisions;
+  const setNumber = (key: "editGridSize" | "editGridDivisions", raw: string) => {
+    const n = Number(latinDigits(raw));
+    if (!Number.isFinite(n)) return;
+    if (key === "editGridSize") onSettings({ editGridSize: Math.min(500, Math.max(1, Math.round(n * 100) / 100)) });
+    else onSettings({ editGridDivisions: Math.min(20, Math.max(1, Math.round(n))) });
+  };
+
+  return (
+    <div ref={ref} className="relative flex overflow-visible rounded-lg border border-edge bg-panel/85 shadow-lg shadow-black/20 backdrop-blur-sm">
+      <button
+        type="button"
+        role="switch"
+        aria-checked={settings.editGridVisible}
+        onClick={() => onSettings({ editGridVisible: !settings.editGridVisible })}
+        title={settings.editGridVisible ? "پنهان‌کردن گرید و حفظ محورها" : "نمایش گرید و تقسیمات"}
+        className={cn(
+          "flex h-[30px] items-center gap-1.5 rounded-r-[7px] px-2 text-[10.5px] font-bold transition-colors",
+          settings.editGridVisible ? "bg-teal/12 text-teal" : "text-dim hover:bg-panel3 hover:text-ink"
+        )}
+      >
+        <IconGrid className="h-3.5 w-3.5" />
+        گرید
+      </button>
+      <button
+        type="button"
+        aria-label="تنظیمات گرید"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        title="اندازه گرید اصلی و تعداد تقسیمات داخلی"
+        className={cn(
+          "grid h-[30px] w-6 place-items-center rounded-l-[7px] border-r border-edge transition-colors",
+          open ? "bg-brass/15 text-brass2" : "text-dim hover:bg-panel3 hover:text-ink"
+        )}
+      >
+        <svg viewBox="0 0 12 12" className={cn("h-2.5 w-2.5 transition-transform", open && "rotate-180")} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 4l4 4 4-4" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="anim-in absolute top-[calc(100%+6px)] right-0 z-40 w-60 rounded-lg border border-edge2 bg-panel/97 p-2.5 text-right shadow-2xl shadow-black/60 backdrop-blur-sm">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="grid h-6 w-6 place-items-center rounded-md border border-teal/35 bg-teal/10 text-teal">
+              <IconGrid className="h-3.5 w-3.5" />
+            </span>
+            <div className="min-w-0">
+              <div className="text-[11px] font-bold text-ink">تنظیمات گرید مسیر</div>
+              <div className="text-[8.5px] text-dim">واحد همه اندازه‌ها میلی‌متر است</div>
+            </div>
+          </div>
+
+          <label className="block">
+            <span className="mb-1 flex items-center justify-between text-[9.5px] font-semibold text-mute">
+              اندازه گرید اصلی
+              <span className="font-mono text-[8.5px] text-teal" dir="ltr">{Number(main.toFixed(2))} mm</span>
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              step={1}
+              value={main}
+              onChange={(e) => setNumber("editGridSize", e.target.value)}
+              className="field-input !py-1.5 font-mono !text-[11px]"
+              dir="ltr"
+            />
+          </label>
+
+          <label className="mt-2 block">
+            <span className="mb-1 flex items-center justify-between text-[9.5px] font-semibold text-mute">
+              تقسیم‌بندی داخل هر گرید
+              <span className="font-mono text-[8.5px] text-brass2" dir="ltr">{divisions} ×</span>
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              step={1}
+              value={divisions}
+              onChange={(e) => setNumber("editGridDivisions", e.target.value)}
+              className="field-input !py-1.5 font-mono !text-[11px]"
+              dir="ltr"
+            />
+          </label>
+
+          <div className="mt-2 rounded-md border border-edge bg-[#120e09] p-2">
+            <div className="relative h-12 overflow-hidden rounded border border-edge/70">
+              <div className="absolute inset-0 opacity-80" style={{
+                backgroundImage: `linear-gradient(to right, rgba(69,179,148,.22) 1px, transparent 1px), linear-gradient(to bottom, rgba(69,179,148,.22) 1px, transparent 1px)`,
+                backgroundSize: `${100 / divisions}% ${100 / divisions}%`,
+              }} />
+              <div className="absolute inset-0 border border-brass/55" />
+            </div>
+            <div className="mt-1 flex items-center justify-between text-[8.5px] text-dim">
+              <span>فاصله خطوط داخلی</span>
+              <span className="font-mono text-brass2" dir="ltr">{Number(minor.toFixed(3))} mm</span>
+            </div>
+          </div>
+          <p className="mt-1.5 text-[8.5px] leading-4 text-dim">
+            خاموش‌کردن گرید، نمایش مبدأ و محورهای X/Y را پنهان نمی‌کند.
+          </p>
         </div>
       )}
     </div>
@@ -2267,10 +2409,30 @@ export default function ProfileEditor({
     }
     for (const v of selV) selVids.add(v);
   }
-  const gridZ: number[] = [];
-  for (let z = 0; z <= L + 0.001; z += 10) gridZ.push(z);
-  const gridR: number[] = [];
-  for (let r = 10; r <= R + 0.001; r += 10) gridR.push(r);
+  type GridTick = { value: number; major: boolean };
+  const makeGridTicks = (min: number, max: number, step: number, divisions: number): GridTick[] => {
+    const first = Math.ceil((min - 1e-9) / step);
+    const last = Math.floor((max + 1e-9) / step);
+    const count = Math.max(0, last - first + 1);
+    /* در زوم‌های خیلی دور، تعداد SVG nodeها محدود می‌شود تا پن/زوم روان بماند. */
+    const stride = Math.max(1, Math.ceil(count / 500));
+    const out: GridTick[] = [];
+    for (let i = first; i <= last; i += stride) {
+      if (i === 0) continue; // مبدأ و محورها جداگانه و همیشه واضح رسم می‌شوند.
+      out.push({ value: Math.round(i * step * 1e6) / 1e6, major: i % divisions === 0 });
+    }
+    return out;
+  };
+  const editGridMain = Math.min(500, Math.max(1, settings.editGridSize));
+  const editGridDivisions = Math.min(20, Math.max(1, Math.round(settings.editGridDivisions)));
+  const gridStep = editOpen ? editGridMain / editGridDivisions : 10;
+  const gridZ = editOpen
+    ? makeGridTicks((0 - cam.ox) / cam.s, (size.w - cam.ox) / cam.s, gridStep, editGridDivisions)
+    : makeGridTicks(0, L, gridStep, 5);
+  const gridR = editOpen
+    ? makeGridTicks((cam.oy - size.h) / cam.s, cam.oy / cam.s, gridStep, editGridDivisions)
+    : makeGridTicks(-R, R, gridStep, 5);
+  const gridVisible = !editOpen || settings.editGridVisible;
 
   const iso = isolatedOpId != null;
   const isoOp = iso ? ops.find((o) => o.id === isolatedOpId) ?? null : null;
@@ -2382,36 +2544,109 @@ export default function ProfileEditor({
           </pattern>
         </defs>
 
-        {/* شبکه */}
-        <g>
-          {gridZ.map((z) => {
-            const sx = cam.ox + z * cam.s;
-            return (
-              <line key={`v${z}`} x1={sx} y1={cam.oy - R * cam.s} x2={sx} y2={cam.oy + R * cam.s} stroke={z % 50 === 0 ? "rgba(209,183,134,0.16)" : "rgba(209,183,134,0.07)"} strokeWidth={1} />
-            );
-          })}
-          {gridR.map((r) => (
-            <g key={`h${r}`}>
-              <line x1={cam.ox} y1={cam.oy - r * cam.s} x2={cam.ox + L * cam.s} y2={cam.oy - r * cam.s} stroke={(r * 2) % 50 === 0 ? "rgba(209,183,134,0.14)" : "rgba(209,183,134,0.07)"} strokeWidth={1} />
-              <line x1={cam.ox} y1={cam.oy + r * cam.s} x2={cam.ox + L * cam.s} y2={cam.oy + r * cam.s} stroke={(r * 2) % 50 === 0 ? "rgba(209,183,134,0.14)" : "rgba(209,183,134,0.07)"} strokeWidth={1} />
-            </g>
-          ))}
-          {gridZ.filter((z) => z % 50 === 0).map((z) => (
-            <text key={`lz${z}`} x={cam.ox + z * cam.s} y={cam.oy + R * cam.s + 18} textAnchor="middle" fontSize="10" fill="#8b7c5f" fontFamily="JetBrains Mono, monospace">
-              {z}
-            </text>
-          ))}
-          {gridR.map((r) => (
-            <text key={`lr${r}`} x={cam.ox - 8} y={cam.oy - r * cam.s + 3.5} textAnchor="end" fontSize="10" fill="#8b7c5f" fontFamily="JetBrains Mono, monospace">
-              ⌀{Math.round(r * 2)}
-            </text>
-          ))}
-          <text x={cam.ox + L * cam.s + 10} y={cam.oy + 3.5} fontSize="11" fill="#a8946f" fontFamily="JetBrains Mono, monospace" fontWeight={700}>X</text>
-          <text x={cam.ox - 8} y={cam.oy - R * cam.s - 10} textAnchor="end" fontSize="11" fill="#a8946f" fontFamily="JetBrains Mono, monospace" fontWeight={700}>Y ⌀</text>
-        </g>
+        {/* گرید: در حالت ادیت تمام فضای ماشین را می‌پوشاند؛ در طراحی فقط محدوده قطعه */}
+        {gridVisible && (
+          <g pointerEvents="none">
+            {gridZ.map((tick) => {
+              const sx = cam.ox + tick.value * cam.s;
+              return (
+                <line
+                  key={`v${tick.value}`}
+                  x1={sx}
+                  y1={editOpen ? 0 : cam.oy - R * cam.s}
+                  x2={sx}
+                  y2={editOpen ? size.h : cam.oy + R * cam.s}
+                  stroke={tick.major ? "rgba(69,179,148,0.24)" : "rgba(209,183,134,0.075)"}
+                  strokeWidth={tick.major ? 1.15 : 0.8}
+                />
+              );
+            })}
+            {gridR.map((tick) => {
+              const sy = cam.oy - tick.value * cam.s;
+              return (
+                <line
+                  key={`h${tick.value}`}
+                  x1={editOpen ? 0 : cam.ox}
+                  y1={sy}
+                  x2={editOpen ? size.w : cam.ox + L * cam.s}
+                  y2={sy}
+                  stroke={tick.major ? "rgba(69,179,148,0.22)" : "rgba(209,183,134,0.07)"}
+                  strokeWidth={tick.major ? 1.15 : 0.8}
+                />
+              );
+            })}
 
-        <line x1={0} y1={cam.oy} x2={size.w} y2={cam.oy} stroke="rgba(227,169,78,0.35)" strokeWidth={1} strokeDasharray="10 4 2 4" />
+            {editOpen ? (
+              <>
+                {gridZ.filter((tick) => tick.major).map((tick) => (
+                  <text
+                    key={`elz${tick.value}`}
+                    x={cam.ox + tick.value * cam.s}
+                    y={Math.min(size.h - 5, Math.max(13, cam.oy + 14))}
+                    textAnchor="middle"
+                    fontSize="8.5"
+                    fill="#5d9f8d"
+                    fontFamily="JetBrains Mono, monospace"
+                  >
+                    {Number(tick.value.toFixed(2))}
+                  </text>
+                ))}
+                {gridR.filter((tick) => tick.major).map((tick) => (
+                  <text
+                    key={`elr${tick.value}`}
+                    x={Math.min(size.w - 5, Math.max(24, cam.ox - 6))}
+                    y={cam.oy - tick.value * cam.s + 3}
+                    textAnchor="end"
+                    fontSize="8.5"
+                    fill="#5d9f8d"
+                    fontFamily="JetBrains Mono, monospace"
+                  >
+                    {Number(tick.value.toFixed(2))}
+                  </text>
+                ))}
+              </>
+            ) : (
+              <>
+                {gridZ.filter((tick) => tick.major).map((tick) => (
+                  <text key={`lz${tick.value}`} x={cam.ox + tick.value * cam.s} y={cam.oy + R * cam.s + 18} textAnchor="middle" fontSize="10" fill="#8b7c5f" fontFamily="JetBrains Mono, monospace">
+                    {tick.value}
+                  </text>
+                ))}
+                {gridR.filter((tick) => tick.value > 0).map((tick) => (
+                  <text key={`lr${tick.value}`} x={cam.ox - 8} y={cam.oy - tick.value * cam.s + 3.5} textAnchor="end" fontSize="10" fill="#8b7c5f" fontFamily="JetBrains Mono, monospace">
+                    ⌀{Math.round(tick.value * 2)}
+                  </text>
+                ))}
+                <text x={cam.ox + L * cam.s + 10} y={cam.oy + 3.5} fontSize="11" fill="#a8946f" fontFamily="JetBrains Mono, monospace" fontWeight={700}>X</text>
+                <text x={cam.ox - 8} y={cam.oy - R * cam.s - 10} textAnchor="end" fontSize="11" fill="#a8946f" fontFamily="JetBrains Mono, monospace" fontWeight={700}>Y ⌀</text>
+              </>
+            )}
+          </g>
+        )}
+
+        {!editOpen && <line x1={0} y1={cam.oy} x2={size.w} y2={cam.oy} stroke="rgba(227,169,78,0.35)" strokeWidth={1} strokeDasharray="10 4 2 4" />}
         <rect x={cam.ox} y={cam.oy - R * cam.s} width={L * cam.s} height={2 * R * cam.s} fill="url(#hatch)" stroke="rgba(227,169,78,0.55)" strokeWidth={1.3} strokeDasharray="7 5" />
+
+        {/* مبدأ و محورهای ماشین در حالت ویرایش مسیر — مستقل از روشن/خاموش بودن گرید */}
+        {editOpen && (
+          <g pointerEvents="none">
+            <line x1={0} y1={cam.oy} x2={size.w} y2={cam.oy} stroke="rgba(69,179,148,0.8)" strokeWidth={1.35} />
+            <line x1={cam.ox} y1={0} x2={cam.ox} y2={size.h} stroke="rgba(76,201,240,0.75)" strokeWidth={1.35} />
+            {cam.oy >= 0 && cam.oy <= size.h && (
+              <>
+                <path d={`M ${size.w - 5} ${cam.oy} l -8 -4 v 8 z`} fill="#45b394" />
+                <text x={size.w - 12} y={cam.oy - 8} textAnchor="end" fontSize="10" fontWeight={900} fontFamily="JetBrains Mono, monospace" fill="#6fe0bd" stroke="#120e09" strokeWidth={3} paintOrder="stroke">+X</text>
+              </>
+            )}
+            {cam.ox >= 0 && cam.ox <= size.w && (
+              <>
+                <path d={`M ${cam.ox} 5 l -4 8 h 8 z`} fill="#4cc9f0" />
+                <text x={cam.ox + 8} y={16} fontSize="10" fontWeight={900} fontFamily="JetBrains Mono, monospace" fill="#7edcff" stroke="#120e09" strokeWidth={3} paintOrder="stroke">+Y</text>
+                <text x={cam.ox + 8} y={size.h - 8} fontSize="9" fontWeight={800} fontFamily="JetBrains Mono, monospace" fill="#4cc9f0" stroke="#120e09" strokeWidth={3} paintOrder="stroke">−Y</text>
+              </>
+            )}
+          </g>
+        )}
 
         {!editOpen && settings.showGhost && ghostPath && (
           <g style={{ opacity: iso ? 0.15 : 1, ...fadeStyle }}>
@@ -2878,6 +3113,15 @@ export default function ProfileEditor({
             })()}
           </g>
         )}
+
+        {/* نقطه صفر روی همه مسیرها قرار می‌گیرد تا حتی در تراکم بالا گم نشود. */}
+        {editOpen && cam.ox >= -20 && cam.ox <= size.w + 20 && cam.oy >= -20 && cam.oy <= size.h + 20 && (
+          <g transform={`translate(${cam.ox} ${cam.oy})`} filter="url(#curveGlow)" pointerEvents="none">
+            <circle r={7} fill="#120e09" stroke="#ffd27a" strokeWidth={2} />
+            <circle r={2.4} fill="#ffd27a" />
+            <text x={9} y={-9} fontSize="10" fontWeight={900} fontFamily="JetBrains Mono, monospace" fill="#ffd27a" stroke="#120e09" strokeWidth={3} paintOrder="stroke">0</text>
+          </g>
+        )}
       </svg>
 
       {/* ---------- منوی راست‌کلیک سرعت Segmentهای انتخاب‌شده ---------- */}
@@ -3123,6 +3367,7 @@ export default function ProfileEditor({
           <IconCode className={cn("h-3.5 w-3.5", editOpen ? "text-brass2" : "text-brass")} />
           ویرایش مسیر
         </button>
+        {editOpen && <EditGridControl settings={settings} onSettings={onSettings} />}
         {editOpen && (
           <button
             type="button"
