@@ -332,12 +332,14 @@ export default function App() {
     if (!eb) return;
     const draftHolder2 = eb.holder2 ?? params.holder2;
     const draftParams: Params = { ...params, holder2: draftHolder2 };
-    /* مختصات بافر در فضای ماشین‌اند؛ تبدیل معکوس باید با آفست زندهٔ همان
-       پیش‌نویس انجام شود تا جابه‌جایی سراسری H2 به override هندسی تبدیل نشود. */
-    const next = deriveGcodeOvr(eb.verts, eb.lines, genBase.segs, gcodeOvr, draftParams);
-    const sketchChanged = eb.sketch !== sketch;
     const holder2Changed =
       draftHolder2.xOff !== params.holder2.xOff || draftHolder2.yOff !== params.holder2.yOff;
+    /* آفست H2 روی هندسهٔ ورود امن مولد نیز اثر دارد (گوشهٔ افقی→عمودی).
+       مقایسه با پایهٔ قدیمی آن گوشه را اشتباهاً override می‌کرد؛ پایهٔ پیش‌نویس
+       دقیقاً با آفست زنده ساخته می‌شود تا جابه‌جایی خالص، override نسازد. */
+    const draftGenBase = holder2Changed ? generate(points, draftParams, innerPoints) : genBase;
+    const next = deriveGcodeOvr(eb.verts, eb.lines, draftGenBase.segs, gcodeOvr, draftParams);
+    const sketchChanged = eb.sketch !== sketch;
     if (!sketchChanged && !holder2Changed && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
       showToast("تغییری برای ثبت نیست", "warn");
       return;

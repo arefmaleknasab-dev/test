@@ -2330,24 +2330,30 @@ export function translateHolder2Edit(verts: EVert[], lines: ELine[], dz: number,
 
   const original = new Map(verts.map((v) => [v.id, v]));
   const movedH2 = new Set<number>();
-  const fixedH1 = new Set<number>();
+  const touchedH1 = new Set<number>();
   for (const line of lines) {
     /* #bridgeها مختصات مصنوعی ماشین‌اند و holder=1 آن‌ها به معنی مسیر H1 نیست. */
     if (line.key.startsWith("#bridge:")) continue;
-    const target = line.holder === 2 ? movedH2 : fixedH1;
+    const target = line.holder === 2 ? movedH2 : touchedH1;
     target.add(line.va);
     target.add(line.vb);
   }
-  /* در مرز نادرِ بدون پل، H2 اولویت دارد؛ H1 نباید مانع تبدیل سراسری آن شود. */
-  for (const id of movedH2) fixedH1.delete(id);
   if (!movedH2.size) return verts;
+
+  /* رأس مرزیِ مشترک بین آخرین خط H1 و اولین خط H2 نباید روی هر دو محور لنگر
+     شود. این رأس آزاد می‌ماند تا خط افقی آخر، مؤلفهٔ Y را از H1 بگیرد و خط
+     عمودی متصل، مؤلفهٔ X را از H2؛ دقیقاً یک گوشهٔ قائم، بدون خط اضافه. */
+  const fixedH1 = new Set([...touchedH1].filter((id) => !movedH2.has(id)));
+  const fixedH2 = new Set([...movedH2].filter((id) => !touchedH1.has(id)));
 
   const out = verts.map((v) =>
     movedH2.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dv } : { ...v }
   );
   const byId = new Map(out.map((v) => [v.id, v]));
+  /* علاوه بر #bridgeهای پس‌پردازنده، اتصال اولیه‌ای که خود مولد می‌سازد نیز
+     ELine عادی است (آخرین G0 افقی H1 + اولین G0 عمودی H2). پس قید محور روی
+     همهٔ خطوطی که پیش از Drag دقیقاً افقی/عمودی بوده‌اند اعمال می‌شود. */
   const axis = lines
-    .filter((line) => line.key.startsWith("#bridge:"))
     .map((line) => {
       const a = original.get(line.va), b = original.get(line.vb);
       if (!a || !b) return null;
@@ -2368,8 +2374,8 @@ export function translateHolder2Edit(verts: EVert[], lines: ELine[], dz: number,
       if (!a || !b || !a0 || !b0) continue;
       const field: "x" | "z" = kind === "h" ? "x" : "z";
       if (Math.abs(a[field] - b[field]) < 1e-9) continue;
-      const aAnchor = movedH2.has(a.id) || fixedH1.has(a.id);
-      const bAnchor = movedH2.has(b.id) || fixedH1.has(b.id);
+      const aAnchor = fixedH2.has(a.id) || fixedH1.has(a.id);
+      const bAnchor = fixedH2.has(b.id) || fixedH1.has(b.id);
       if (aAnchor && !bAnchor) {
         b[field] = a[field];
         changed = true;
