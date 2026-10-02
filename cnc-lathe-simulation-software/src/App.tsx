@@ -8,7 +8,7 @@ import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset } from "./lib/lathe";
+import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset, SplitState } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
@@ -46,6 +46,8 @@ interface HistEntry {
   editBuf: EditBuf | null;
   /** آفست تأییدشدهٔ H2 نیز همراه ویرایش مسیر Undo/Redo می‌شود. */
   holder2: Holder2State;
+  /** وضعیت Split بخشی از تاریخچه است تا حذف/ایجاد آن با Ctrl+Z برگردد. */
+  split: SplitState;
 }
 
 /* بازخوانی ایمنِ اوررایدها از حافظهٔ محلی (سنجش نوع پس از پارس) */
@@ -148,8 +150,8 @@ export default function App() {
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);
-  const stateRef = useRef({ sketch, gcodeOvr, editBuf, holder2: params.holder2 });
-  stateRef.current = { sketch, gcodeOvr, editBuf, holder2: params.holder2 };
+  const stateRef = useRef({ sketch, gcodeOvr, editBuf, holder2: params.holder2, split: params.split });
+  stateRef.current = { sketch, gcodeOvr, editBuf, holder2: params.holder2, split: params.split };
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -279,11 +281,12 @@ export default function App() {
     setSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
-    setParams((p) =>
-      p.holder2.xOff === e.holder2.xOff && p.holder2.yOff === e.holder2.yOff
-        ? p
-        : { ...p, holder2: { ...e.holder2 } }
-    );
+    setParams((p) => {
+      const sameHolder = p.holder2.xOff === e.holder2.xOff && p.holder2.yOff === e.holder2.yOff;
+      const sameSplit = p.split.enabled === e.split.enabled && p.split.z === e.split.z && p.split.r === e.split.r;
+      if (sameHolder && sameSplit) return p;
+      return { ...p, holder2: { ...e.holder2 }, split: { ...e.split } };
+    });
     /* Undo/Redo نباید پیش‌نویس را در پشت‌صحنه تغییر دهد: هر وضعیت تاریخی که
        EditBuf دارد، هم‌زمان خودِ حالت ویرایش مسیر را نیز دوباره باز می‌کند. */
     setEditOpen(!!e.editBuf);
@@ -390,6 +393,15 @@ export default function App() {
 
   /* کال‌بک‌های پایدار: هویت ثابت تا فرزندهای memo هنگام تیک شبیه‌سازی بازرندر نشوند */
   const onParamsCb = useCallback((patch: Partial<Params>) => {
+    if (patch.split) {
+      const before = stateRef.current.split;
+      const changed = before.enabled !== patch.split.enabled || before.z !== patch.split.z || before.r !== patch.split.r;
+      if (changed) {
+        /* ایجاد، جابه‌جایی و به‌ویژه حذف Split یک گام مستقل تاریخچه است. */
+        pushPast(snap());
+        setHistVer((v) => v + 1);
+      }
+    }
     if (editBufRef.current && !pendingParamRebaseRef.current) {
       pendingParamRebaseRef.current = { genBase, params, gcodeOvr };
     }
@@ -468,11 +480,11 @@ export default function App() {
       return;
     }
     if (commit) {
-      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 } });
+      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 }, split: { ...params.split } });
       commitRef.current = null;
       setActivePreset(null);
     } else if (!commitRef.current) {
-      commitRef.current = { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 } }; // وضعیت پیش از شروع کشیدن
+      commitRef.current = { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 }, split: { ...params.split } }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
     /* اگر پیش‌نویس پنهان وجود دارد، اسکچ جدید را نیز در آن همگام نگه می‌داریم
@@ -485,9 +497,11 @@ export default function App() {
   }, [sketch, gcodeOvr]);
 
   const applyPreset = useCallback((p: Preset) => {
-    const nextSketch = p.wall
-      ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
-      : sketchFromPoints(presetPoints(p));
+    const nextSketch = p.empty
+      ? []
+      : p.wall
+        ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
+        : sketchFromPoints(presetPoints(p));
     const hadEditDraft = !!editBufRef.current;
 
     /* preset یک تغییر اتمیکِ طرح است. نگه‌داشتن verts/lines یا overrideهای طرح
@@ -538,21 +552,12 @@ export default function App() {
     const poly = chainPolyline(orderChain(sketch));
     const auto = autoSplitPoint(poly);
     if (auto) {
-      const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
-      setParams((prev) => ({
-        ...prev,
-        split: { ...prev.split, enabled: true, z: auto.z, r: auto.r },
-        ops: makeOps(bowl.types),
-        holder2: {
-          xOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.xOff),
-          yOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.yOff),
-        },
-      }));
+      onParamsCb({ split: { enabled: true, z: auto.z, r: auto.r } });
       showToast(`نقطه Split تعیین و استراتژی «کاسه داخل+خارج» فعال شد (X ${auto.z} • ⌀ ${(auto.r * 2).toFixed(1)})`);
     } else {
       showToast("زنجیره پروفیل برای Split خودکار کافی نیست", "warn");
     }
-  }, [sketch, showToast]);
+  }, [sketch, showToast, onParamsCb]);
 
   /* متن جی‌کد با پایان‌خط CRLF (سازگار با CIMCO/ویندوز و کنترلرها) */
   const gcodeText = () => gen.lines.join("\r\n");
@@ -731,19 +736,7 @@ export default function App() {
               params={params}
               gen={gen}
               split={params.split}
-              onSplit={(s) => setParams((p) => {
-                if (!s.enabled) return { ...p, split: s };
-                const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
-                return {
-                  ...p,
-                  split: s,
-                  ops: makeOps(bowl.types),
-                  holder2: {
-                    xOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.xOff),
-                    yOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.yOff),
-                  },
-                };
-              })}
+              onSplit={(split) => onParamsCb({ split })}
               settings={settings}
               onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
               ops={params.ops}

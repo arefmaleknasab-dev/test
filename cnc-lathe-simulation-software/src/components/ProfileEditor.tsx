@@ -508,6 +508,7 @@ export default function ProfileEditor({
       setSelPoints([]);
       setSplitSelected(false);
       setSplitHovered(false);
+      setMarqueeSplitHit(false);
       return;
     }
     setSelL([]);
@@ -557,6 +558,7 @@ export default function ProfileEditor({
   const [marqueeHits, setMarqueeHits] = useState<number[]>([]);
   /* نقاط نامزدِ داخل باکس انتخاب */
   const [marqueePointHits, setMarqueePointHits] = useState<{ segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[]>([]);
+  const [marqueeSplitHit, setMarqueeSplitHit] = useState(false);
   const [panMode, setPanMode] = useState(false);
   const [spaceDown, setSpaceDown] = useState(false);
   const spaceRef = useRef(false);
@@ -716,6 +718,8 @@ export default function ProfileEditor({
           drag.current = null;
           setMarquee(null);
           setMarqueeHits([]);
+          setMarqueePointHits([]);
+          setMarqueeSplitHit(false);
           return;
         }
         if (speedMenu) {
@@ -999,6 +1003,12 @@ export default function ProfileEditor({
 
   const pointInRectW = (p: SPoint, r: { z0: number; z1: number; r0: number; r1: number }) =>
     p.z >= r.z0 - 1e-9 && p.z <= r.z1 + 1e-9 && p.r >= r.r0 - 1e-9 && p.r <= r.r1 + 1e-9;
+
+  const marqueeHitsSplit = (r: { z0: number; z1: number; r0: number; r1: number }) =>
+    !editOpen && split.enabled && (
+      pointInRectW({ z: split.z, r: split.r }, r) ||
+      pointInRectW({ z: split.z, r: -split.r }, r)
+    );
 
   const segSegInt = (p1: SPoint, p2: SPoint, p3: SPoint, p4: SPoint) => {
     const d = (p2.z - p1.z) * (p4.r - p3.r) - (p2.r - p1.r) * (p4.z - p3.z);
@@ -1799,6 +1809,7 @@ export default function ProfileEditor({
     drag.current = { mode: "marquee", sx: loc.x, sy: loc.y, base: [...selected], moved: false };
     setMarquee({ x0: loc.x, y0: loc.y, x1: loc.x, y1: loc.y, add: e.shiftKey, remove: e.ctrlKey || e.metaKey });
     setMarqueeHits([]);
+    setMarqueeSplitHit(false);
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -1940,11 +1951,13 @@ export default function ProfileEditor({
            نباید حتی به‌صورت موقت داخل باکس هایلایت شود. */
         setMarqueeHits([]);
         setMarqueePointHits([]);
+        setMarqueeSplitHit(false);
         setBufMarq(bufMarqueeHits(rectW, mode));
       } else {
         setBufMarq(null);
         setMarqueeHits(marqueeHitIds(rectW, mode));
         setMarqueePointHits(marqueeHitPoints(rectW));
+        setMarqueeSplitHit(marqueeHitsSplit(rectW));
       }
       return;
     }
@@ -2104,11 +2117,13 @@ export default function ProfileEditor({
       setMarquee(null);
       setMarqueeHits([]);
       setMarqueePointHits([]);
+      setMarqueeSplitHit(false);
       if (wasClick) {
         /* کلیک روی فضای خالی: بدون اصلاح‌کننده پاک‌کردن انتخاب المان‌ها و نقاط */
         if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
           onSelected([]);
           setSelPoints([]);
+          setSplitSelected(false);
           if (editOpen) { selectEditLines([], null, true); setSelV([]); setHitPicker(null); }
         }
         return;
@@ -2154,6 +2169,7 @@ export default function ProfileEditor({
       }
       const hits = marqueeHitIds(rectW, mode);
       const pointHits = marqueeHitPoints(rectW);
+      const splitHit = marqueeHitsSplit(rectW);
       const remove = e.ctrlKey || e.metaKey;
       const add = e.shiftKey;
       if (remove) onSelected(d.base.filter((id) => !hits.includes(id)));
@@ -2164,6 +2180,13 @@ export default function ProfileEditor({
       if (remove) setSelPoints(selPoints.filter((p) => !pointHits.some((h) => pkey(h) === pkey(p))));
       else if (add) setSelPoints([...selPoints, ...pointHits.filter((h) => !selPoints.some((p) => pkey(p) === pkey(h)))]);
       else setSelPoints(pointHits);
+      if (remove) {
+        if (splitHit) setSplitSelected(false);
+      } else if (add) {
+        if (splitHit) setSplitSelected(true);
+      } else {
+        setSplitSelected(splitHit);
+      }
       return;
     }
 
@@ -3060,14 +3083,14 @@ export default function ProfileEditor({
                 <g>
                   {[y, ym].map((yy, k) => (
                     <g key={k} style={{ cursor: "pointer" }}>
-                      {(splitSelected || splitHovered) && (
+                      {(splitSelected || splitHovered || marqueeSplitHit) && (
                         <circle
                           cx={x}
                           cy={yy}
                           r={splitSelected ? 8 : 7}
-                          fill="#f72585"
-                          fillOpacity={splitSelected ? 0.2 : 0.1}
-                          stroke={splitSelected ? "#fff3dc" : "#ff84bc"}
+                          fill={marqueeSplitHit ? "#4aa3ff" : "#f72585"}
+                          fillOpacity={splitSelected ? 0.2 : 0.12}
+                          stroke={splitSelected ? "#fff3dc" : marqueeSplitHit ? "#8fc5ff" : "#ff84bc"}
                           strokeWidth={splitSelected ? 1.6 : 1}
                         />
                       )}
@@ -3139,7 +3162,7 @@ export default function ProfileEditor({
                 <>
                   <rect x={x} y={y} width={w} height={h} fill={crossing ? "rgba(63,175,93,0.10)" : "rgba(74,163,255,0.10)"} stroke={c} strokeWidth={1.4} strokeDasharray={crossing ? "6 3" : undefined} />
                   <text x={x + 6} y={y - 7} fontSize={10.5} fontFamily="Vazirmatn, sans-serif" fontWeight={700} fill={c} stroke="#120e09" strokeWidth={3} paintOrder="stroke">
-                    {crossing ? "متقاطع" : "پنجره‌ای"} • {editOpen ? (bufMarq?.ids.length ?? 0) : marqueeHits.length} المان، {editOpen ? (bufMarq?.vxs.length ?? 0) : marqueePointHits.length} نقطه
+                    {crossing ? "متقاطع" : "پنجره‌ای"} • {editOpen ? (bufMarq?.ids.length ?? 0) : marqueeHits.length} المان، {editOpen ? (bufMarq?.vxs.length ?? 0) : marqueePointHits.length + (marqueeSplitHit ? 1 : 0)} نقطه
                     {marquee.remove ? " − حذف" : marquee.add ? " + افزودن" : ""}
                   </text>
                 </>
@@ -3323,7 +3346,9 @@ export default function ProfileEditor({
                 selected.length || splitSelected ? "border-teal/50 text-teal" : "border-edge text-dim"
               )}
             >
-              {splitSelected ? "نقطه Split انتخاب شده" : selected.length ? `${selected.length} انتخاب شده` : "بدون انتخاب"}
+              {splitSelected
+                ? selected.length ? `Split + ${selected.length} المان` : "نقطه Split انتخاب شده"
+                : selected.length ? `${selected.length} انتخاب شده` : "بدون انتخاب"}
             </span>
             {selLocked && (
               <span

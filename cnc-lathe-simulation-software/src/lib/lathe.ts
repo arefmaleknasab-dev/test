@@ -2051,6 +2051,8 @@ export interface Preset {
   blankD: number;
   blankL: number;
   pts: [number, number, boolean][]; // z, r, smooth
+  /** بوم طراحی عمداً بدون هیچ المانی باز شود. */
+  empty?: boolean;
   /** زنجیره دیواره کاسه به ترتیب مسیر: خارج → لبه → داخل (فقط پریست کاسه) */
   wall?: [number, number, boolean][];
   /** نقطه Split پیشنهادی روی دیواره */
@@ -2067,6 +2069,7 @@ export const PRESETS: Preset[] = [
     name: "پایه مبل",
     blankD: 60,
     blankL: 200,
+    shape: "square",
     pts: [
       [0, 22, false], [10, 22, false], [16, 29, true], [30, 29, true],
       [42, 17, true], [54, 17, true], [62, 27, true], [76, 27, true],
@@ -2153,6 +2156,15 @@ export const PRESETS: Preset[] = [
       [0, 30, false], [180, 30, false],
     ],
   },
+  {
+    id: "empty-100",
+    name: "طرح خالی ۱۰×۱۰",
+    blankD: 100,
+    blankL: 100,
+    shape: "square",
+    empty: true,
+    pts: [],
+  },
 ];
 
 let uid = 1000;
@@ -2173,6 +2185,10 @@ export function thumbPath(p: Preset, w: number, h: number): string {
     for (let i = pts.length - 1; i >= 0; i--) d += ` L ${sx(pts[i][0]).toFixed(1)} ${(h - sy(pts[i][1])).toFixed(1)}`;
     return d + " Z";
   };
+  if (p.empty || p.pts.length === 0) {
+    /* بندانگشتی بوم خالی فقط محدودهٔ خام ۱۰×۱۰ را نشان می‌دهد. */
+    return `M 3 3 H ${w - 3} V ${h - 3} H 3 Z`;
+  }
   /* کاسه: حلقه ماده + حلقه حفره (با fill-rule evenodd حفره خالی دیده می‌شود) */
   if (p.wall && p.split) {
     const wall2: [number, number][] = p.wall.map(([z, r]) => [z, r]);
