@@ -360,13 +360,13 @@ function EditGridControl({
             />
           </label>
 
-          <div className="mt-2 rounded-md border border-edge bg-[#120e09] p-2">
-            <div className="relative h-12 overflow-hidden rounded border border-edge/70">
-              <div className="absolute inset-0 opacity-80" style={{
-                backgroundImage: `linear-gradient(to right, rgba(69,179,148,.22) 1px, transparent 1px), linear-gradient(to bottom, rgba(69,179,148,.22) 1px, transparent 1px)`,
+          <div className="mt-2 rounded-md border border-edge bg-[#08111f] p-2">
+            <div className="relative h-12 overflow-hidden rounded border border-[#263548]">
+              <div className="absolute inset-0" style={{
+                backgroundImage: `linear-gradient(to right, rgba(31,45,63,.6) 1px, transparent 1px), linear-gradient(to bottom, rgba(31,45,63,.6) 1px, transparent 1px)`,
                 backgroundSize: `${100 / divisions}% ${100 / divisions}%`,
               }} />
-              <div className="absolute inset-0 border border-brass/55" />
+              <div className="absolute inset-0 border border-[#3f4f65]/70" />
             </div>
             <div className="mt-1 flex items-center justify-between text-[8.5px] text-dim">
               <span>فاصله خطوط داخلی</span>
@@ -374,7 +374,7 @@ function EditGridControl({
             </div>
           </div>
           <p className="mt-1.5 text-[8.5px] leading-4 text-dim">
-            خاموش‌کردن گرید، نمایش مبدأ و محورهای X/Y را پنهان نمی‌کند.
+            خاموش‌کردن گرید، محورهای X/Y را پنهان نمی‌کند؛ تقاطع دو محور همان مبدأ است.
           </p>
         </div>
       )}
@@ -2493,7 +2493,13 @@ export default function ProfileEditor({
   }
 
   return (
-    <div ref={wrapRef} className="relative h-full w-full overflow-hidden rounded-lg border border-edge bg-[#120e09]">
+    <div
+      ref={wrapRef}
+      className={cn(
+        "relative h-full w-full overflow-hidden rounded-lg border border-edge",
+        editOpen ? "bg-[#08111f]" : "bg-[#120e09]"
+      )}
+    >
       <svg
         ref={svgRef}
         width={size.w}
@@ -2556,8 +2562,10 @@ export default function ProfileEditor({
                   y1={editOpen ? 0 : cam.oy - R * cam.s}
                   x2={sx}
                   y2={editOpen ? size.h : cam.oy + R * cam.s}
-                  stroke={tick.major ? "rgba(69,179,148,0.24)" : "rgba(209,183,134,0.075)"}
-                  strokeWidth={tick.major ? 1.15 : 0.8}
+                  stroke={editOpen
+                    ? tick.major ? "rgba(63,79,101,0.42)" : "rgba(31,45,63,0.42)"
+                    : tick.major ? "rgba(69,179,148,0.24)" : "rgba(209,183,134,0.075)"}
+                  strokeWidth={editOpen ? (tick.major ? 1 : 0.75) : (tick.major ? 1.15 : 0.8)}
                 />
               );
             })}
@@ -2570,42 +2578,15 @@ export default function ProfileEditor({
                   y1={sy}
                   x2={editOpen ? size.w : cam.ox + L * cam.s}
                   y2={sy}
-                  stroke={tick.major ? "rgba(69,179,148,0.22)" : "rgba(209,183,134,0.07)"}
-                  strokeWidth={tick.major ? 1.15 : 0.8}
+                  stroke={editOpen
+                    ? tick.major ? "rgba(63,79,101,0.42)" : "rgba(31,45,63,0.42)"
+                    : tick.major ? "rgba(69,179,148,0.22)" : "rgba(209,183,134,0.07)"}
+                  strokeWidth={editOpen ? (tick.major ? 1 : 0.75) : (tick.major ? 1.15 : 0.8)}
                 />
               );
             })}
 
-            {editOpen ? (
-              <>
-                {gridZ.filter((tick) => tick.major).map((tick) => (
-                  <text
-                    key={`elz${tick.value}`}
-                    x={cam.ox + tick.value * cam.s}
-                    y={Math.min(size.h - 5, Math.max(13, cam.oy + 14))}
-                    textAnchor="middle"
-                    fontSize="8.5"
-                    fill="#5d9f8d"
-                    fontFamily="JetBrains Mono, monospace"
-                  >
-                    {Number(tick.value.toFixed(2))}
-                  </text>
-                ))}
-                {gridR.filter((tick) => tick.major).map((tick) => (
-                  <text
-                    key={`elr${tick.value}`}
-                    x={Math.min(size.w - 5, Math.max(24, cam.ox - 6))}
-                    y={cam.oy - tick.value * cam.s + 3}
-                    textAnchor="end"
-                    fontSize="8.5"
-                    fill="#5d9f8d"
-                    fontFamily="JetBrains Mono, monospace"
-                  >
-                    {Number(tick.value.toFixed(2))}
-                  </text>
-                ))}
-              </>
-            ) : (
+            {!editOpen && (
               <>
                 {gridZ.filter((tick) => tick.major).map((tick) => (
                   <text key={`lz${tick.value}`} x={cam.ox + tick.value * cam.s} y={cam.oy + R * cam.s + 18} textAnchor="middle" fontSize="10" fill="#8b7c5f" fontFamily="JetBrains Mono, monospace">
@@ -2625,26 +2606,22 @@ export default function ProfileEditor({
         )}
 
         {!editOpen && <line x1={0} y1={cam.oy} x2={size.w} y2={cam.oy} stroke="rgba(227,169,78,0.35)" strokeWidth={1} strokeDasharray="10 4 2 4" />}
-        <rect x={cam.ox} y={cam.oy - R * cam.s} width={L * cam.s} height={2 * R * cam.s} fill="url(#hatch)" stroke="rgba(227,169,78,0.55)" strokeWidth={1.3} strokeDasharray="7 5" />
+        <rect
+          x={cam.ox}
+          y={cam.oy - R * cam.s}
+          width={L * cam.s}
+          height={2 * R * cam.s}
+          fill={editOpen ? "transparent" : "url(#hatch)"}
+          stroke={editOpen ? "rgba(55,72,94,0.22)" : "rgba(227,169,78,0.55)"}
+          strokeWidth={editOpen ? 0.8 : 1.3}
+          strokeDasharray={editOpen ? undefined : "7 5"}
+        />
 
-        {/* مبدأ و محورهای ماشین در حالت ویرایش مسیر — مستقل از روشن/خاموش بودن گرید */}
+        {/* محورهای ساده و نازک مثل مرجع؛ تقاطع آن‌ها خودِ مبدأ است. */}
         {editOpen && (
           <g pointerEvents="none">
-            <line x1={0} y1={cam.oy} x2={size.w} y2={cam.oy} stroke="rgba(69,179,148,0.8)" strokeWidth={1.35} />
-            <line x1={cam.ox} y1={0} x2={cam.ox} y2={size.h} stroke="rgba(76,201,240,0.75)" strokeWidth={1.35} />
-            {cam.oy >= 0 && cam.oy <= size.h && (
-              <>
-                <path d={`M ${size.w - 5} ${cam.oy} l -8 -4 v 8 z`} fill="#45b394" />
-                <text x={size.w - 12} y={cam.oy - 8} textAnchor="end" fontSize="10" fontWeight={900} fontFamily="JetBrains Mono, monospace" fill="#6fe0bd" stroke="#120e09" strokeWidth={3} paintOrder="stroke">+X</text>
-              </>
-            )}
-            {cam.ox >= 0 && cam.ox <= size.w && (
-              <>
-                <path d={`M ${cam.ox} 5 l -4 8 h 8 z`} fill="#4cc9f0" />
-                <text x={cam.ox + 8} y={16} fontSize="10" fontWeight={900} fontFamily="JetBrains Mono, monospace" fill="#7edcff" stroke="#120e09" strokeWidth={3} paintOrder="stroke">+Y</text>
-                <text x={cam.ox + 8} y={size.h - 8} fontSize="9" fontWeight={800} fontFamily="JetBrains Mono, monospace" fill="#4cc9f0" stroke="#120e09" strokeWidth={3} paintOrder="stroke">−Y</text>
-              </>
-            )}
+            <line x1={0} y1={cam.oy} x2={size.w} y2={cam.oy} stroke="#754052" strokeOpacity={0.9} strokeWidth={1} />
+            <line x1={cam.ox} y1={0} x2={cam.ox} y2={size.h} stroke="#3b7373" strokeOpacity={0.9} strokeWidth={1} />
           </g>
         )}
 
@@ -3114,14 +3091,6 @@ export default function ProfileEditor({
           </g>
         )}
 
-        {/* نقطه صفر روی همه مسیرها قرار می‌گیرد تا حتی در تراکم بالا گم نشود. */}
-        {editOpen && cam.ox >= -20 && cam.ox <= size.w + 20 && cam.oy >= -20 && cam.oy <= size.h + 20 && (
-          <g transform={`translate(${cam.ox} ${cam.oy})`} filter="url(#curveGlow)" pointerEvents="none">
-            <circle r={7} fill="#120e09" stroke="#ffd27a" strokeWidth={2} />
-            <circle r={2.4} fill="#ffd27a" />
-            <text x={9} y={-9} fontSize="10" fontWeight={900} fontFamily="JetBrains Mono, monospace" fill="#ffd27a" stroke="#120e09" strokeWidth={3} paintOrder="stroke">0</text>
-          </g>
-        )}
       </svg>
 
       {/* ---------- منوی راست‌کلیک سرعت Segmentهای انتخاب‌شده ---------- */}
