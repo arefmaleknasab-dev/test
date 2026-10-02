@@ -128,6 +128,83 @@ export function segLength(s: SketchSeg): number {
 
 export const segMid = (s: SketchSeg): SPoint => evalSeg(s, 0.5);
 
+export interface SegBounds {
+  minZ: number;
+  maxZ: number;
+  minR: number;
+  maxR: number;
+}
+
+/**
+ * کران دقیق هندسهٔ قابل‌مشاهدهٔ المان.
+ *
+ * نقاط کنترل بزیه عمداً جزو کران نیستند: ممکن است بیرون قطعهٔ خام باشند،
+ * درحالی‌که خود منحنی هنوز کاملاً داخل قطعه است.
+ */
+export function segBounds(s: SketchSeg): SegBounds {
+  const pts: SPoint[] = [s.a, s.b];
+  const addAt = (t: number) => {
+    if (Number.isFinite(t) && t > 1e-10 && t < 1 - 1e-10) pts.push(evalSeg(s, t));
+  };
+
+  if (s.kind === "quad" && s.c1) {
+    /* نمونهٔ میانی، کران را در برابر ورودی‌های عددی بسیار بزرگ هم fail-safe می‌کند. */
+    addAt(0.5);
+    const addQuadRoot = (p0: number, p1: number, p2: number) => {
+      const den = p0 - 2 * p1 + p2;
+      if (Math.abs(den) > 1e-12) addAt((p0 - p1) / den);
+    };
+    addQuadRoot(s.a.z, s.c1.z, s.b.z);
+    addQuadRoot(s.a.r, s.c1.r, s.b.r);
+  } else if (s.kind === "cubic" && s.c1 && s.c2) {
+    addAt(0.25);
+    addAt(0.5);
+    addAt(0.75);
+    const addCubicRoots = (p0: number, p1: number, p2: number, p3: number) => {
+      /* B'(t) / 3 = A t² + B t + C */
+      const A = -p0 + 3 * p1 - 3 * p2 + p3;
+      const B = 2 * (p0 - 2 * p1 + p2);
+      const C = p1 - p0;
+      if (Math.abs(A) < 1e-12) {
+        if (Math.abs(B) > 1e-12) addAt(-C / B);
+        return;
+      }
+      const disc = B * B - 4 * A * C;
+      if (disc < -1e-12) return;
+      const root = Math.sqrt(Math.max(0, disc));
+      addAt((-B - root) / (2 * A));
+      addAt((-B + root) / (2 * A));
+    };
+    addCubicRoots(s.a.z, s.c1.z, s.c2.z, s.b.z);
+    addCubicRoots(s.a.r, s.c1.r, s.c2.r, s.b.r);
+  } else if (s.kind === "arc") {
+    const info = arcInfo(s);
+    if (info) {
+      const TAU = Math.PI * 2;
+      const norm = (x: number) => ((x % TAU) + TAU) % TAU;
+      const onSweep = (angle: number) =>
+        info.sweep >= 0
+          ? norm(angle - info.a0) <= info.sweep + 1e-10
+          : norm(info.a0 - angle) <= -info.sweep + 1e-10;
+      for (const angle of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+        if (onSweep(angle)) {
+          pts.push({
+            z: info.center.z + info.radius * Math.cos(angle),
+            r: info.center.r + info.radius * Math.sin(angle),
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    minZ: Math.min(...pts.map((p) => p.z)),
+    maxZ: Math.max(...pts.map((p) => p.z)),
+    minR: Math.min(...pts.map((p) => p.r)),
+    maxR: Math.max(...pts.map((p) => p.r)),
+  };
+}
+
 /* ---------------- ساخت المان‌ها ---------------- */
 
 export function makeSeg(kind: SketchKind, pts: SPoint[]): SketchSeg | null {

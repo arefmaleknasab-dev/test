@@ -18,6 +18,7 @@ import {
   moveSeg,
   newSegId,
   orderChain,
+  segBounds,
   segLength,
   segMid,
   segPoints,
@@ -468,6 +469,69 @@ const SNAP_COLOR: Record<string, string> = {
   cross: "#e0703c",
   axis: "#f3c26b",
   grid: "#8b7c5f",
+};
+
+type SketchPointPart = "a" | "b" | "c1" | "c2" | "via";
+
+const segInsideStock = (seg: SketchSeg, blankL: number, blankR: number): boolean => {
+  const b = segBounds(seg);
+  const eps = 1e-7;
+  return (
+    Number.isFinite(b.minZ) &&
+    Number.isFinite(b.maxZ) &&
+    Number.isFinite(b.minR) &&
+    Number.isFinite(b.maxR) &&
+    b.minZ >= -eps &&
+    b.maxZ <= blankL + eps &&
+    b.minR >= -eps &&
+    b.maxR <= blankR + eps
+  );
+};
+
+const withSegPoint = (seg: SketchSeg, part: SketchPointPart, point: SPoint): SketchSeg =>
+  ({ ...seg, [part]: point }) as SketchSeg;
+
+/**
+ * نقطهٔ کنترل می‌تواند بیرون خام قرار بگیرد، اما جابه‌جایی در نخستین جایی که
+ * خود منحنی به مرز خام می‌رسد متوقف می‌شود. نقاط واقعی خط/کمان همچنان مستقیماً
+ * به ابعاد خام محدودند.
+ */
+const constrainSegPointToStock = (
+  seg: SketchSeg,
+  part: SketchPointPart,
+  requested: SPoint,
+  blankL: number,
+  blankR: number
+): SPoint => {
+  const current = seg[part];
+  if (!current) return requested;
+  const isBezierControl = part === "c1" || part === "c2";
+  const target = isBezierControl
+    ? requested
+    : {
+        z: Math.min(blankL, Math.max(0, requested.z)),
+        r: Math.min(blankR, Math.max(0, requested.r)),
+      };
+
+  if (segInsideStock(withSegPoint(seg, part, target), blankL, blankR)) return target;
+  /* دادهٔ قدیمیِ نامعتبر را بدتر نکن؛ ولی اگر مقصد معتبر بود، شرط بالا آن را پذیرفته است. */
+  if (!segInsideStock(seg, blankL, blankR)) return current;
+
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 24; i++) {
+    const t = (lo + hi) / 2;
+    const p = {
+      z: current.z + (target.z - current.z) * t,
+      r: current.r + (target.r - current.r) * t,
+    };
+    if (segInsideStock(withSegPoint(seg, part, p), blankL, blankR)) lo = t;
+    else hi = t;
+  }
+  return {
+    z: current.z + (target.z - current.z) * lo,
+    r: current.r + (target.r - current.r) * lo,
+  };
 };
 
 export default function ProfileEditor({
@@ -941,6 +1005,42 @@ export default function ProfileEditor({
 
   const clampPt = (p: SPoint): SPoint => ({ z: Math.min(L, Math.max(0, p.z)), r: Math.min(R, Math.max(0, p.r)) });
 
+  /** نقطهٔ نشانگرِ مرحلهٔ فعلی ترسیم؛ دسته‌های بزیه به خود خام clamp نمی‌شوند. */
+  const constrainDraftPoint = (p: SPoint): SPoint => {
+    if (tool === "quad" && draft.length === 2) {
+      const base: SketchSeg = {
+        id: -1,
+        kind: "quad",
+        a: draft[0],
+        b: draft[1],
+        c1: { z: (draft[0].z + draft[1].z) / 2, r: (draft[0].r + draft[1].r) / 2 },
+      };
+      return constrainSegPointToStock(base, "c1", p, L, R);
+    }
+    if (tool === "cubic" && draft.length === 4) {
+      const base: SketchSeg = {
+        id: -1,
+        kind: "cubic",
+        a: draft[0],
+        b: draft[1],
+        c1: draft[2],
+        c2: draft[3],
+      };
+      return constrainSegPointToStock(base, draftSecondSet.current ? "c1" : "c2", p, L, R);
+    }
+    if (tool === "arc" && draft.length === 2) {
+      const base: SketchSeg = {
+        id: -1,
+        kind: "arc",
+        a: draft[0],
+        b: draft[1],
+        via: { z: (draft[0].z + draft[1].z) / 2, r: (draft[0].r + draft[1].r) / 2 },
+      };
+      return constrainSegPointToStock(base, "via", p, L, R);
+    }
+    return clampPt(p);
+  };
+
   /* ---------- تشخیص برخورد ---------- */
   const hitSeg = (w: SPoint): SketchSeg | null => {
     const c = camRef.current;
@@ -1286,7 +1386,13 @@ export default function ProfileEditor({
 
   const duplicateSelected = () => {
     if (!selected.length) return;
-    const copies = segs.filter((s) => selected.includes(s.id)).map((s) => cloneSeg(s, 0, Math.min(6, R * 0.12)));
+    const source = segs.filter((s) => selected.includes(s.id));
+    const bounds = source.map(segBounds);
+    const minR = Math.min(...bounds.map((b) => b.minR));
+    const maxR = Math.max(...bounds.map((b) => b.maxR));
+    const requestedDr = Math.min(6, R * 0.12);
+    const dr = Math.min(R - maxR, Math.max(-minR, requestedDr));
+    const copies = source.map((s) => cloneSeg(s, 0, dr));
     commit([...segs, ...copies]);
     onSelected(copies.map((c) => c.id));
   };
@@ -1297,12 +1403,13 @@ export default function ProfileEditor({
   };
 
   /* ویرایش مختصات یک نقطهٔ مستقل */
-  const patchPoint = (segId: number, part: "a" | "b" | "c1" | "c2" | "via", patch: Partial<SPoint>) => {
+  const patchPoint = (segId: number, part: SketchPointPart, patch: Partial<SPoint>) => {
     const next = segs.map((s) => {
       if (s.id !== segId) return s;
       const cur = s[part];
       if (!cur) return s;
-      return { ...s, [part]: { ...cur, ...patch } } as SketchSeg;
+      const point = constrainSegPointToStock(s, part, { ...cur, ...patch }, L, R);
+      return withSegPoint(s, part, point);
     });
     onSegs(next, true);
   };
@@ -1931,7 +2038,7 @@ export default function ProfileEditor({
         setSnapHit(null);
       } else {
         const { p, hit } = applySnap(raw);
-        setCursor(clampPt(p));
+        setCursor(constrainDraftPoint(p));
         setSnapHit(hit);
       }
       return;
@@ -2055,7 +2162,7 @@ export default function ProfileEditor({
         setSnapHit(null);
       } else {
         const { p, hit } = applySnap(raw);
-        setCursor(clampPt(p));
+        setCursor(constrainDraftPoint(p));
         setSnapHit(hit);
       }
       return;
@@ -2072,40 +2179,64 @@ export default function ProfileEditor({
         : d.cluster.map((c) => c.segId);
       const { p, hit } = applySnap(raw, skipIds);
       setSnapHit(hit);
-      const pt = clampPt(p);
 
-      let next = segs;
+      const refSeg = segs.find((s) => s.id === d.ref.segId);
+      const refPt = refSeg ? refSeg[d.ref.part] : null;
+      if (!refPt) return;
+
+      /* برای کنترل‌پوینت‌ها مقصد clamp نمی‌شود. کل جابه‌جایی (تکی یا چندانتخابی)
+         فقط تا جایی اعمال می‌شود که هندسهٔ واقعی همهٔ منحنی‌های درگیر داخل خام بماند. */
+      const toMove = new Map<string, { segId: number; part: SketchPointPart }>();
       if (inMulti) {
-        const refSeg = segs.find((s) => s.id === d.ref.segId);
-        const refPt = refSeg ? refSeg[d.ref.part] : null;
-        if (refPt) {
-          const dz = pt.z - refPt.z;
-          const dr = pt.r - refPt.r;
-          /* خوشهٔ هر نقطهٔ انتخابی جابه‌جا می‌شود تا اتصالِ نقاط هم‌مکان پاره نشود */
-          const toMove = new Map<string, { segId: number; part: "a" | "b" | "c1" | "c2" | "via" }>();
-          for (const sp of selPoints) {
-            if (sp.part === "a" || sp.part === "b") {
-              for (const c of clusterOf(sp.segId, sp.part)) toMove.set(`${c.segId}:${c.part}`, c);
-            } else {
-              toMove.set(`${sp.segId}:${sp.part}`, sp);
-            }
-          }
-          for (const m of toMove.values()) {
-            next = next.map((s) => {
-              if (s.id !== m.segId) return s;
-              const cur = s[m.part];
-              if (!cur) return s;
-              return { ...s, [m.part]: { z: cur.z + dz, r: cur.r + dr } } as SketchSeg;
-            });
+        for (const sp of selPoints) {
+          if (sp.part === "a" || sp.part === "b") {
+            for (const c of clusterOf(sp.segId, sp.part)) toMove.set(`${c.segId}:${c.part}`, c);
+          } else {
+            toMove.set(`${sp.segId}:${sp.part}`, sp);
           }
         }
       } else {
-        /* جابه‌جایی هم‌زمان همهٔ نقاطِ خوشه تا اتصال حفظ شود */
-        for (const h of d.cluster) {
-          next = next.map((s) => (s.id === h.segId ? ({ ...s, [h.part]: pt } as SketchSeg) : s));
-        }
+        for (const h of d.cluster) toMove.set(`${h.segId}:${h.part}`, h);
       }
-      onSegs(next, false);
+
+      const bySeg = new Map<number, SketchPointPart[]>();
+      for (const h of toMove.values()) {
+        const parts = bySeg.get(h.segId) ?? [];
+        if (!parts.includes(h.part)) parts.push(h.part);
+        bySeg.set(h.segId, parts);
+      }
+      const dz = p.z - refPt.z;
+      const dr = p.r - refPt.r;
+      const moveOne = (s: SketchSeg, scale: number): SketchSeg => {
+        const parts = bySeg.get(s.id);
+        if (!parts) return s;
+        let out = s;
+        for (const part of parts) {
+          const cur = s[part];
+          if (cur) out = withSegPoint(out, part, { z: cur.z + dz * scale, r: cur.r + dr * scale });
+        }
+        return out;
+      };
+      /* در جست‌وجوی مرز فقط چند المان واقعاً درگیر ارزیابی می‌شوند؛ آرایهٔ کامل
+         اسکچ تنها یک‌بار و بعد از تعیین ضریب نهایی ساخته می‌شود. */
+      const moving = segs.filter((s) => bySeg.has(s.id));
+      const isValidAt = (scale: number) => moving.every((s) => segInsideStock(moveOne(s, scale), L, R));
+
+      let scale = 1;
+      if (!isValidAt(1)) {
+        /* وضعیت فعلی معتبر است؛ فضای مجاز نقاط کنترل بزیه نسبت به یک خط حرکت
+           محدب است، پس جست‌وجوی دودویی دقیقاً به مرز منحنی می‌رسد. */
+        if (!isValidAt(0)) return;
+        let lo = 0;
+        let hi = 1;
+        for (let i = 0; i < 24; i++) {
+          const mid = (lo + hi) / 2;
+          if (isValidAt(mid)) lo = mid;
+          else hi = mid;
+        }
+        scale = lo;
+      }
+      onSegs(segs.map((s) => moveOne(s, scale)), false);
       return;
     }
 
@@ -2129,13 +2260,20 @@ export default function ProfileEditor({
         d.last = raw;
         return;
       }
-      const dz = raw.z - d.last.z;
-      const dr = raw.r - d.last.r;
+      const requestedDz = raw.z - d.last.z;
+      const requestedDr = raw.r - d.last.r;
       d.last = raw;
-      onSegs(
-        segs.map((s) => (d.ids.includes(s.id) ? moveSeg(s, dz, dr) : s)),
-        false
-      );
+      const moving = segs.filter((s) => d.ids.includes(s.id));
+      const bounds = moving.map(segBounds);
+      const minZ = Math.min(...bounds.map((b) => b.minZ));
+      const maxZ = Math.max(...bounds.map((b) => b.maxZ));
+      const minR = Math.min(...bounds.map((b) => b.minR));
+      const maxR = Math.max(...bounds.map((b) => b.maxR));
+      /* کران از خود منحنی محاسبه می‌شود، نه از دسته‌ها؛ دسته‌ها آزادانه می‌توانند
+         بیرون خام بمانند، درحالی‌که انتقال کل خط از مرز عبور نمی‌کند. */
+      const dz = Math.min(L - maxZ, Math.max(-minZ, requestedDz));
+      const dr = Math.min(R - maxR, Math.max(-minR, requestedDr));
+      onSegs(segs.map((s) => (d.ids.includes(s.id) ? moveSeg(s, dz, dr) : s)), false);
     }
   };
 
@@ -2315,7 +2453,7 @@ export default function ProfileEditor({
       }
       /* افزودن نقطهٔ جدید به ترسیم در حال انجام */
       const { p } = applySnap(toWorld(e.clientX, e.clientY));
-      const pt = clampPt(p);
+      const pt = constrainDraftPoint(p);
       const need = NEED_PTS[tool];
 
       if (tool === "cubic") {
@@ -3688,8 +3826,8 @@ export default function ProfileEditor({
               </button>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
-              <NumF label="X (طول)" v={pt.z} onC={(v) => patchPoint(ps.segId, ps.part, { z: Math.min(L, Math.max(0, v)) })} />
-              <NumF label="⌀ (قطر)" v={pt.r * 2} onC={(v) => patchPoint(ps.segId, ps.part, { r: Math.min(R, Math.max(0, v / 2)) })} />
+              <NumF label="X (طول)" v={pt.z} onC={(v) => patchPoint(ps.segId, ps.part, { z: v })} />
+              <NumF label="⌀ (قطر)" v={pt.r * 2} onC={(v) => patchPoint(ps.segId, ps.part, { r: v / 2 })} />
             </div>
             <p className="mt-1.5 text-center text-[9px] text-dim">{KIND_FA[s.kind]} — بکشید یا مقدار دقیق وارد کنید</p>
           </div>
@@ -3761,7 +3899,8 @@ function Inspector({
   const len = segLength(seg);
   const ang = lineAngle(seg.a, seg.b);
   const rad = seg.kind === "arc" ? arcRadius(seg) : 0;
-  const clamp = (p: SPoint): SPoint => ({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)) });
+  const constrainPoint = (part: SketchPointPart, p: SPoint) =>
+    constrainSegPointToStock(seg, part, p, blankL, blankR);
 
   return (
     <div className="anim-in absolute right-2.5 bottom-11 w-[228px] rounded-lg border border-teal/40 bg-panel/95 p-2.5 shadow-xl shadow-black/40 backdrop-blur-sm">
@@ -3776,29 +3915,36 @@ function Inspector({
       </div>
 
       <div className="grid grid-cols-2 gap-1.5">
-        <NumF label="X شروع" v={seg.a.z} onC={(v) => onPatch({ a: clamp({ ...seg.a, z: v }) })} />
-        <NumF label="⌀ شروع" v={seg.a.r * 2} onC={(v) => onPatch({ a: clamp({ ...seg.a, r: v / 2 }) })} />
-        <NumF label="X پایان" v={seg.b.z} onC={(v) => onPatch({ b: clamp({ ...seg.b, z: v }) })} />
-        <NumF label="⌀ پایان" v={seg.b.r * 2} onC={(v) => onPatch({ b: clamp({ ...seg.b, r: v / 2 }) })} />
+        <NumF label="X شروع" v={seg.a.z} onC={(v) => onPatch({ a: constrainPoint("a", { ...seg.a, z: v }) })} />
+        <NumF label="⌀ شروع" v={seg.a.r * 2} onC={(v) => onPatch({ a: constrainPoint("a", { ...seg.a, r: v / 2 }) })} />
+        <NumF label="X پایان" v={seg.b.z} onC={(v) => onPatch({ b: constrainPoint("b", { ...seg.b, z: v }) })} />
+        <NumF label="⌀ پایان" v={seg.b.r * 2} onC={(v) => onPatch({ b: constrainPoint("b", { ...seg.b, r: v / 2 }) })} />
       </div>
 
       {seg.kind === "line" && (
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF label="طول" v={len} onC={(v) => onPatch({ b: clamp(endFromLenAngle(seg.a, v, ang)) })} />
-          <NumF label="زاویه°" v={ang} onC={(v) => onPatch({ b: clamp(endFromLenAngle(seg.a, len, v)) })} />
+          <NumF label="طول" v={len} onC={(v) => onPatch({ b: constrainPoint("b", endFromLenAngle(seg.a, v, ang)) })} />
+          <NumF label="زاویه°" v={ang} onC={(v) => onPatch({ b: constrainPoint("b", endFromLenAngle(seg.a, len, v)) })} />
         </div>
       )}
 
       {seg.kind === "arc" && (
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF label="شعاع" v={rad} onC={(v) => onPatch(arcWithRadius(seg, v))} />
+          <NumF
+            label="شعاع"
+            v={rad}
+            onC={(v) => {
+              const nextVia = arcWithRadius(seg, v).via;
+              if (nextVia) onPatch({ via: constrainPoint("via", nextVia) });
+            }}
+          />
           <div className="flex items-end">
             <button
               onClick={() => {
                 const mz = (seg.a.z + seg.b.z) / 2;
                 const mr = (seg.a.r + seg.b.r) / 2;
                 const via = seg.via ?? { z: mz, r: mr };
-                onPatch({ via: { z: 2 * mz - via.z, r: 2 * mr - via.r } });
+                onPatch({ via: constrainPoint("via", { z: 2 * mz - via.z, r: 2 * mr - via.r }) });
               }}
               className="btn w-full justify-center !py-1.5 text-[10.5px]"
               title="معکوس‌کردن جهت برآمدگی کمان"
@@ -3811,12 +3957,12 @@ function Inspector({
 
       {(seg.kind === "quad" || seg.kind === "cubic") && seg.c1 && (
         <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF label="X کنترل۱" v={seg.c1.z} onC={(v) => onPatch({ c1: clamp({ ...seg.c1!, z: v }) })} />
-          <NumF label="⌀ کنترل۱" v={seg.c1.r * 2} onC={(v) => onPatch({ c1: clamp({ ...seg.c1!, r: v / 2 }) })} />
+          <NumF label="X کنترل۱" v={seg.c1.z} onC={(v) => onPatch({ c1: constrainPoint("c1", { ...seg.c1!, z: v }) })} />
+          <NumF label="⌀ کنترل۱" v={seg.c1.r * 2} onC={(v) => onPatch({ c1: constrainPoint("c1", { ...seg.c1!, r: v / 2 }) })} />
           {seg.kind === "cubic" && seg.c2 && (
             <>
-              <NumF label="X کنترل۲" v={seg.c2.z} onC={(v) => onPatch({ c2: clamp({ ...seg.c2!, z: v }) })} />
-              <NumF label="⌀ کنترل۲" v={seg.c2.r * 2} onC={(v) => onPatch({ c2: clamp({ ...seg.c2!, r: v / 2 }) })} />
+              <NumF label="X کنترل۲" v={seg.c2.z} onC={(v) => onPatch({ c2: constrainPoint("c2", { ...seg.c2!, z: v }) })} />
+              <NumF label="⌀ کنترل۲" v={seg.c2.r * 2} onC={(v) => onPatch({ c2: constrainPoint("c2", { ...seg.c2!, r: v / 2 }) })} />
             </>
           )}
         </div>
