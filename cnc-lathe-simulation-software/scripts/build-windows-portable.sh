@@ -22,13 +22,13 @@ cd "$APP_DIR"
 npm run build
 node scripts/prepare-portable-html.mjs dist/index.html "$PACKAGE_DIR/KharratCode.html"
 
-# Prefer MinGW (available in GitHub Actions). A Zig binary can be supplied for
-# local cross-compilation with: ZIG_BIN=/path/to/zig npm run build:portable:win
-if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
-  x86_64-w64-mingw32-gcc -Os -s -mwindows -Wl,--no-insert-timestamp \
-    -o "$PACKAGE_DIR/KharratCode.exe" "$LAUNCHER_SOURCE" -lshell32
-elif [[ -n "${ZIG_BIN:-}" && -x "${ZIG_BIN}" ]]; then
+# An explicit Zig path takes precedence so local and CI builds can use the same
+# pinned compiler: ZIG_BIN=/path/to/zig npm run build:portable:win
+if [[ -n "${ZIG_BIN:-}" && -x "${ZIG_BIN}" ]]; then
   "$ZIG_BIN" cc -target x86_64-windows-gnu -Os -s -Wl,--subsystem,windows \
+    -o "$PACKAGE_DIR/KharratCode.exe" "$LAUNCHER_SOURCE" -lshell32
+elif command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+  x86_64-w64-mingw32-gcc -Os -s -mwindows -Wl,--no-insert-timestamp \
     -o "$PACKAGE_DIR/KharratCode.exe" "$LAUNCHER_SOURCE" -lshell32
 elif command -v zig >/dev/null 2>&1; then
   zig cc -target x86_64-windows-gnu -Os -s -Wl,--subsystem,windows \
@@ -72,7 +72,11 @@ find "$PACKAGE_DIR" -exec touch -t 200001010000 {} +
 TMP_OUTPUT="$WORK_DIR/${PACKAGE_NAME}.zip"
 (
   cd "$WORK_DIR"
-  zip -X -9 -q -r "$TMP_OUTPUT" "$PACKAGE_NAME"
+  zip -X -9 -q "$TMP_OUTPUT" \
+    "$PACKAGE_NAME/" \
+    "$PACKAGE_NAME/KharratCode.exe" \
+    "$PACKAGE_NAME/KharratCode.html" \
+    "$PACKAGE_NAME/README.txt"
 )
 mv -f "$TMP_OUTPUT" "$OUTPUT"
 
