@@ -154,9 +154,6 @@ export default function App() {
   /* حالت ویرایش مسیر: فایل = برنامهٔ پایه + اوررایدِ تأییدشده (پیش از «تأیید» فایل دست‌نخورده است) */
   const [gcodeOvr, setGcodeOvr] = useState<GcodeOvrMap>(() => normGcodeOvr(SAVED?.gcodeOvr));
   const [editBuf, setEditBuf] = useState<EditBuf | null>(null);
-  /* در طول درگ، شمارش دقیق overrideها به پایان ژست موکول می‌شود؛ پیمایش کامل
-     برنامه در هر pointermove عامل اصلی کندی جابه‌جایی خطوط بود. */
-  const [editGestureActive, setEditGestureActive] = useState(false);
   /* باز/بسته‌بودن UI از وجود پیش‌نویس جداست تا خروج تصادفی، تغییرات تأییدنشده را پاک نکند. */
   const [editOpen, setEditOpen] = useState(false);
   const editOpenRef = useRef(editOpen);
@@ -215,14 +212,11 @@ export default function App() {
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
 
-  /* هنگام هر Drag، وجود پیش‌نمایش زنده برای فعال‌کردن «تأیید» کافی است؛ شمارش
-     دقیق تغییرها پس از پایان ژست انجام می‌شود تا حرکت برنامه‌های چند هزارخطی روان بماند. */
+  /* هنگام Drag هلدر دوم، اختلاف آفست به‌تنهایی برای فعال‌کردن «تأیید» کافی است؛
+     در این مسیر داغ عمداً deriveGcodeOvr (پیمایش کل برنامه) اجرا نمی‌شود تا
+     حرکت حتی روی برنامه‌های چند هزار خطی روان بماند. */
   const editChanges = useMemo(() => {
     if (!editOpen || !editBuf) return 0;
-    /* تغییر زنده قطعاً یک تغییر معلق است؛ مقدار دقیق بلافاصله در pointerup محاسبه
-       می‌شود. این خروج زودهنگام deriveGcodeOvr و JSON.stringify سراسری را از
-       حلقهٔ داغ درگ حذف می‌کند. */
-    if (editGestureActive) return 1;
     const draftHolder2 = editBuf.holder2 ?? params.holder2;
     const holder2Changed =
       draftHolder2.xOff !== params.holder2.xOff || draftHolder2.yOff !== params.holder2.yOff;
@@ -233,18 +227,7 @@ export default function App() {
     }
     if (editBuf.sketch !== sketch) n++;
     return n;
-  }, [
-    editOpen,
-    editBuf?.verts,
-    editBuf?.lines,
-    editBuf?.holder2,
-    editBuf?.sketch,
-    editGestureActive,
-    params,
-    genBase.segs,
-    gcodeOvr,
-    sketch,
-  ]);
+  }, [editOpen, editBuf, params, genBase.segs, gcodeOvr, sketch]);
 
   /* پارامترهای برداشت مستقیماً توپولوژی مسیر را تغییر می‌دهند. پیش‌نویس فعلی
      ابتدا نسبت به برنامه قبلی به override تبدیل، سپس روی برنامه جدید اعمال
@@ -323,7 +306,6 @@ export default function App() {
   /* واگرد / بازانجام روی اسکچ */
   const commitRef = useRef<HistEntry | null>(null);
   const restore = (e: HistEntry) => {
-    setEditGestureActive(false);
     setSketch(e.sketch);
     setGenerationSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
@@ -355,7 +337,6 @@ export default function App() {
   /* ---------- حالت ویرایش مسیر ---------- */
   const openEdit = () => {
     if (editOpenRef.current) return;
-    setEditGestureActive(false);
     /* پیش‌نویس قبلی بدون seed مجدد باز می‌شود؛ انتخاب‌ها و هندسه دقیقاً حفظ شده‌اند. */
     if (editBufRef.current) {
       setEditOpen(true);
@@ -372,7 +353,6 @@ export default function App() {
     if (!editOpenRef.current) return;
     /* فقط UI بسته می‌شود؛ editBuf به‌عنوان پیش‌نویس برای ورود بعدی باقی می‌ماند. */
     commitRef.current = null;
-    setEditGestureActive(false);
     setEditOpen(false);
     showToast("ویرایش مسیر بسته شد — پیش‌نویس تغییرات برای بازگشت بعدی حفظ شد", "warn");
   };
@@ -380,7 +360,6 @@ export default function App() {
     if (!editBufRef.current) return;
     pushPast(snap());
     commitRef.current = null;
-    setEditGestureActive(false);
     pendingParamRebaseRef.current = null;
     setEditBuf(null);
     setEditOpen(false);
@@ -390,7 +369,6 @@ export default function App() {
   const confirmEdit = () => {
     const eb = editBufRef.current;
     if (!eb) return;
-    setEditGestureActive(false);
     const draftHolder2 = eb.holder2 ?? params.holder2;
     const draftParams: Params = { ...params, holder2: draftHolder2 };
     const holder2Changed =
@@ -427,11 +405,9 @@ export default function App() {
   const onEditBuf = (next: EditBuf | null, commit: boolean) => {
     if (!commit) {
       if (!commitRef.current) commitRef.current = snap();
-      setEditGestureActive(true);
       setEditBuf(next);
       return;
     }
-    setEditGestureActive(false);
     const pend = commitRef.current ?? snap();
     commitRef.current = null;
     pushPast(pend);
