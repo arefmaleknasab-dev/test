@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { BlankShape, Holder2State, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
-import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
+import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
+import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconSplit, IconTool, IconTrash } from "./icons";
 
@@ -453,10 +453,17 @@ function ControlsPanel({
                   </span>
                 </div>
               </div>
+              <span className="mb-1 block text-[9.5px] font-bold text-mute">تنظیم مستقیم افست</span>
               <div className="grid grid-cols-2 gap-2">
                 <Num label="X Offset (+X)" unit="mm" value={shownHolder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
                 <Num label="Y Offset (−Y)" unit="mm" value={shownHolder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
               </div>
+
+              <Holder2CoordinateCalibration
+                current={shownHolder2}
+                onApply={onHolder2}
+              />
+
               <p className="mt-1.5 rounded-md bg-bg/60 px-2 py-1 font-mono text-[9px] leading-4 text-mute" dir="ltr">
                 Xm = Xw + Xoff , Ym = Yw/2 − Yoff
                 <br />
@@ -1023,6 +1030,131 @@ function BlankDims({
         <p className="anim-in text-center text-[10px] leading-4 text-brass2/80">
           ابعاد تغییر کرده — برای اثرگذاری روی «اعمال» کلیک کنید
         </p>
+      )}
+    </div>
+  );
+}
+
+/* کالیبراسیون اختیاری هلدر دوم از روی مختصات مطلق دو هلدر. محاسبه و اعمال
+   debounce شده است تا هنگام تایپ، تولید مسیر چندبار پشت‌سرهم اجرا نشود. */
+function Holder2CoordinateCalibration({
+  current,
+  onApply,
+}: {
+  current: Holder2State;
+  onApply: (value: Holder2State) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [holder1, setHolder1] = useState<HolderMachinePoint>({ x: 0, y: 0 });
+  const [holder2, setHolder2] = useState<HolderMachinePoint>(() => ({
+    x: current.xOff,
+    y: -current.yOff,
+  }));
+
+  /* در حالت بسته، مختصات نمونه با افست مستقیم فعلی هماهنگ می‌ماند. مختصات H1
+     حفظ می‌شود و H2 متناظر با آن ساخته می‌شود تا بازکردن گزینه مقدار غافلگیرکننده نداشته باشد. */
+  useEffect(() => {
+    if (open) return;
+    const next = {
+      x: Math.round((holder1.x + current.xOff) * 100) / 100,
+      y: Math.round((holder1.y - current.yOff) * 100) / 100,
+    };
+    setHolder2((prev) => prev.x === next.x && prev.y === next.y ? prev : next);
+  }, [open, holder1.x, holder1.y, current.xOff, current.yOff]);
+
+  const detected = useMemo(
+    () => holder2OffsetFromCoordinates(holder1, holder2),
+    [holder1.x, holder1.y, holder2.x, holder2.y]
+  );
+  const finite = Number.isFinite(detected.xOff) && Number.isFinite(detected.yOff);
+  const xValid = finite && detected.xOff >= MIN_HOLDER2_OFFSET;
+  const yValid = finite && detected.yOff >= MIN_HOLDER2_OFFSET;
+  const valid = xValid && yValid;
+  const applied = valid &&
+    Math.abs(detected.xOff - current.xOff) < 1e-9 &&
+    Math.abs(detected.yOff - current.yOff) < 1e-9;
+
+  /* پس از توقف کوتاه تایپ، نتیجه معتبر خودکار وارد فیلدهای اصلی می‌شود. */
+  useEffect(() => {
+    if (!open || !valid || applied) return;
+    const timer = window.setTimeout(() => onApply(detected), 320);
+    return () => window.clearTimeout(timer);
+  }, [open, valid, applied, detected.xOff, detected.yOff, onApply]);
+
+  const detectedText = (v: number) => Number.isFinite(v) ? v.toFixed(2) : "—";
+
+  return (
+    <div className="mt-2 overflow-hidden rounded-md border border-[#4cc9f0]/25 bg-bg/35">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-right transition-colors hover:bg-[#4cc9f0]/5"
+      >
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[#4cc9f0]/35 text-[#4cc9f0]">
+          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 2.5h10v11H3zM5 5h6M5 8h1M8 8h1M11 8h0M5 11h1M8 11h1M11 11h0" />
+          </svg>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-bold text-ink/90">محاسبه خودکار از مختصات دو هلدر</span>
+          <span className="block text-[8.5px] text-dim">روش اختیاری کالیبراسیون X و Y</span>
+        </span>
+        <span className="rounded-full border border-edge px-1.5 py-0.5 text-[8px] font-bold text-mute">اختیاری</span>
+        <svg viewBox="0 0 12 12" className={cn("h-2.5 w-2.5 text-dim transition-transform", open && "rotate-180")} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 4l4 4 4-4" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="anim-in border-t border-[#4cc9f0]/20 p-2">
+          <p className="mb-2 text-[9px] leading-4 text-mute">
+            ابتدا مختصات ماشینِ هلدر اول و سپس هلدر دوم را وارد کنید. نتیجه پس از توقف کوتاه تایپ، خودکار در افست‌های اصلی ثبت می‌شود.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2 rounded-md border border-edge bg-panel/60 p-2">
+            <div className="col-span-2 flex items-center gap-1.5">
+              <span className="grid h-4 w-5 place-items-center rounded bg-brass/15 font-mono text-[8px] font-bold text-brass2">H1</span>
+              <span className="text-[9.5px] font-bold text-mute">مختصات هلدر اول</span>
+            </div>
+            <Num label="محور X" unit="mm" value={holder1.x} step={0.1} onChange={(x) => setHolder1((p) => ({ ...p, x }))} />
+            <Num label="محور Y" unit="mm" value={holder1.y} step={0.1} onChange={(y) => setHolder1((p) => ({ ...p, y }))} />
+          </div>
+
+          <div className="mt-1.5 grid grid-cols-2 gap-2 rounded-md border border-[#4cc9f0]/20 bg-[#4cc9f0]/5 p-2">
+            <div className="col-span-2 flex items-center gap-1.5">
+              <span className="grid h-4 w-5 place-items-center rounded bg-[#4cc9f0]/15 font-mono text-[8px] font-bold text-[#4cc9f0]">H2</span>
+              <span className="text-[9.5px] font-bold text-mute">مختصات هلدر دوم</span>
+            </div>
+            <Num label="محور X" unit="mm" value={holder2.x} step={0.1} onChange={(x) => setHolder2((p) => ({ ...p, x }))} />
+            <Num label="محور Y" unit="mm" value={holder2.y} step={0.1} onChange={(y) => setHolder2((p) => ({ ...p, y }))} />
+          </div>
+
+          <div className={cn(
+            "mt-2 rounded-md border px-2 py-1.5",
+            valid ? "border-teal/35 bg-teal/8" : "border-danger/35 bg-danger/8"
+          )}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[9px] font-bold text-mute">افست تشخیص‌داده‌شده</span>
+              <span className={cn("text-[8.5px] font-bold", valid ? applied ? "text-teal" : "animate-pulse text-brass2" : "text-danger")}>
+                {valid ? applied ? "خودکار اعمال شد ✓" : "در حال ثبت خودکار…" : "مختصات نامعتبر"}
+              </span>
+            </div>
+            <div className="mt-1 grid grid-cols-2 gap-1 font-mono text-[10px] font-bold" dir="ltr">
+              <span className={xValid ? "text-teal" : "text-danger"}>Xoff = {detectedText(detected.xOff)}</span>
+              <span className={yValid ? "text-teal" : "text-danger"}>Yoff = {detectedText(detected.yOff)}</span>
+            </div>
+            {!valid && (
+              <p className="mt-1 text-[8.5px] leading-4 text-danger">
+                اختلاف هر محور باید حداقل {MIN_HOLDER2_OFFSET}mm باشد: H2.X باید بزرگ‌تر از H1.X و H2.Y باید کوچک‌تر از H1.Y باشد.
+              </p>
+            )}
+          </div>
+
+          <p className="mt-1.5 rounded bg-bg/60 px-2 py-1 font-mono text-[8.5px] leading-4 text-dim" dir="ltr">
+            Xoff = H2.X − H1.X &nbsp;•&nbsp; Yoff = H1.Y − H2.Y
+          </p>
+        </div>
       )}
     </div>
   );

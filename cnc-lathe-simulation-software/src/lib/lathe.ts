@@ -83,6 +83,31 @@ export interface Holder2State {
   yOff: number;
 }
 
+/** مختصات خوانده‌شدهٔ یک هلدر در دستگاه (محورهای X طولی و Y شعاعی). */
+export interface HolderMachinePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * کالیبراسیون اختیاری از روی مختصات مطلق دو هلدر:
+ *   Xoff = X₂ − X₁  (هلدر دوم در جهت +X)
+ *   Yoff = Y₁ − Y₂  (هلدر دوم در جهت −Y)
+ *
+ * این تابع فقط اختلاف واقعی را برمی‌گرداند؛ حداقل مجاز دستگاه در UI اعتبارسنجی
+ * می‌شود تا مختصات اشتباه به‌طور پنهانی clamp نشود.
+ */
+export function holder2OffsetFromCoordinates(
+  holder1: HolderMachinePoint,
+  holder2: HolderMachinePoint
+): Holder2State {
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  return {
+    xOff: round2(holder2.x - holder1.x),
+    yOff: round2(holder1.y - holder2.y),
+  };
+}
+
 /** چرخش ثابت هلدر دوم نسبت به هلدر اول (درجه) */
 export const HOLDER2_ROT = -90;
 
