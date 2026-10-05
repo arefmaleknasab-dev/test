@@ -1,11 +1,25 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { BlankShape, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
-import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
+import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
+import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconSplit, IconTool, IconTrash } from "./icons";
 
+const COLLAPSIBLE_SECTION_TITLES = [
+  "پیش‌تنظیم‌های طرح",
+  "استراتژی تراش",
+  "کاسه و هلدر دوم",
+  "ابزار تراش",
+  "قطعه خام",
+  "پارامترهای برداشت",
+] as const;
+const SECTION_COLLAPSE_COMMAND = "xarat-code:section-collapse-command";
+const SECTION_COLLAPSE_CHANGED = "xarat-code:section-collapse-changed";
+
 interface Props {
   params: Params;
+  /** مقدار پیش‌نویس در حالت ویرایش مسیر؛ فقط نمایش زنده تا زمان تأیید. */
+  holder2Draft: Holder2State | null;
+  onHolder2: (value: Holder2State) => void;
   onParams: (patch: Partial<Params>) => void;
   points: PPoint[];
   innerPoints: PPoint[];
@@ -23,6 +37,8 @@ interface Props {
 
 function ControlsPanel({
   params,
+  holder2Draft,
+  onHolder2,
   onParams,
   points,
   innerPoints,
@@ -40,6 +56,31 @@ function ControlsPanel({
   const sig = outerFirstOps(params.ops.filter((o) => o.on)).map((o) => o.type).join(",");
   const bowlStrategy = STRATEGIES.find((st) => st.id === "bowl")!;
   const bowlActive = sig === outerFirstTypes(bowlStrategy.types).join(",");
+  const sectionsAreCollapsed = () => {
+    const saved = loadCollapsedSections();
+    return COLLAPSIBLE_SECTION_TITLES.every((title) => !!saved[title]);
+  };
+  const [allSectionsCollapsed, setAllSectionsCollapsed] = useState(sectionsAreCollapsed);
+  useEffect(() => {
+    const sync = () => setAllSectionsCollapsed(sectionsAreCollapsed());
+    window.addEventListener(SECTION_COLLAPSE_CHANGED, sync);
+    return () => window.removeEventListener(SECTION_COLLAPSE_CHANGED, sync);
+  }, []);
+  const toggleAllSections = () => {
+    const next = !allSectionsCollapsed;
+    try {
+      const saved = loadCollapsedSections();
+      for (const title of COLLAPSIBLE_SECTION_TITLES) {
+        if (next) saved[title] = true;
+        else delete saved[title];
+      }
+      localStorage.setItem(COLLAPSED_SECTIONS_KEY, JSON.stringify(saved));
+    } catch {
+      /* رابط همچنان با رویداد همگام می‌شود، حتی اگر ذخیره محلی در دسترس نباشد. */
+    }
+    setAllSectionsCollapsed(next);
+    window.dispatchEvent(new CustomEvent<boolean>(SECTION_COLLAPSE_COMMAND, { detail: next }));
+  };
 
   /* درگ‌ودراپ برای جابه‌جایی عملیات‌ها (کنار فلش‌ها) */
   const [dragFrom, setDragFrom] = useState<number | null>(null);
@@ -59,7 +100,10 @@ function ControlsPanel({
     );
   const outerActive = params.ops.some((o) => o.on && OUTER_OPS.includes(o.type));
   const innerActive = params.ops.some((o) => o.on && INNER_OPS.includes(o.type));
-  const h2example = machineUV(80, 120, 2, params);
+  const shownHolder2 = holder2Draft ?? params.holder2;
+  const holder2IsDraft = !!holder2Draft &&
+    (holder2Draft.xOff !== params.holder2.xOff || holder2Draft.yOff !== params.holder2.yOff);
+  const h2example = machineUV(80, 120, 2, holder2IsDraft ? { ...params, holder2: shownHolder2 } : params);
   const moveOp = (i: number, dir: -1 | 1) => {
     const j = i + dir;
     if (j < 0 || j >= params.ops.length) return;
@@ -101,6 +145,21 @@ function ControlsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pl-0.5">
+      <div className="sticky top-0 z-20 flex items-center justify-between rounded-lg border border-edge bg-panel/95 px-2.5 py-2 shadow-lg shadow-black/25 backdrop-blur-sm">
+        <span className="text-[10.5px] font-bold text-mute">بخش‌های تنظیمات</span>
+        <button
+          type="button"
+          onClick={toggleAllSections}
+          className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-[10.5px] font-bold text-ink transition-colors hover:border-brass/50 hover:text-brass2"
+          title={allSectionsCollapsed ? "باز کردن همه بخش‌های تنظیمات" : "جمع کردن همه بخش‌های تنظیمات"}
+        >
+          <svg viewBox="0 0 14 14" className={cn("h-3 w-3 transition-transform", allSectionsCollapsed && "rotate-180")} fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 5l5-3 5 3M2 10l5-3 5 3" />
+          </svg>
+          {allSectionsCollapsed ? "باز کردن همه" : "جمع کردن همه"}
+        </button>
+      </div>
+
       {/* پیش‌تنظیم‌های طرح */}
       <Section title="پیش‌تنظیم‌های طرح" icon={<IconLayers className="h-3.5 w-3.5 text-brass" />}>
         <div className="grid grid-cols-3 gap-1.5">
@@ -114,11 +173,18 @@ function ControlsPanel({
                   ? "border-brass/70 bg-brass/10 shadow-[0_0_14px_rgba(227,169,78,0.15)]"
                   : "border-edge bg-panel2 hover:border-edge2"
               )}
-              title={`خام ⌀${p.blankD} × ${p.blankL}`}
+              title={p.empty ? "بوم خالی ۱۰۰ × ۱۰۰ میلی‌متر با مقطع مربعی" : `خام ⌀${p.blankD} × ${p.blankL}`}
             >
               <svg viewBox="0 0 100 34" className="h-8 w-full">
                 <line x1="0" y1="17" x2="100" y2="17" stroke="rgba(227,169,78,0.3)" strokeWidth="0.8" strokeDasharray="3 2" />
-                <path d={thumbPath(p, 100, 34)} fill="rgba(201,149,90,0.25)" stroke="#e3a94e" strokeWidth="1.1" fillRule="evenodd" />
+                <path
+                  d={thumbPath(p, 100, 34)}
+                  fill={p.empty ? "rgba(201,149,90,0.06)" : "rgba(201,149,90,0.25)"}
+                  stroke="#e3a94e"
+                  strokeWidth="1.1"
+                  strokeDasharray={p.empty ? "4 3" : undefined}
+                  fillRule="evenodd"
+                />
               </svg>
               <div className={cn("mt-1 text-[10.5px] font-semibold", activePreset === p.id ? "text-brass2" : "text-mute group-hover:text-ink")}>
                 {p.name}
@@ -434,14 +500,28 @@ function ControlsPanel({
             <div className="rounded-lg border border-[#4cc9f0]/30 bg-[#4cc9f0]/5 p-2">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-bold text-[#4cc9f0]">هلدر دوم (داخل‌تراش)</span>
-                <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
-                  ROT {HOLDER2_ROT}°
-                </span>
+                <div className="flex items-center gap-1">
+                  {holder2IsDraft && (
+                    <span className="rounded-full border border-teal/50 bg-teal/10 px-2 py-0.5 text-[8.5px] font-bold text-teal">
+                      زنده · پیش‌نویس
+                    </span>
+                  )}
+                  <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
+                    ROT {HOLDER2_ROT}°
+                  </span>
+                </div>
               </div>
+              <span className="mb-1 block text-[9.5px] font-bold text-mute">تنظیم مستقیم افست</span>
               <div className="grid grid-cols-2 gap-2">
-                <Num label="X Offset (+X)" unit="mm" value={params.holder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) } })} />
-                <Num label="Y Offset (−Y)" unit="mm" value={params.holder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onParams({ holder2: { ...params.holder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) } })} />
+                <Num label="X Offset (+X)" unit="mm" value={shownHolder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
+                <Num label="Y Offset (−Y)" unit="mm" value={shownHolder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
               </div>
+
+              <Holder2CoordinateCalibration
+                current={shownHolder2}
+                onApply={onHolder2}
+              />
+
               <p className="mt-1.5 rounded-md bg-bg/60 px-2 py-1 font-mono text-[9px] leading-4 text-mute" dir="ltr">
                 Xm = Xw + Xoff , Ym = Yw/2 − Yoff
                 <br />
@@ -716,34 +796,6 @@ function ControlsPanel({
         )}
       </Section>
 
-      {/* راهنمای ابزار ترسیم */}
-      <Section title="ابزار ترسیم پروفایل" icon={<IconCurve className="h-3.5 w-3.5 text-brass" />}>
-        <p className="rounded-md border border-dashed border-edge px-2.5 py-2 text-[10.5px] leading-5 text-dim">
-          ابزارهای <span className="text-teal">خط، منحنی، منحنی کنترلی و کمان</span> در نوار ابزار بالای بوم قرار دارند. برای ویرایش دقیق (طول، زاویه، شعاع و مختصات)، المان را انتخاب کنید تا پنجرهٔ مشخصات هندسی باز شود.
-        </p>
-        <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-copper/8 px-2 py-1.5 text-[10px] leading-4 text-copper/90">
-          <span className="mt-0.5 font-bold">⌄</span>
-          کشیدنِ خودِ المان فقط آن را جابه‌جا می‌کند (و نقاط متصل به خطوط دیگر را نمی‌برد). برای شکستنِ اتصالِ یک گوشهٔ مشترک، روی آن <span className="font-bold">راست‌کلیک</span> و «جداسازی» را بزنید.
-        </p>
-        <div className="mt-1.5 grid grid-cols-2 gap-1 font-mono text-[9px] text-dim" dir="ltr">
-          <span>V — انتخاب</span>
-          <span>L — خط</span>
-          <span>C — منحنی</span>
-          <span>B — منحنی کنترلی</span>
-          <span>A — کمان</span>
-          <span>Del — حذف</span>
-          <span>Ctrl+A — همه</span>
-          <span>Ctrl+I — معکوس</span>
-        </div>
-        <p className="mt-1.5 rounded-md border border-dashed border-edge px-2.5 py-2 text-[10px] leading-5 text-dim">
-          باکس انتخابگر: درگ <span className="font-bold text-[#4aa3ff]">چپ‌به‌راست</span> فقط المان‌های کاملاً داخل باکس را می‌گیرد، درگ <span className="font-bold text-[#3faf5d]">راست‌به‌چپ</span> هر چه را با باکس برخورد کند؛ باکس <span className="font-bold text-brass2">نقاط انتهایی، نقطهٔ کمان و دسته‌های کنترل منحنی‌های فعال</span> را هم جداگانه انتخاب می‌کند؛ <span className="font-bold">Shift</span> افزودن، <span className="font-bold">Ctrl</span> حذف، <span className="font-bold">دابل‌کلیک</span> انتخاب زنجیرهٔ متصل، و پن با <span className="font-bold">Space</span> یا دکمهٔ وسط/راست.
-        </p>
-        <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-brass/8 px-2 py-1.5 text-[10px] leading-4 text-brass2/90">
-          <span className="mt-0.5 font-bold">◉</span>
-          انتخاب مستقل نقاط: روی نقاط شروع/پایان کلیک کنید تا <span className="font-bold">مستقل</span> انتخاب شوند؛ با این کار <span className="font-bold">دسته‌های کنترل منحنی</span> همان المان ظاهر و قابل انتخاب می‌شوند. سپس با گرفتن هرکدام، همهٔ نقاط انتخاب‌شده با هم جابه‌جا می‌شوند (Shift برای انتخاب چندتایی). با <span className="font-bold">Delete</span> نقطه حذف می‌شود و اگر بین دو المان باشد، آن دو در یک المان ادغام می‌شوند تا مسیر حفظ شود.
-        </p>
-      </Section>
-
       <p className="px-1 pb-2 text-[10.5px] leading-5 text-dim">
         عملیات‌ها به ترتیبِ فهرست اجرا می‌شوند؛ با جابه‌جایی، حذف و افزودن آن‌ها استراتژی شخصی خود را بسازید. فلش‌ها روی مسیر، جهت حرکت ابزار را نشان می‌دهند.
       </p>
@@ -766,6 +818,13 @@ function loadCollapsedSections(): Record<string, boolean> {
 
 function Section({ title, icon, children }: { title: string; icon?: ReactNode; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(() => !!loadCollapsedSections()[title]);
+  useEffect(() => {
+    const applyCommand = (event: Event) => {
+      setCollapsed((event as CustomEvent<boolean>).detail);
+    };
+    window.addEventListener(SECTION_COLLAPSE_COMMAND, applyCommand);
+    return () => window.removeEventListener(SECTION_COLLAPSE_COMMAND, applyCommand);
+  }, []);
   const toggle = () => {
     const next = !collapsed;
     setCollapsed(next);
@@ -777,6 +836,7 @@ function Section({ title, icon, children }: { title: string; icon?: ReactNode; c
     } catch {
       /* ignore */
     }
+    window.dispatchEvent(new Event(SECTION_COLLAPSE_CHANGED));
   };
   return (
     <section className={cn("rounded-lg border border-edge bg-panel transition-colors", collapsed ? "px-2.5 py-1.5" : "p-2.5")}>
@@ -1008,6 +1068,131 @@ function BlankDims({
         <p className="anim-in text-center text-[10px] leading-4 text-brass2/80">
           ابعاد تغییر کرده — برای اثرگذاری روی «اعمال» کلیک کنید
         </p>
+      )}
+    </div>
+  );
+}
+
+/* کالیبراسیون اختیاری هلدر دوم از روی مختصات مطلق دو هلدر. محاسبه و اعمال
+   debounce شده است تا هنگام تایپ، تولید مسیر چندبار پشت‌سرهم اجرا نشود. */
+function Holder2CoordinateCalibration({
+  current,
+  onApply,
+}: {
+  current: Holder2State;
+  onApply: (value: Holder2State) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [holder1, setHolder1] = useState<HolderMachinePoint>({ x: 0, y: 0 });
+  const [holder2, setHolder2] = useState<HolderMachinePoint>(() => ({
+    x: current.xOff,
+    y: -current.yOff,
+  }));
+
+  /* در حالت بسته، مختصات نمونه با افست مستقیم فعلی هماهنگ می‌ماند. مختصات H1
+     حفظ می‌شود و H2 متناظر با آن ساخته می‌شود تا بازکردن گزینه مقدار غافلگیرکننده نداشته باشد. */
+  useEffect(() => {
+    if (open) return;
+    const next = {
+      x: Math.round((holder1.x + current.xOff) * 100) / 100,
+      y: Math.round((holder1.y - current.yOff) * 100) / 100,
+    };
+    setHolder2((prev) => prev.x === next.x && prev.y === next.y ? prev : next);
+  }, [open, holder1.x, holder1.y, current.xOff, current.yOff]);
+
+  const detected = useMemo(
+    () => holder2OffsetFromCoordinates(holder1, holder2),
+    [holder1.x, holder1.y, holder2.x, holder2.y]
+  );
+  const finite = Number.isFinite(detected.xOff) && Number.isFinite(detected.yOff);
+  const xValid = finite && detected.xOff >= MIN_HOLDER2_OFFSET;
+  const yValid = finite && detected.yOff >= MIN_HOLDER2_OFFSET;
+  const valid = xValid && yValid;
+  const applied = valid &&
+    Math.abs(detected.xOff - current.xOff) < 1e-9 &&
+    Math.abs(detected.yOff - current.yOff) < 1e-9;
+
+  /* پس از توقف کوتاه تایپ، نتیجه معتبر خودکار وارد فیلدهای اصلی می‌شود. */
+  useEffect(() => {
+    if (!open || !valid || applied) return;
+    const timer = window.setTimeout(() => onApply(detected), 320);
+    return () => window.clearTimeout(timer);
+  }, [open, valid, applied, detected.xOff, detected.yOff, onApply]);
+
+  const detectedText = (v: number) => Number.isFinite(v) ? v.toFixed(2) : "—";
+
+  return (
+    <div className="mt-2 overflow-hidden rounded-md border border-[#4cc9f0]/25 bg-bg/35">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-2 py-1.5 text-right transition-colors hover:bg-[#4cc9f0]/5"
+      >
+        <span className="grid h-5 w-5 shrink-0 place-items-center rounded border border-[#4cc9f0]/35 text-[#4cc9f0]">
+          <svg viewBox="0 0 16 16" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 2.5h10v11H3zM5 5h6M5 8h1M8 8h1M11 8h0M5 11h1M8 11h1M11 11h0" />
+          </svg>
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-bold text-ink/90">محاسبه خودکار از مختصات دو هلدر</span>
+          <span className="block text-[8.5px] text-dim">روش اختیاری کالیبراسیون X و Y</span>
+        </span>
+        <span className="rounded-full border border-edge px-1.5 py-0.5 text-[8px] font-bold text-mute">اختیاری</span>
+        <svg viewBox="0 0 12 12" className={cn("h-2.5 w-2.5 text-dim transition-transform", open && "rotate-180")} fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2 4l4 4 4-4" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="anim-in border-t border-[#4cc9f0]/20 p-2">
+          <p className="mb-2 text-[9px] leading-4 text-mute">
+            ابتدا مختصات ماشینِ هلدر اول و سپس هلدر دوم را وارد کنید. نتیجه پس از توقف کوتاه تایپ، خودکار در افست‌های اصلی ثبت می‌شود.
+          </p>
+
+          <div className="grid grid-cols-2 gap-2 rounded-md border border-edge bg-panel/60 p-2">
+            <div className="col-span-2 flex items-center gap-1.5">
+              <span className="grid h-4 w-5 place-items-center rounded bg-brass/15 font-mono text-[8px] font-bold text-brass2">H1</span>
+              <span className="text-[9.5px] font-bold text-mute">مختصات هلدر اول</span>
+            </div>
+            <Num label="محور X" unit="mm" value={holder1.x} step={0.1} onChange={(x) => setHolder1((p) => ({ ...p, x }))} />
+            <Num label="محور Y" unit="mm" value={holder1.y} step={0.1} onChange={(y) => setHolder1((p) => ({ ...p, y }))} />
+          </div>
+
+          <div className="mt-1.5 grid grid-cols-2 gap-2 rounded-md border border-[#4cc9f0]/20 bg-[#4cc9f0]/5 p-2">
+            <div className="col-span-2 flex items-center gap-1.5">
+              <span className="grid h-4 w-5 place-items-center rounded bg-[#4cc9f0]/15 font-mono text-[8px] font-bold text-[#4cc9f0]">H2</span>
+              <span className="text-[9.5px] font-bold text-mute">مختصات هلدر دوم</span>
+            </div>
+            <Num label="محور X" unit="mm" value={holder2.x} step={0.1} onChange={(x) => setHolder2((p) => ({ ...p, x }))} />
+            <Num label="محور Y" unit="mm" value={holder2.y} step={0.1} onChange={(y) => setHolder2((p) => ({ ...p, y }))} />
+          </div>
+
+          <div className={cn(
+            "mt-2 rounded-md border px-2 py-1.5",
+            valid ? "border-teal/35 bg-teal/8" : "border-danger/35 bg-danger/8"
+          )}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[9px] font-bold text-mute">افست تشخیص‌داده‌شده</span>
+              <span className={cn("text-[8.5px] font-bold", valid ? applied ? "text-teal" : "animate-pulse text-brass2" : "text-danger")}>
+                {valid ? applied ? "خودکار اعمال شد ✓" : "در حال ثبت خودکار…" : "مختصات نامعتبر"}
+              </span>
+            </div>
+            <div className="mt-1 grid grid-cols-2 gap-1 font-mono text-[10px] font-bold" dir="ltr">
+              <span className={xValid ? "text-teal" : "text-danger"}>Xoff = {detectedText(detected.xOff)}</span>
+              <span className={yValid ? "text-teal" : "text-danger"}>Yoff = {detectedText(detected.yOff)}</span>
+            </div>
+            {!valid && (
+              <p className="mt-1 text-[8.5px] leading-4 text-danger">
+                اختلاف هر محور باید حداقل {MIN_HOLDER2_OFFSET}mm باشد: H2.X باید بزرگ‌تر از H1.X و H2.Y باید کوچک‌تر از H1.Y باشد.
+              </p>
+            )}
+          </div>
+
+          <p className="mt-1.5 rounded bg-bg/60 px-2 py-1 font-mono text-[8.5px] leading-4 text-dim" dir="ltr">
+            Xoff = H2.X − H1.X &nbsp;•&nbsp; Yoff = H1.Y − H2.Y
+          </p>
+        </div>
       )}
     </div>
   );

@@ -7,10 +7,10 @@ import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
-import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, GenResult, Params, PPoint, Preset } from "./lib/lathe";
+import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
+import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset, SplitState } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
-import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
+import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, segMid, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
 
 const STORE_KEY = "kharraatcode-v1";
@@ -26,7 +26,7 @@ interface Saved {
   version?: number;
 }
 
-const SAVE_VERSION = 6;
+const SAVE_VERSION = 7;
 
 let SAVED: Saved | null = null;
 try {
@@ -44,6 +44,10 @@ interface HistEntry {
   sketch: SketchSeg[];
   gcodeOvr: GcodeOvrMap;
   editBuf: EditBuf | null;
+  /** آفست تأییدشدهٔ H2 نیز همراه ویرایش مسیر Undo/Redo می‌شود. */
+  holder2: Holder2State;
+  /** وضعیت Split بخشی از تاریخچه است تا حذف/ایجاد آن با Ctrl+Z برگردد. */
+  split: SplitState;
 }
 
 /* بازخوانی ایمنِ اوررایدها از حافظهٔ محلی (سنجش نوع پس از پارس) */
@@ -90,23 +94,54 @@ export default function App() {
     if (SAVED?.points && SAVED.points.length >= 2) return sketchFromPoints(SAVED.points);
     return sketchFromPoints(presetPoints(PRESETS[0]));
   });
+  /* منبع مولد مسیر از اسکچ نمایشی جداست تا وقتی همهٔ لایه‌ها خاموش‌اند، درگ
+     پروفایل بدون اجرای generate در هر فریم انجام شود؛ در pointerup همگام می‌شود. */
+  const [generationSketch, setGenerationSketch] = useState<SketchSeg[]>(sketch);
   const [params, setParams] = useState<Params>(() => normalizeParams(SAVED?.params, IS_LEGACY));
   const [settings, setSettings] = useState<EdSettings>(() => {
     const s = SAVED?.settings;
+    const legacyShowBore = (s as (Partial<EdSettings> & { showBore?: boolean }) | undefined)?.showBore;
+    /* ۵۰/۵ پیش‌فرض نسخهٔ قبل بود؛ فقط همین جفت مقدار در ارتقای نسخه به ۱۰۰/۱۰ مهاجرت می‌کند. */
+    const legacyGridDefaults =
+      (SAVED?.version ?? 0) < 7 && s?.editGridSize === 50 && s?.editGridDivisions === 5;
     return {
       snap: s?.snap ?? 1,
       smartSnap: s?.smartSnap ?? true,
       showRough: s?.showRough ?? true,
       showFinish: s?.showFinish ?? true,
       showOffset: s?.showOffset ?? true,
-      showBore: s?.showBore ?? true,
+      showInnerRough: s?.showInnerRough ?? legacyShowBore ?? true,
+      showInnerOffset: s?.showInnerOffset ?? legacyShowBore ?? true,
+      showInnerFinish: s?.showInnerFinish ?? legacyShowBore ?? true,
       showRound: s?.showRound ?? true,
       showFace: s?.showFace ?? true,
       showBottom: s?.showBottom ?? true,
       showRapids: s?.showRapids ?? true,
       showGhost: s?.showGhost ?? true,
+      layerOpacity: typeof s?.layerOpacity === "number" && isFinite(s.layerOpacity)
+        ? Math.min(1, Math.max(0.1, s.layerOpacity))
+        : 1,
+      editGridVisible: s?.editGridVisible ?? true,
+      editGridSize: !legacyGridDefaults && typeof s?.editGridSize === "number" && isFinite(s.editGridSize)
+        ? Math.min(500, Math.max(1, s.editGridSize))
+        : 100,
+      editGridDivisions: !legacyGridDefaults && typeof s?.editGridDivisions === "number" && isFinite(s.editGridDivisions)
+        ? Math.min(20, Math.max(1, Math.round(s.editGridDivisions)))
+        : 10,
     };
   });
+  const allProfileLayersHidden =
+    !settings.showRough &&
+    !settings.showFinish &&
+    !settings.showOffset &&
+    !settings.showInnerRough &&
+    !settings.showInnerOffset &&
+    !settings.showInnerFinish &&
+    !settings.showRound &&
+    !settings.showFace &&
+    !settings.showBottom &&
+    !settings.showRapids &&
+    !settings.showGhost;
   const [layout, setLayout] = useState<LayoutState>(() => normalizeLayout(SAVED?.layout));
   const [mode, setMode] = useState<"design" | "sim">("design");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -139,8 +174,8 @@ export default function App() {
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);
-  const stateRef = useRef({ sketch, gcodeOvr, editBuf });
-  stateRef.current = { sketch, gcodeOvr, editBuf };
+  const stateRef = useRef({ sketch, gcodeOvr, editBuf, holder2: params.holder2, split: params.split });
+  stateRef.current = { sketch, gcodeOvr, editBuf, holder2: params.holder2, split: params.split };
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -155,7 +190,7 @@ export default function App() {
   const { points, innerPoints, splitInfo } = useMemo(() => {
     const blankR = params.blankD / 2;
     if (params.split.enabled) {
-      const poly = chainPolyline(orderChain(sketch));
+      const poly = chainPolyline(orderChain(generationSketch));
       if (poly.length >= 3) {
         const sp = splitChainAt(poly, { z: params.split.z, r: params.split.r });
         return {
@@ -166,12 +201,33 @@ export default function App() {
       }
     }
     const none: { outerDir: 1 | -1; innerDir: 1 | -1; at: { z: number; r: number } } | null = null;
-    return { points: flattenSketch(sketch, blankR, params.blankL), innerPoints: [] as PPoint[], splitInfo: none };
-  }, [sketch, params.split, params.blankD, params.blankL]);
+    return { points: flattenSketch(generationSketch, blankR, params.blankL), innerPoints: [] as PPoint[], splitInfo: none };
+  }, [generationSketch, params.split, params.blankD, params.blankL]);
+
+  useEffect(() => {
+    if (!allProfileLayersHidden && generationSketch !== sketch) setGenerationSketch(sketch);
+  }, [allProfileLayersHidden, generationSketch, sketch]);
 
   const genBase = useMemo(() => generate(points, params, innerPoints), [points, params, innerPoints]);
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
+
+  /* هنگام Drag هلدر دوم، اختلاف آفست به‌تنهایی برای فعال‌کردن «تأیید» کافی است؛
+     در این مسیر داغ عمداً deriveGcodeOvr (پیمایش کل برنامه) اجرا نمی‌شود تا
+     حرکت حتی روی برنامه‌های چند هزار خطی روان بماند. */
+  const editChanges = useMemo(() => {
+    if (!editOpen || !editBuf) return 0;
+    const draftHolder2 = editBuf.holder2 ?? params.holder2;
+    const holder2Changed =
+      draftHolder2.xOff !== params.holder2.xOff || draftHolder2.yOff !== params.holder2.yOff;
+    let n = holder2Changed ? 1 : 0;
+    if (!holder2Changed) {
+      const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
+      if (JSON.stringify(next) !== JSON.stringify(gcodeOvr)) n++;
+    }
+    if (editBuf.sketch !== sketch) n++;
+    return n;
+  }, [editOpen, editBuf, params, genBase.segs, gcodeOvr, sketch]);
 
   /* پارامترهای برداشت مستقیماً توپولوژی مسیر را تغییر می‌دهند. پیش‌نویس فعلی
      ابتدا نسبت به برنامه قبلی به override تبدیل، سپس روی برنامه جدید اعمال
@@ -183,9 +239,14 @@ export default function App() {
     pendingParamRebaseRef.current = null;
     setEditBuf((buf) => {
       if (!buf) return buf;
-      const draftOvr = deriveGcodeOvr(buf.verts, buf.lines, pending.genBase.segs, pending.gcodeOvr, pending.params);
-      const rebuilt = applyGcodeOvr(genBase, draftOvr, params);
-      const seed = seedGcodeEdit(rebuilt.segs, params);
+      /* آفست H2 در حالت ادیت بخشی از پیش‌نویس است. هنگام تغییر پارامترهای دیگر
+         نباید به override هندسی تبدیل یا با مقدار تأییدشده بازنویسی شود. */
+      const draftHolder2 = buf.holder2 ?? pending.params.holder2;
+      const oldDraftParams: Params = { ...pending.params, holder2: draftHolder2 };
+      const newDraftParams: Params = { ...params, holder2: draftHolder2 };
+      const draftOvr = deriveGcodeOvr(buf.verts, buf.lines, pending.genBase.segs, pending.gcodeOvr, oldDraftParams);
+      const rebuilt = applyGcodeOvr(genBase, draftOvr, newDraftParams);
+      const seed = seedGcodeEdit(rebuilt.segs, newDraftParams);
 
       /* انتخاب‌ها با کلید پایدار + شماره قطعه در همان حرکت منتقل می‌شوند. */
       const oldCount = new Map<string, number>();
@@ -218,7 +279,7 @@ export default function App() {
     if (!presetReseedRef.current) return;
     presetReseedRef.current = false;
     const seed = seedGcodeEdit(gen.segs, params);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null });
     commitRef.current = null;
     setHistVer((v) => v + 1);
   }, [gen, params, sketch]);
@@ -237,6 +298,41 @@ export default function App() {
     setActiveLine(-1);
   }, [gen]);
 
+  /* در طراحی پروفایل، انتخاب خط نیز نزدیک‌ترین حرکت پرداختیِ متناظر را در جی‌کد
+     نشان می‌دهد. در Edit path نگاشت دقیق‌تر بر پایهٔ ovrKey داخل ProfileEditor است. */
+  useEffect(() => {
+    if (mode !== "design" || editOpen) return;
+    const selectedSeg = selectedIds.length
+      ? sketch.find((segment) => segment.id === selectedIds[selectedIds.length - 1])
+      : null;
+    if (!selectedSeg) {
+      setActiveLine(-1);
+      return;
+    }
+    const target = segMid(selectedSeg);
+    const finalPasses = gen.segs.filter((segment) =>
+      segment.line >= 0 && segment.motion === 1 && (segment.kind === "finish" || segment.kind === "borefin")
+    );
+    const candidates = finalPasses.length
+      ? finalPasses
+      : gen.segs.filter((segment) => segment.line >= 0 && segment.motion === 1);
+    let bestLine = -1;
+    let bestDistance = Infinity;
+    for (const segment of candidates) {
+      const az = segment.z1, ar = segment.x1 / 2;
+      const bz = segment.z2, br = segment.x2 / 2;
+      const dz = bz - az, dr = br - ar;
+      const len2 = dz * dz + dr * dr || 1;
+      const t = Math.min(1, Math.max(0, ((target.z - az) * dz + (target.r - ar) * dr) / len2));
+      const distance = Math.hypot(target.z - (az + dz * t), target.r - (ar + dr * t));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestLine = segment.line;
+      }
+    }
+    setActiveLine(bestLine);
+  }, [mode, editOpen, selectedIds, sketch, gen.segs]);
+
   /* اگر عملیاتِ ایزوله‌شده حذف شد، از حالت ایزوله خارج شو */
   useEffect(() => {
     if (isolatedOpId != null && !params.ops.some((o) => o.id === isolatedOpId)) setIsolatedOpId(null);
@@ -246,8 +342,15 @@ export default function App() {
   const commitRef = useRef<HistEntry | null>(null);
   const restore = (e: HistEntry) => {
     setSketch(e.sketch);
+    setGenerationSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
+    setParams((p) => {
+      const sameHolder = p.holder2.xOff === e.holder2.xOff && p.holder2.yOff === e.holder2.yOff;
+      const sameSplit = p.split.enabled === e.split.enabled && p.split.z === e.split.z && p.split.r === e.split.r;
+      if (sameHolder && sameSplit) return p;
+      return { ...p, holder2: { ...e.holder2 }, split: { ...e.split } };
+    });
     /* Undo/Redo نباید پیش‌نویس را در پشت‌صحنه تغییر دهد: هر وضعیت تاریخی که
        EditBuf دارد، هم‌زمان خودِ حالت ویرایش مسیر را نیز دوباره باز می‌کند. */
     setEditOpen(!!e.editBuf);
@@ -277,7 +380,7 @@ export default function App() {
     }
     pushPast(snap());
     const seed = seedGcodeEdit(gen.segs, params);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, selLines: [], activeLine: null });
+    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null });
     setEditOpen(true);
     setHistVer((v) => v + 1);
   };
@@ -301,20 +404,37 @@ export default function App() {
   const confirmEdit = () => {
     const eb = editBufRef.current;
     if (!eb) return;
-    const next = deriveGcodeOvr(eb.verts, eb.lines, genBase.segs, gcodeOvr, params);
+    const draftHolder2 = eb.holder2 ?? params.holder2;
+    const draftParams: Params = { ...params, holder2: draftHolder2 };
+    const holder2Changed =
+      draftHolder2.xOff !== params.holder2.xOff || draftHolder2.yOff !== params.holder2.yOff;
+    /* آفست H2 روی هندسهٔ ورود امن مولد نیز اثر دارد (گوشهٔ افقی→عمودی).
+       مقایسه با پایهٔ قدیمی آن گوشه را اشتباهاً override می‌کرد؛ پایهٔ پیش‌نویس
+       دقیقاً با آفست زنده ساخته می‌شود تا جابه‌جایی خالص، override نسازد. */
+    const draftGenBase = holder2Changed ? generate(points, draftParams, innerPoints) : genBase;
+    const next = deriveGcodeOvr(eb.verts, eb.lines, draftGenBase.segs, gcodeOvr, draftParams);
     const sketchChanged = eb.sketch !== sketch;
-    if (!sketchChanged && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
+    if (!sketchChanged && !holder2Changed && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
       showToast("تغییری برای ثبت نیست", "warn");
       return;
     }
     pushPast(snap());
     setGcodeOvr(next);
+    if (holder2Changed) {
+      /* عمداً از onParamsCb عبور نمی‌کند: بافر از قبل با همین آفست در فضای
+         ماشین جابه‌جا شده و rebase دوباره باعث دوبرابرشدن حرکت می‌شود. */
+      pendingParamRebaseRef.current = null;
+      setParams((p) => ({ ...p, holder2: { ...draftHolder2 } }));
+    }
     if (sketchChanged) {
       setActivePreset(null);
       setSketch(eb.sketch);
+      setGenerationSketch(eb.sketch);
     }
     setHistVer((v) => v + 1);
-    showToast("جی‌کد به‌روز شد ✓ (ویرایش مسیر باز ماند)");
+    showToast(holder2Changed
+      ? "جی‌کد و آفست هلدر دوم به‌روز شد ✓ (ویرایش مسیر باز ماند)"
+      : "جی‌کد به‌روز شد ✓ (ویرایش مسیر باز ماند)");
   };
   /* تغییرات بافر (خطوط/پروفایل/افست) — یک‌گام تاریخچه برای هر ژست */
   const onEditBuf = (next: EditBuf | null, commit: boolean) => {
@@ -338,6 +458,15 @@ export default function App() {
 
   /* کال‌بک‌های پایدار: هویت ثابت تا فرزندهای memo هنگام تیک شبیه‌سازی بازرندر نشوند */
   const onParamsCb = useCallback((patch: Partial<Params>) => {
+    if (patch.split) {
+      const before = stateRef.current.split;
+      const changed = before.enabled !== patch.split.enabled || before.z !== patch.split.z || before.r !== patch.split.r;
+      if (changed) {
+        /* ایجاد، جابه‌جایی و به‌ویژه حذف Split یک گام مستقل تاریخچه است. */
+        pushPast(snap());
+        setHistVer((v) => v + 1);
+      }
+    }
     if (editBufRef.current && !pendingParamRebaseRef.current) {
       pendingParamRebaseRef.current = { genBase, params, gcodeOvr };
     }
@@ -356,6 +485,27 @@ export default function App() {
       return next;
     });
   }, [genBase, params, gcodeOvr]);
+  const onHolder2SettingsCb = useCallback((value: Holder2State) => {
+    const next: Holder2State = {
+      xOff: Math.max(MIN_HOLDER2_OFFSET, value.xOff),
+      yOff: Math.max(MIN_HOLDER2_OFFSET, value.yOff),
+    };
+    const eb = editBufRef.current;
+    if (editOpenRef.current && eb) {
+      const prev = eb.holder2 ?? stateRef.current.holder2;
+      const verts = translateHolder2Edit(
+        eb.verts,
+        eb.lines,
+        next.xOff - prev.xOff,
+        prev.yOff - next.yOff
+      );
+      onEditBuf({ ...eb, verts, holder2: next }, true);
+      return;
+    }
+    onParamsCb({ holder2: next });
+    // onEditBuf بر پایه refهای پایدار کار می‌کند؛ هویت callback فقط با پارامتر مولد عوض می‌شود.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onParamsCb]);
   const onStrategyCb = useCallback((name: string) => showToast(`استراتژی «${name}» فعال شد`), [showToast]);
 
   /* ---------- چیدمان داک (پنجره‌ها) ---------- */
@@ -395,13 +545,14 @@ export default function App() {
       return;
     }
     if (commit) {
-      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null });
+      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 }, split: { ...params.split } });
       commitRef.current = null;
       setActivePreset(null);
     } else if (!commitRef.current) {
-      commitRef.current = { sketch, gcodeOvr, editBuf: null }; // وضعیت پیش از شروع کشیدن
+      commitRef.current = { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 }, split: { ...params.split } }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
+    if (commit || !allProfileLayersHidden) setGenerationSketch(next);
     /* اگر پیش‌نویس پنهان وجود دارد، اسکچ جدید را نیز در آن همگام نگه می‌داریم
        تا بازگشت و تأیید بعدی، تغییرات تازهٔ طراحی را بازنویسی نکند. */
     if (editBufRef.current && !editOpenRef.current) {
@@ -409,12 +560,14 @@ export default function App() {
     }
     setHistVer((v) => v + 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sketch, gcodeOvr]);
+  }, [sketch, gcodeOvr, allProfileLayersHidden]);
 
   const applyPreset = useCallback((p: Preset) => {
-    const nextSketch = p.wall
-      ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
-      : sketchFromPoints(presetPoints(p));
+    const nextSketch = p.empty
+      ? []
+      : p.wall
+        ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
+        : sketchFromPoints(presetPoints(p));
     const hadEditDraft = !!editBufRef.current;
 
     /* preset یک تغییر اتمیکِ طرح است. نگه‌داشتن verts/lines یا overrideهای طرح
@@ -423,6 +576,7 @@ export default function App() {
     commitRef.current = null;
     pendingParamRebaseRef.current = null;
     setSketch(nextSketch);
+    setGenerationSketch(nextSketch);
     setGcodeOvr({});
     if (hadEditDraft) {
       presetReseedRef.current = true;
@@ -432,8 +586,13 @@ export default function App() {
     }
 
     setParams((prev) => {
-      const next: Params = { ...prev, blankD: p.blankD, blankL: p.blankL };
-      if (p.shape) next.blankShape = p.shape;
+      const next: Params = {
+        ...prev,
+        blankD: p.blankD,
+        blankL: p.blankL,
+        /* همهٔ پیش‌تنظیم‌ها با مقطع خام مربعی شروع می‌شوند. */
+        blankShape: p.shape,
+      };
       next.split = p.split
         ? { enabled: true, z: p.split.z, r: p.split.r }
         : { ...prev.split, enabled: false };
@@ -465,21 +624,12 @@ export default function App() {
     const poly = chainPolyline(orderChain(sketch));
     const auto = autoSplitPoint(poly);
     if (auto) {
-      const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
-      setParams((prev) => ({
-        ...prev,
-        split: { ...prev.split, enabled: true, z: auto.z, r: auto.r },
-        ops: makeOps(bowl.types),
-        holder2: {
-          xOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.xOff),
-          yOff: Math.max(MIN_HOLDER2_OFFSET, prev.holder2.yOff),
-        },
-      }));
+      onParamsCb({ split: { enabled: true, z: auto.z, r: auto.r } });
       showToast(`نقطه Split تعیین و استراتژی «کاسه داخل+خارج» فعال شد (X ${auto.z} • ⌀ ${(auto.r * 2).toFixed(1)})`);
     } else {
       showToast("زنجیره پروفیل برای Split خودکار کافی نیست", "warn");
     }
-  }, [sketch, showToast]);
+  }, [sketch, showToast, onParamsCb]);
 
   /* متن جی‌کد با پایان‌خط CRLF (سازگار با CIMCO/ویندوز و کنترلرها) */
   const gcodeText = () => gen.lines.join("\r\n");
@@ -608,6 +758,8 @@ export default function App() {
         >
           <ControlsPanel
             params={params}
+            holder2Draft={editOpen && editBuf ? editBuf.holder2 : null}
+            onHolder2={onHolder2SettingsCb}
             onParams={onParamsCb}
             points={points}
             innerPoints={innerPoints}
@@ -645,13 +797,7 @@ export default function App() {
               segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
               edit={editOpen ? editBuf : null}
-              editChanges={(() => {
-                if (!editOpen || !editBuf) return 0;
-                const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
-                let n = JSON.stringify(next) === JSON.stringify(gcodeOvr) ? 0 : 1;
-                if (editBuf.sketch !== sketch) n++;
-                return n;
-              })()}
+              editChanges={editChanges}
               onEditToggle={(open) => (open ? openEdit() : closeEdit())}
               onEditBuf={onEditBuf}
               onEditConfirm={confirmEdit}
@@ -662,24 +808,13 @@ export default function App() {
               params={params}
               gen={gen}
               split={params.split}
-              onSplit={(s) => setParams((p) => {
-                if (!s.enabled) return { ...p, split: s };
-                const bowl = STRATEGIES.find((st) => st.id === "bowl")!;
-                return {
-                  ...p,
-                  split: s,
-                  ops: makeOps(bowl.types),
-                  holder2: {
-                    xOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.xOff),
-                    yOff: Math.max(MIN_HOLDER2_OFFSET, p.holder2.yOff),
-                  },
-                };
-              })}
+              onSplit={(split) => onParamsCb({ split })}
               settings={settings}
               onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
               ops={params.ops}
               isolatedOpId={isolatedOpId}
               onClearIsolate={() => setIsolatedOpId(null)}
+              onActiveGCodeLine={setActiveLine}
               onUndo={undo}
               onRedo={redo}
               canUndo={past.current.length > 0}

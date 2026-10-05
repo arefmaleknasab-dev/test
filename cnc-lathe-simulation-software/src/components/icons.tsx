@@ -56,6 +56,8 @@ export const IconWarn = (p: P) =>
   base(p, <><path d="M12 3 2.5 20h19z" /><path d="M12 9.5V14" /><path d="M12 17h.01" /></>);
 export const IconLayers = (p: P) =>
   base(p, <><path d="m12 3 9 5-9 5-9-5z" /><path d="m3 13 9 5 9-5" /><path d="m3 17 9 5 9-5" /></>);
+export const IconGrid = (p: P) =>
+  base(p, <><rect x="3" y="3" width="18" height="18" rx="1.5" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" /></>);
 export const IconViewXY = (p: P) =>
   base(p, <><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="3" /><path d="M12 1.5v4M12 18.5v4M1.5 12h4M18.5 12h4" /></>);
 export const IconViewXZ = (p: P) =>

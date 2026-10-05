@@ -83,6 +83,31 @@ export interface Holder2State {
   yOff: number;
 }
 
+/** مختصات خوانده‌شدهٔ یک هلدر در دستگاه (محورهای X طولی و Y شعاعی). */
+export interface HolderMachinePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * کالیبراسیون اختیاری از روی مختصات مطلق دو هلدر:
+ *   Xoff = X₂ − X₁  (هلدر دوم در جهت +X)
+ *   Yoff = Y₁ − Y₂  (هلدر دوم در جهت −Y)
+ *
+ * این تابع فقط اختلاف واقعی را برمی‌گرداند؛ حداقل مجاز دستگاه در UI اعتبارسنجی
+ * می‌شود تا مختصات اشتباه به‌طور پنهانی clamp نشود.
+ */
+export function holder2OffsetFromCoordinates(
+  holder1: HolderMachinePoint,
+  holder2: HolderMachinePoint
+): Holder2State {
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  return {
+    xOff: round2(holder2.x - holder1.x),
+    yOff: round2(holder1.y - holder2.y),
+  };
+}
+
 /** چرخش ثابت هلدر دوم نسبت به هلدر اول (درجه) */
 export const HOLDER2_ROT = -90;
 
@@ -2026,14 +2051,16 @@ export interface Preset {
   blankD: number;
   blankL: number;
   pts: [number, number, boolean][]; // z, r, smooth
+  /** بوم طراحی عمداً بدون هیچ المانی باز شود. */
+  empty?: boolean;
   /** زنجیره دیواره کاسه به ترتیب مسیر: خارج → لبه → داخل (فقط پریست کاسه) */
   wall?: [number, number, boolean][];
   /** نقطه Split پیشنهادی روی دیواره */
   split?: { z: number; r: number };
   /** استراتژی پیشنهادی هنگام اعمال پریست */
   strategy?: string;
-  /** شکل مقطع خام پیشنهادی */
-  shape?: BlankShape;
+  /** شکل مقطع خام پیش‌فرض؛ برای همهٔ پیش‌تنظیم‌ها صریحاً تعیین می‌شود. */
+  shape: BlankShape;
 }
 
 export const PRESETS: Preset[] = [
@@ -2042,6 +2069,7 @@ export const PRESETS: Preset[] = [
     name: "پایه مبل",
     blankD: 60,
     blankL: 200,
+    shape: "square",
     pts: [
       [0, 22, false], [10, 22, false], [16, 29, true], [30, 29, true],
       [42, 17, true], [54, 17, true], [62, 27, true], [76, 27, true],
@@ -2055,6 +2083,7 @@ export const PRESETS: Preset[] = [
     name: "گلدان",
     blankD: 64,
     blankL: 200,
+    shape: "square",
     pts: [
       [0, 9, true], [8, 14, true], [20, 24, true], [36, 30, true],
       [54, 27, true], [76, 15, true], [96, 10, true], [114, 11, true],
@@ -2067,6 +2096,7 @@ export const PRESETS: Preset[] = [
     name: "پیاله",
     blankD: 150,
     blankL: 90,
+    shape: "square",
     pts: [
       [0, 10, true], [12, 22, true], [30, 42, true], [52, 58, true],
       [70, 67, true], [82, 71, true], [90, 72, false],
@@ -2077,7 +2107,7 @@ export const PRESETS: Preset[] = [
     name: "کاسه (داخل+خارج)",
     blankD: 150,
     blankL: 90,
-    shape: "circle",
+    shape: "square",
     strategy: "bowl",
     split: { z: 90, r: 68 },
     pts: [
@@ -2100,6 +2130,7 @@ export const PRESETS: Preset[] = [
     name: "ستون نرده",
     blankD: 70,
     blankL: 240,
+    shape: "square",
     pts: [
       [0, 18, false], [8, 24, true], [18, 24, true], [26, 32, true],
       [40, 32, true], [50, 20, true], [62, 14, true], [76, 14, true],
@@ -2114,6 +2145,7 @@ export const PRESETS: Preset[] = [
     name: "مهره تسبیح",
     blankD: 40,
     blankL: 60,
+    shape: "square",
     pts: [
       [0, 5, true], [8, 11, true], [18, 17, true], [30, 19, true],
       [42, 17, true], [52, 11, true], [60, 5, true],
@@ -2124,9 +2156,19 @@ export const PRESETS: Preset[] = [
     name: "استوانه خام",
     blankD: 60,
     blankL: 180,
+    shape: "square",
     pts: [
       [0, 30, false], [180, 30, false],
     ],
+  },
+  {
+    id: "empty-100",
+    name: "طرح خالی ۱۰×۱۰",
+    blankD: 100,
+    blankL: 100,
+    shape: "square",
+    empty: true,
+    pts: [],
   },
 ];
 
@@ -2148,6 +2190,10 @@ export function thumbPath(p: Preset, w: number, h: number): string {
     for (let i = pts.length - 1; i >= 0; i--) d += ` L ${sx(pts[i][0]).toFixed(1)} ${(h - sy(pts[i][1])).toFixed(1)}`;
     return d + " Z";
   };
+  if (p.empty || p.pts.length === 0) {
+    /* بندانگشتی بوم خالی فقط محدودهٔ خام ۱۰×۱۰ را نشان می‌دهد. */
+    return `M 3 3 H ${w - 3} V ${h - 3} H 3 Z`;
+  }
   /* کاسه: حلقه ماده + حلقه حفره (با fill-rule evenodd حفره خالی دیده می‌شود) */
   if (p.wall && p.split) {
     const wall2: [number, number][] = p.wall.map(([z, r]) => [z, r]);
@@ -2293,6 +2339,8 @@ export interface EditBuf {
   lines: ELine[]; // به همان ترتیب اجرای برنامه؛ همواره vb==vaِ خطِ بعد (زنجیرهٔ بسته)
   sketch: SketchSeg[]; // کپیِ کاریِ پروفایل (تأیید = انتقال به اسکچ اصلی)
   off: Record<number, OffPatch>; // ویرایش مستقل منحنی‌های افست (کلید = id قطعهٔ پروفایل)
+  /** آفست کاری H2؛ تا زمان «تأیید» پیش‌نویس است و Params/فایل را تغییر نمی‌دهد. */
+  holder2: Holder2State;
   /** انتخاب Segment جزئی از تاریخچهٔ اصلی است تا Undo/Redo آن را نیز بازیابی کند. */
   selLines: number[];
   activeLine: number | null;
@@ -2308,6 +2356,92 @@ export function expandLines(verts: EVert[], lines: ELine[]): ELineXY[] {
     const b = m.get(l.vb) ?? { z: 0, x: 0, id: -1 };
     return { ...l, z1: a.z, x1: a.x, z2: b.z, x2: b.x };
   });
+}
+
+/**
+ * جابه‌جایی سبکِ تمام مسیرهای هلدر دوم در فضای ماشین.
+ *
+ * تغییر آفست هلدر یک تبدیل سراسری است؛ بنابراین فقط Segment کلیک‌شده جابه‌جا
+ * نمی‌شود و همهٔ رأس‌های H2 با هم حرکت می‌کنند. تعداد خط‌ها و شناسه‌ها مطلقاً
+ * دست‌نخورده می‌ماند. پله‌های مصنوعیِ اتصال H1/H2 نیز با حفظ جهت اصلی‌شان
+ * دوباره هم‌راستا می‌شوند تا هنگام Drag هیچ خط موربی ساخته نشود:
+ *   - پلهٔ افقی: X قطری دو سر برابر می‌ماند؛
+ *   - پلهٔ عمودی: Z دو سر برابر می‌ماند.
+ *
+ * dz در محور طولی ماشین و dv در محور شعاعی ماشین است (EVert.x قطری است، پس
+ * جابه‌جایی شعاعی با ضریب ۲ روی آن اعمال می‌شود).
+ */
+export function translateHolder2Edit(verts: EVert[], lines: ELine[], dz: number, dv: number): EVert[] {
+  if (Math.abs(dz) < 1e-12 && Math.abs(dv) < 1e-12) return verts;
+
+  const original = new Map(verts.map((v) => [v.id, v]));
+  const movedH2 = new Set<number>();
+  const touchedH1 = new Set<number>();
+  for (const line of lines) {
+    /* #bridgeها مختصات مصنوعی ماشین‌اند و holder=1 آن‌ها به معنی مسیر H1 نیست. */
+    if (line.key.startsWith("#bridge:")) continue;
+    const target = line.holder === 2 ? movedH2 : touchedH1;
+    target.add(line.va);
+    target.add(line.vb);
+  }
+  if (!movedH2.size) return verts;
+
+  /* رأس مرزیِ مشترک بین آخرین خط H1 و اولین خط H2 نباید روی هر دو محور لنگر
+     شود. این رأس آزاد می‌ماند تا خط افقی آخر، مؤلفهٔ Y را از H1 بگیرد و خط
+     عمودی متصل، مؤلفهٔ X را از H2؛ دقیقاً یک گوشهٔ قائم، بدون خط اضافه. */
+  const fixedH1 = new Set([...touchedH1].filter((id) => !movedH2.has(id)));
+  const fixedH2 = new Set([...movedH2].filter((id) => !touchedH1.has(id)));
+
+  const out = verts.map((v) =>
+    movedH2.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dv } : { ...v }
+  );
+  const byId = new Map(out.map((v) => [v.id, v]));
+  /* علاوه بر #bridgeهای پس‌پردازنده، اتصال اولیه‌ای که خود مولد می‌سازد نیز
+     ELine عادی است (آخرین G0 افقی H1 + اولین G0 عمودی H2). پس قید محور روی
+     همهٔ خطوطی که پیش از Drag دقیقاً افقی/عمودی بوده‌اند اعمال می‌شود. */
+  const axis = lines
+    .map((line) => {
+      const a = original.get(line.va), b = original.get(line.vb);
+      if (!a || !b) return null;
+      if (Math.abs(a.x - b.x) < 1e-7) return { line, kind: "h" as const };
+      if (Math.abs(a.z - b.z) < 1e-7) return { line, kind: "v" as const };
+      return null;
+    })
+    .filter((item): item is { line: ELine; kind: "h" | "v" } => !!item);
+
+  /* حداکثر سه پله در هر پل وجود دارد. چند گذر کوچک و ثابت برای انتشار قید از
+     رأس H2 تا رأس‌های میانی کافی است و برخلاف بازتولید جی‌کد در هر pointermove
+     هزینه‌اش ناچیز و مستقل از پیچیدگی هندسهٔ قطعه است. */
+  for (let pass = 0; pass < 4; pass++) {
+    let changed = false;
+    for (const { line, kind } of axis) {
+      const a = byId.get(line.va), b = byId.get(line.vb);
+      const a0 = original.get(line.va), b0 = original.get(line.vb);
+      if (!a || !b || !a0 || !b0) continue;
+      const field: "x" | "z" = kind === "h" ? "x" : "z";
+      if (Math.abs(a[field] - b[field]) < 1e-9) continue;
+      const aAnchor = fixedH2.has(a.id) || fixedH1.has(a.id);
+      const bAnchor = fixedH2.has(b.id) || fixedH1.has(b.id);
+      if (aAnchor && !bAnchor) {
+        b[field] = a[field];
+        changed = true;
+      } else if (bAnchor && !aAnchor) {
+        a[field] = b[field];
+        changed = true;
+      } else if (!aAnchor && !bAnchor) {
+        const aChanged = Math.abs(a[field] - a0[field]) > 1e-9;
+        const bChanged = Math.abs(b[field] - b0[field]) > 1e-9;
+        if (aChanged && !bChanged) b[field] = a[field];
+        else if (bChanged && !aChanged) a[field] = b[field];
+        else b[field] = a[field];
+        changed = true;
+      }
+      /* دو رأس لنگر به عمد جابه‌جا نمی‌شوند؛ چنین حالتی فقط در دادهٔ قدیمیِ
+         بدون پل ممکن است و تغییر هندسهٔ واقعی H1 از ساخت خط مورب خطرناک‌تر است. */
+    }
+    if (!changed) break;
+  }
+  return out;
 }
 
 /* زنجیره‌سازی: سرِ هر خط = انتهای خطِ پیشین اگر «تقریباً» یکی بودند → رأسِ مشترک؛
