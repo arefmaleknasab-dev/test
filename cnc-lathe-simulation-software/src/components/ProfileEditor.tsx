@@ -77,7 +77,8 @@ export interface EdSettings {
 type Tool = "select" | "move" | "line" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
-  { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "کلیک تکی، باکس انتخابگر چپ‌به‌راست (فقط داخل) و راست‌به‌چپ (متقاطع)، Shift افزودن، Ctrl حذف، دابل‌کلیک زنجیره" },
+  { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
+  { id: "move", name: "حرکت", key: "M", icon: <IconHand className="h-4 w-4" />, hint: "حرکت نسبی با موس و مقدار دقیق" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
@@ -564,6 +565,12 @@ const constrainSegPointToStock = (
   };
 };
 
+const evaluateMove = (input: string): number | null => {
+  const value = input.replace(/\s/g, "");
+  if (!value || !/^[0-9.+\-*/()]+$/.test(value)) return null;
+  try { const result = Function(`"use strict"; return (${value})`)(); return Number.isFinite(result) ? Math.round(result * 1e6) / 1e6 : null; } catch { return null; }
+};
+
 export default function ProfileEditor({
   segs,
   onSegs,
@@ -597,6 +604,7 @@ export default function ProfileEditor({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cam, setCam] = useState<Cam | null>(null);
   const [tool, setTool] = useState<Tool>("select");
+  const [moveBox, setMoveBox] = useState<{x:number;y:number;value:string;error:string} | null>(null);
   const [draft, setDraft] = useState<SPoint[]>([]);
   /* در منحنی کنترلی، پس از کلیک دوم ابتدا دستهٔ متصل به نقطهٔ پایان (c2) و سپس  */
   /* دستهٔ متصل به نقطهٔ شروع (c1) تنظیم می‌شود — مانند ابزار Pen.                */
@@ -1874,6 +1882,7 @@ export default function ProfileEditor({
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
+    if (tool === "move" && e.button === 0) { const r = wrapRef.current!.getBoundingClientRect(); setMoveBox({x:e.clientX-r.left+12,y:e.clientY-r.top+12,value:"",error:""}); }
 
     /* دکمهٔ وسط همیشه پن است (هر ابزاری) */
     if (e.button === 1) {
@@ -1887,7 +1896,7 @@ export default function ProfileEditor({
       return;
     }
 
-    if (tool !== "select") {
+    if (tool !== "select" && tool !== "move") {
       /* حالت ترسیم — کلیک بدون حرکت نقطه ثبت می‌کند، کشیدن نما را جابه‌جا می‌کند */
       drag.current = { mode: "draw", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false };
       return;
@@ -4040,6 +4049,10 @@ function Inspector({
 
       <p className="mt-1.5 text-center font-mono text-[9px] text-dim">طول کمان/منحنی: {len.toFixed(1)} mm</p>
 
+      {moveBox && <div className="pointer-events-auto absolute z-50" style={{left:moveBox.x,top:moveBox.y}}>
+        <input autoFocus value={moveBox.value} onChange={e=>setMoveBox({...moveBox,value:e.target.value,error:""})} onKeyDown={e=>{ if(e.key==="Escape"){setMoveBox(null);drag.current=null;} if(e.key!=="Enter")return; const n=evaluateMove(moveBox.value); if(n==null){setMoveBox({...moveBox,error:"Invalid value"});return;} const d=drag.current; if(d?.mode==="move"){const dx=d.last.z-d.start.z,dr=d.last.r-d.start.r,m=Math.hypot(dx,dr)||1; onSegs(segs.map(s=>d.ids.includes(s.id)?moveSeg(s,dx/m*n,dr/m*n):s),true); setMoveBox(null);drag.current=null;}}} onKeyDownCapture={e=>e.stopPropagation()} className="w-20 rounded border border-teal/60 bg-panel px-1.5 py-1 text-xs text-ink outline-none shadow-lg" placeholder="10/2" />
+        {moveBox.error&&<div className="mt-1 rounded bg-danger px-1 text-[10px] text-white">Invalid value</div>}
+      </div>}
     </div>
   );
 }
