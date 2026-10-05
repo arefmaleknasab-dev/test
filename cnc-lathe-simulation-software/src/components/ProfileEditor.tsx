@@ -74,11 +74,10 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "line" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "line" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
-  { id: "move", name: "حرکت", key: "M", icon: <IconHand className="h-4 w-4" />, hint: "حرکت نسبی با موس و مقدار دقیق" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
@@ -86,11 +85,10 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
-  move: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
   quad: ["نقطهٔ شروع", "نقطهٔ پایان", "نقطهٔ کنترل منحنی"],
   cubic: ["نقطهٔ شروع", "نقطهٔ پایان", "دستهٔ خروج از پایان", "دستهٔ ورود به شروع"],
@@ -565,12 +563,6 @@ const constrainSegPointToStock = (
   };
 };
 
-const evaluateMove = (input: string): number | null => {
-  const value = input.replace(/\s/g, "");
-  if (!value || !/^[0-9.+\-*/()]+$/.test(value)) return null;
-  try { const result = Function(`"use strict"; return (${value})`)(); return Number.isFinite(result) ? Math.round(result * 1e6) / 1e6 : null; } catch { return null; }
-};
-
 export default function ProfileEditor({
   segs,
   onSegs,
@@ -604,7 +596,6 @@ export default function ProfileEditor({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cam, setCam] = useState<Cam | null>(null);
   const [tool, setTool] = useState<Tool>("select");
-  const [moveBox, setMoveBox] = useState<{x:number;y:number;value:string;error:string} | null>(null);
   const [draft, setDraft] = useState<SPoint[]>([]);
   /* در منحنی کنترلی، پس از کلیک دوم ابتدا دستهٔ متصل به نقطهٔ پایان (c2) و سپس  */
   /* دستهٔ متصل به نقطهٔ شروع (c1) تنظیم می‌شود — مانند ابزار Pen.                */
@@ -748,7 +739,7 @@ export default function ProfileEditor({
     setSplitHovered(false);
   }, [split.enabled]);
   useEffect(() => {
-    if (tool !== "select" && tool !== "move") {
+    if (tool !== "select") {
       setSplitSelected(false);
       setSplitHovered(false);
     }
@@ -1896,7 +1887,7 @@ export default function ProfileEditor({
       return;
     }
 
-    if (tool !== "select" && tool !== "move") {
+    if (tool !== "select") {
       /* حالت ترسیم — کلیک بدون حرکت نقطه ثبت می‌کند، کشیدن نما را جابه‌جا می‌کند */
       drag.current = { mode: "draw", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false };
       return;
@@ -3575,7 +3566,7 @@ export default function ProfileEditor({
       {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
       <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          {(editOpen ? TOOLS.filter((t) => t.id === "select" || t.id === "move") : TOOLS).map((t, i) => (
+          {(editOpen ? TOOLS.filter((t) => t.id === "select") : TOOLS).map((t, i) => (
             <button
               key={t.id}
               onClick={() => {
@@ -4049,10 +4040,7 @@ function Inspector({
 
       <p className="mt-1.5 text-center font-mono text-[9px] text-dim">طول کمان/منحنی: {len.toFixed(1)} mm</p>
 
-      {moveBox && <div className="pointer-events-auto absolute z-50" style={{left:moveBox.x,top:moveBox.y}}>
-        <input autoFocus value={moveBox.value} onChange={e=>setMoveBox({...moveBox,value:e.target.value,error:""})} onKeyDown={e=>{ if(e.key==="Escape"){setMoveBox(null);drag.current=null;} if(e.key!=="Enter")return; const n=evaluateMove(moveBox.value); if(n==null){setMoveBox({...moveBox,error:"Invalid value"});return;} const d=drag.current; if(d?.mode==="move"){const dx=d.last.z-d.start.z,dr=d.last.r-d.start.r,m=Math.hypot(dx,dr)||1; onSegs(segs.map(s=>d.ids.includes(s.id)?moveSeg(s,dx/m*n,dr/m*n):s),true); setMoveBox(null);drag.current=null;}}} onKeyDownCapture={e=>e.stopPropagation()} className="w-20 rounded border border-teal/60 bg-panel px-1.5 py-1 text-xs text-ink outline-none shadow-lg" placeholder="10/2" />
-        {moveBox.error&&<div className="mt-1 rounded bg-danger px-1 text-[10px] text-white">Invalid value</div>}
-      </div>}
+
     </div>
   );
 }
