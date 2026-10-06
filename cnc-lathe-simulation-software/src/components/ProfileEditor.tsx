@@ -3931,7 +3931,10 @@ export default function ProfileEditor({
 
       {/* ---------- نوار انتخاب ---------- */}
       {tool === "select" && (
-        <div className="anim-in absolute bottom-[44px] left-[46px] z-10 flex max-w-[calc(100%-60px)] flex-col gap-1 rounded-lg border border-edge bg-panel/92 px-2.5 py-1.5 shadow-lg shadow-black/40 backdrop-blur-sm">
+        <div className={cn(
+          "anim-in absolute left-[46px] z-10 flex max-w-[calc(100%-60px)] flex-col gap-1 rounded-lg border border-edge bg-panel/92 px-2.5 py-1.5 shadow-lg shadow-black/40 backdrop-blur-sm transition-[bottom]",
+          one ? "bottom-[285px]" : selPoints.length ? "bottom-[175px]" : "bottom-[44px]"
+        )}>
           <div className="flex items-center justify-center gap-1.5">
             <span
               className={cn(
