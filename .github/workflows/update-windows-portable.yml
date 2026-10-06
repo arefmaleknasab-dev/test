@@ -3,7 +3,7 @@ name: Update Windows portable package
 on:
   push:
     branches:
-      - arena/01a0fddd-test
+      - arena/01a10cb3-test
     paths-ignore:
       - KharratCode-Windows10-Portable.zip
 
@@ -22,7 +22,7 @@ jobs:
       - name: Check out the session branch
         uses: actions/checkout@v4
         with:
-          ref: arena/01a0fddd-test
+          ref: arena/01a10cb3-test
           fetch-depth: 0
 
       - name: Set up Node.js
@@ -56,4 +56,4 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "Update Windows portable package [skip ci]"
-          git push origin HEAD:arena/01a0fddd-test
+          git push origin HEAD:arena/01a10cb3-test

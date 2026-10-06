@@ -43,6 +43,7 @@ import {
   IconMagnet,
   IconMagnetSm,
   IconMinus,
+  IconMove,
   IconPlus,
   IconQuad,
   IconRedo,
@@ -74,10 +75,11 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "line" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "line" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
+  { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
@@ -85,10 +87,11 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
+  move: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
   quad: ["نقطهٔ شروع", "نقطهٔ پایان", "نقطهٔ کنترل منحنی"],
   cubic: ["نقطهٔ شروع", "نقطهٔ پایان", "دستهٔ خروج از پایان", "دستهٔ ورود به شروع"],
@@ -563,6 +566,39 @@ const constrainSegPointToStock = (
   };
 };
 
+/** Evaluates a deliberately small arithmetic grammar; no eval/Function is used. */
+function arithmeticValue(source: string): number | null {
+  const text = latinDigits(source).replace(/\s+/g, "");
+  if (!text) return null;
+  let i = 0;
+  const expression = (): number => {
+    let value = term();
+    while (text[i] === "+" || text[i] === "-") { const op = text[i++]; const rhs = term(); value = op === "+" ? value + rhs : value - rhs; }
+    return value;
+  };
+  const term = (): number => {
+    let value = factor();
+    while (text[i] === "*" || text[i] === "/") { const op = text[i++]; const rhs = factor(); if (op === "/" && Math.abs(rhs) < 1e-14) throw Error(); value = op === "*" ? value * rhs : value / rhs; }
+    return value;
+  };
+  const factor = (): number => {
+    if (text[i] === "+" || text[i] === "-") { const sign = text[i++] === "-" ? -1 : 1; return sign * factor(); }
+    if (text[i] === "(") { i++; const value = expression(); if (text[i++] !== ")") throw Error(); return value; }
+    const match = text.slice(i).match(/^(?:\d+(?:\.\d*)?|\.\d+)/);
+    if (!match) throw Error(); i += match[0].length; return Number(match[0]);
+  };
+  try { const value = expression(); return i === text.length && Number.isFinite(value) ? Math.round(value * 1e12) / 1e12 : null; } catch { return null; }
+}
+
+type MoveAxis = "free" | "x" | "y";
+type MoveSession = {
+  ids: number[]; base: SketchSeg[]; origin: SPoint; clientX: number; clientY: number;
+  pointer: SPoint; axis: MoveAxis; mode: "relative" | "absolute";
+  dirX: 1 | -1; dirY: 1 | -1;
+  lastClientX: number; lastClientY: number;
+  editBase?: EVert[]; editVertexIds?: number[];
+};
+
 export default function ProfileEditor({
   segs,
   onSegs,
@@ -596,6 +632,66 @@ export default function ProfileEditor({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cam, setCam] = useState<Cam | null>(null);
   const [tool, setTool] = useState<Tool>("select");
+  const toolRef = useRef<Tool>("select");
+  const previousToolRef = useRef<Tool>("select");
+  const chooseTool = (next: Tool) => {
+    if (next === toolRef.current) return;
+    previousToolRef.current = toolRef.current;
+    toolRef.current = next;
+    setTool(next);
+  };
+  const [moveBox, setMoveBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const [moveSession, setMoveSession] = useState<MoveSession | null>(null);
+  const moveInputRef = useRef<HTMLInputElement>(null);
+  const [lastMove, setLastMove] = useState<{ dz: number; dr: number } | null>(null);
+  useEffect(() => { if (moveBox) requestAnimationFrame(() => { moveInputRef.current?.focus(); moveInputRef.current?.select(); }); }, [!!moveBox]);
+  useEffect(() => {
+    const releaseAxis = (event: KeyboardEvent) => {
+      if (event.key === "Shift") setMoveSession((session) => session ? { ...session, axis: "free" } : session);
+    };
+    window.addEventListener("keyup", releaseAxis);
+    return () => window.removeEventListener("keyup", releaseAxis);
+  }, []);
+  /* پیش‌نمایش عددی بدون ثبت در تاریخچه؛ Enter همان هندسه را به یک گام Undo تبدیل می‌کند. */
+  useEffect(() => {
+    if (!moveBox?.value.trim() || !moveSession) return;
+    const parts = moveBox.value.split(",");
+    const values = parts.map(arithmeticValue);
+    if (parts.length > 2 || values.some((v) => v == null)) return;
+    const dx = moveSession.pointer.z - moveSession.origin.z, dy = moveSession.pointer.r - moveSession.origin.r;
+    let dz = 0, dr = 0;
+    if (values.length === 2) { dz = values[0]!; dr = values[1]!; }
+    else {
+      const amount = values[0]!;
+      if (moveSession.axis === "x") dz = amount * moveSession.dirX;
+      else if (moveSession.axis === "y") dr = amount * moveSession.dirY;
+      else {
+        /* مقدار تکی شعاع حرکت است، نه قفل مختصات: نشانگر جهت را تعیین می‌کند
+           و نقطه/خط آزادانه روی دایره‌ای با همین شعاع حرکت می‌کند. */
+        const length = Math.hypot(dx, dy);
+        if (length > 1e-9) { dz = amount * dx / length; dr = amount * dy / length; }
+        else { dz = amount * moveSession.dirX; dr = 0; }
+      }
+    }
+    if (moveSession.mode === "absolute") {
+      const editAnchor = moveSession.editBase?.find((v) => moveSession.editVertexIds?.includes(v.id));
+      const sketchAnchor = moveSession.base.find((s) => moveSession.ids.includes(s.id))?.a;
+      const anchor = editAnchor ? { z: editAnchor.z, r: editAnchor.x / 2 } : sketchAnchor!;
+      if (values.length === 2) { dz -= anchor.z; dr -= anchor.r; }
+      else if (dz) dz = Math.abs(dz) - anchor.z; else dr = Math.abs(dr) - anchor.r;
+    }
+    if (moveSession.editBase && moveSession.editVertexIds && edit) {
+      const moving = new Set(moveSession.editVertexIds);
+      onEditBuf({
+        ...edit,
+        verts: moveSession.editBase.map((vertex) => moving.has(vertex.id)
+          ? { ...vertex, z: vertex.z + dz, x: vertex.x + 2 * dr }
+          : vertex),
+      }, false);
+    } else {
+      onSegs(moveSession.base.map((segment) => moveSession.ids.includes(segment.id) ? moveSeg(segment, dz, dr) : segment), false);
+    }
+  }, [moveBox?.value, moveSession?.pointer, moveSession?.axis, moveSession?.mode]);
   const [draft, setDraft] = useState<SPoint[]>([]);
   /* در منحنی کنترلی، پس از کلیک دوم ابتدا دستهٔ متصل به نقطهٔ پایان (c2) و سپس  */
   /* دستهٔ متصل به نقطهٔ شروع (c1) تنظیم می‌شود — مانند ابزار Pen.                */
@@ -771,8 +867,6 @@ export default function ProfileEditor({
   const [marqueePointHits, setMarqueePointHits] = useState<{ segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[]>([]);
   const [marqueeSplitHit, setMarqueeSplitHit] = useState(false);
   const [panMode, setPanMode] = useState(false);
-  const [spaceDown, setSpaceDown] = useState(false);
-  const spaceRef = useRef(false);
   /* فیلتر نوع المان برای انتخاب (همه روشن = بدون فیلتر) */
   const [selFilter, setSelFilter] = useState<Record<SketchKind, boolean>>({
     line: true,
@@ -943,7 +1037,7 @@ export default function ProfileEditor({
         }
         if (draft.length) cancelDraft();
         else if (isolatedOpId != null) onClearIsolate();
-        else if (tool !== "select") setTool("select");
+        else if (tool !== "select") chooseTool("select");
         else if (splitSelected) setSplitSelected(false);
         else {
           if (selPoints.length) setSelPoints([]);
@@ -969,16 +1063,22 @@ export default function ProfileEditor({
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (k === "r" && tool === "move" && lastMove && selected.length) {
+        e.preventDefault();
+        const next = segs.map((s) => selected.includes(s.id) ? moveSeg(s, lastMove.dz, lastMove.dr) : s);
+        onSegs(next, true);
+        return;
+      }
       const t = TOOLS.find((x) => x.key.toLowerCase() === k);
       if (t && (!editOpen || t.id === "select")) {
-        setTool(t.id);
+        chooseTool(t.id);
         cancelDraft();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu]);
+  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu, lastMove]);
 
   /* وضعیت فیزیکی Shift برای پیش‌نمایش بازه؛ مستقل از زبان صفحه‌کلید. */
   useEffect(() => {
@@ -1006,30 +1106,21 @@ export default function ProfileEditor({
     };
   }, []);
 
-  /* نگه‌داشتن Space برای پن موقت */
+  /* Space بین دو ابزار آخر سوییچ می‌کند؛ پن همچنان با دکمه وسط/راست در دسترس است. */
   useEffect(() => {
-    const dn = (e: KeyboardEvent) => {
+    const toggleLastTool = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
-      if (e.code === "Space" && !e.repeat) {
-        e.preventDefault();
-        spaceRef.current = true;
-        setSpaceDown(true);
-      }
+      if (e.code !== "Space" || e.repeat) return;
+      e.preventDefault();
+      const previous = previousToolRef.current;
+      if (editOpen && previous !== "select" && previous !== "move") return;
+      chooseTool(previous);
+      cancelDraft();
     };
-    const up = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        spaceRef.current = false;
-        setSpaceDown(false);
-      }
-    };
-    window.addEventListener("keydown", dn);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", dn);
-      window.removeEventListener("keyup", up);
-    };
-  }, []);
+    window.addEventListener("keydown", toggleLastTool);
+    return () => window.removeEventListener("keydown", toggleLastTool);
+  }, [editOpen]);
 
   /* ---------- اسنپ ---------- */
   const snapPts = useMemo(() => snapCandidates(segs), [segs]);
@@ -1873,7 +1964,52 @@ export default function ProfileEditor({
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
-    if (tool === "move" && e.button === 0) { const r = wrapRef.current!.getBoundingClientRect(); setMoveBox({x:e.clientX-r.left+12,y:e.clientY-r.top+12,value:"",error:""}); }
+    if (tool === "move" && e.button === 0) {
+      /* کلیک دوم، پیش‌نمایش فعلی را تأیید می‌کند و پنجره را می‌بندد. */
+      if (moveSession) {
+        const base = moveSession.base.find((segment) => moveSession.ids.includes(segment.id));
+        const current = base ? segs.find((segment) => segment.id === base.id) : null;
+        if (base && current) setLastMove({ dz: current.a.z - base.a.z, dr: current.a.r - base.a.r });
+        if (moveSession.editBase && edit) onEditBuf({ ...edit }, true);
+        else onSegs(segs, true);
+        setMoveBox(null); setMoveSession(null);
+        return;
+      }
+      let ids: number[];
+      let editBase: EVert[] | undefined;
+      let editVertexIds: number[] | undefined;
+      if (editOpen && edit) {
+        const loc = toLocal(e.clientX, e.clientY);
+        const hitVertex = hitBufVx(loc.x, loc.y);
+        const hit = hitVertex == null ? hitBufLine(loc.x, loc.y) : null;
+        const vertexSet = new Set<number>();
+        if (hitVertex != null) {
+          const chosen = selV.includes(hitVertex) ? [...selV] : [hitVertex];
+          setSelV(chosen);
+          ids = chosen.map((id) => -id - 1); // کلید داخلی برای نشست Move نقطه‌ای
+          for (const id of chosen) vertexSet.add(id);
+        } else if (hit != null || selL.length) {
+          ids = hit != null ? (selL.includes(hit) ? [...selL] : [hit]) : [...selL];
+          if (hit != null && !selL.includes(hit)) selectEditLines(ids, hit, true);
+          for (const line of edit.lines) if (ids.includes(line.id)) { vertexSet.add(line.va); vertexSet.add(line.vb); }
+        } else if (selV.length) {
+          ids = selV.map((id) => -id - 1);
+          for (const id of selV) vertexSet.add(id);
+        } else return;
+        editVertexIds = [...vertexSet];
+        editBase = edit.verts.map((vertex) => ({ ...vertex }));
+      } else {
+        const hit = hitSeg(raw);
+        ids = hit ? (selected.includes(hit.id) ? [...selected] : [hit.id]) : [...selected];
+        if (!ids.length) return;
+        if (hit) onSelected(ids);
+      }
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setMoveSession({ ids, base: segs.map((segment) => ({ ...segment })), editBase, editVertexIds, origin: raw, pointer: raw, clientX: e.clientX, clientY: e.clientY, axis: "free", mode: "relative", dirX: 1, dirY: 1, lastClientX: e.clientX, lastClientY: e.clientY });
+      setMoveBox({ x: Math.min(rect.width - 58, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+      drag.current = null;
+      return;
+    }
 
     /* دکمهٔ وسط همیشه پن است (هر ابزاری) */
     if (e.button === 1) {
@@ -1887,6 +2023,17 @@ export default function ProfileEditor({
       return;
     }
 
+    /* در ابزارهای رسم نیز کشیدن یک نقطهٔ موجود، همان نقطه/دسته را جابه‌جا می‌کند.
+       کلیک ساده همچنان در pointerup به‌عنوان ورودی ابزار رسم پردازش می‌شود. */
+    const drawingHandle = !editOpen ? hitHandle(raw) : null;
+    if (drawingHandle) {
+      const cluster = drawingHandle.part === "a" || drawingHandle.part === "b"
+        ? clusterOf(drawingHandle.segId, drawingHandle.part)
+        : [drawingHandle];
+      drag.current = { mode: "handle", ref: drawingHandle, cluster, moved: false };
+      return;
+    }
+
     if (tool !== "select") {
       /* حالت ترسیم — کلیک بدون حرکت نقطه ثبت می‌کند، کشیدن نما را جابه‌جا می‌کند */
       drag.current = { mode: "draw", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false };
@@ -1894,7 +2041,7 @@ export default function ProfileEditor({
     }
 
     /* پن صریح (دکمهٔ دست یا Space) بر باکس انتخاب اولویت دارد */
-    if (panMode || spaceRef.current) {
+    if (panMode) {
       drag.current = { mode: "pan", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false, btn: 0 };
       return;
     }
@@ -1910,14 +2057,6 @@ export default function ProfileEditor({
         return;
       }
       setSplitSelected(false);
-    }
-
-    const h = editOpen ? null : hitHandle(raw);
-    if (h) {
-      /* نقاط انتهاییِ هم‌مکان به‌صورت یک خوشه با هم جابه‌جا می‌شوند؛ انتخاب نقطه در pointerup */
-      const cluster = h.part === "a" || h.part === "b" ? clusterOf(h.segId, h.part) : [h];
-      drag.current = { mode: "handle", ref: h, cluster, moved: false };
-      return;
     }
 
     /* --- حالت ویرایش مسیر — رأسِ انتخابی، سرِ افست، منحنی افست، بدنهٔ خط --- */
@@ -2072,6 +2211,49 @@ export default function ProfileEditor({
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const raw = toWorld(e.clientX, e.clientY);
+    if (tool === "move" && moveSession) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setMoveBox((box) => box ? {
+        ...box,
+        x: Math.min(rect.width - 58, Math.max(4, e.clientX - rect.left + 12)),
+        y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)),
+      } : box);
+      const dx = e.clientX - moveSession.clientX, dy = e.clientY - moveSession.clientY;
+      /* در یک dead-zone بسیار کوچک دور نقطه شروع، جهت قبلی حفظ و جابه‌جایی صفر
+         می‌شود؛ بنابراین عبور نویزی از مبدأ حرکت را به جهت مخالف پرتاب نمی‌کند. */
+      const nearOrigin = Math.hypot(dx, dy) < 5;
+      const stepX = e.clientX - moveSession.lastClientX;
+      const stepY = e.clientY - moveSession.lastClientY;
+      /* انتخاب جهت Shift از جهت واقعیِ حرکت اخیر موس می‌آید، نه فاصلهٔ کلی آن
+         از آبجکت/نقطه شروع؛ پس با دورشدن نشانگر، کشش به جهت مخالف ایجاد نمی‌شود. */
+      let axis: MoveAxis = "free";
+      if (e.shiftKey) {
+        const sx = Math.abs(stepX), sy = Math.abs(stepY);
+        if (moveSession.axis === "free") axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+        else if (moveSession.axis === "x") {
+          /* فقط یک حرکت عمودیِ واضح محور را عوض می‌کند؛ نویز مورب/ریز نادیده گرفته می‌شود. */
+          axis = sy > 2.5 && sy > sx * 1.7 ? "y" : "x";
+        } else {
+          axis = sx > 2.5 && sx > sy * 1.7 ? "x" : "y";
+        }
+      }
+      const dirX: 1 | -1 = dx > 5 ? 1 : dx < -5 ? -1 : moveSession.dirX;
+      const dirY: 1 | -1 = dy < -5 ? 1 : dy > 5 ? -1 : moveSession.dirY;
+      setMoveSession({ ...moveSession, pointer: raw, axis, dirX, dirY, lastClientX: e.clientX, lastClientY: e.clientY });
+      if (!moveBox?.value.trim()) {
+        /* حرکت آزاد Move به گام شبکه می‌چسبد؛ Alt موقتاً Snap را دور می‌زند. */
+        const snapped = e.altKey
+          ? { z: raw.z - moveSession.origin.z, r: raw.r - moveSession.origin.r }
+          : quantStep(raw, moveSession.origin);
+        const dz = nearOrigin ? 0 : axis === "y" ? 0 : snapped.z;
+        const dr = nearOrigin ? 0 : axis === "x" ? 0 : snapped.r;
+        if (moveSession.editBase && moveSession.editVertexIds && edit) {
+          const moving = new Set(moveSession.editVertexIds);
+          onEditBuf({ ...edit, verts: moveSession.editBase.map((v) => moving.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dr } : v) }, false);
+        } else onSegs(moveSession.base.map((s) => moveSession.ids.includes(s.id) ? moveSeg(s, dz, dr) : s), false);
+      }
+      return;
+    }
     if (readoutRef.current) readoutRef.current.textContent = editOpen ? `محور طولی ${raw.z.toFixed(2)}   محور شعاعی ${raw.r.toFixed(2)}` : `X ${raw.z.toFixed(1)}   Y⌀ ${(raw.r * 2).toFixed(1)}`;
 
     const d = drag.current;
@@ -2275,36 +2457,38 @@ export default function ProfileEditor({
       }
       const dz = p.z - refPt.z;
       const dr = p.r - refPt.r;
-      const moveOne = (s: SketchSeg, scale: number): SketchSeg => {
-        const parts = bySeg.get(s.id);
-        if (!parts) return s;
+      const moveSubset = (source: SketchSeg[], ddz: number, ddr: number): SketchSeg[] => source.map((s) => {
+        const parts = bySeg.get(s.id)!;
         let out = s;
         for (const part of parts) {
           const cur = s[part];
-          if (cur) out = withSegPoint(out, part, { z: cur.z + dz * scale, r: cur.r + dr * scale });
+          if (cur) out = withSegPoint(out, part, { z: cur.z + ddz, r: cur.r + ddr });
         }
         return out;
-      };
-      /* در جست‌وجوی مرز فقط چند المان واقعاً درگیر ارزیابی می‌شوند؛ آرایهٔ کامل
-         اسکچ تنها یک‌بار و بعد از تعیین ضریب نهایی ساخته می‌شود. */
+      });
+      /* فقط منحنی‌های واقعاً درگیر بررسی می‌شوند. قبلاً در هر مرحله جست‌وجوی
+         دودویی کل اسکچ map/filter می‌شد و Drag دسته‌های Bézier را سنگین می‌کرد. */
       const moving = segs.filter((s) => bySeg.has(s.id));
-      const isValidAt = (scale: number) => moving.every((s) => segInsideStock(moveOne(s, scale), L, R));
-
-      let scale = 1;
-      if (!isValidAt(1)) {
-        /* وضعیت فعلی معتبر است؛ فضای مجاز نقاط کنترل بزیه نسبت به یک خط حرکت
-           محدب است، پس جست‌وجوی دودویی دقیقاً به مرز منحنی می‌رسد. */
-        if (!isValidAt(0)) return;
-        let lo = 0;
-        let hi = 1;
-        for (let i = 0; i < 24; i++) {
+      const valid = (candidate: SketchSeg[]) => candidate.every((s) => segInsideStock(s, L, R));
+      const allowedScale = (source: SketchSeg[], ddz: number, ddr: number): number => {
+        if (Math.abs(ddz) + Math.abs(ddr) < 1e-12) return 1;
+        if (valid(moveSubset(source, ddz, ddr))) return 1;
+        if (!valid(source)) return 0;
+        let lo = 0, hi = 1;
+        /* ۱۲ مرحله دقتی بهتر از ۰٫۰۲۵٪ می‌دهد و برای حرکت زنده کافی است. */
+        for (let i = 0; i < 12; i++) {
           const mid = (lo + hi) / 2;
-          if (isValidAt(mid)) lo = mid;
+          if (valid(moveSubset(source, ddz * mid, ddr * mid))) lo = mid;
           else hi = mid;
         }
-        scale = lo;
-      }
-      onSegs(segs.map((s) => moveOne(s, scale)), false);
+        return lo;
+      };
+      const zScale = allowedScale(moving, dz, 0);
+      const afterZMoving = moveSubset(moving, dz * zScale, 0);
+      const rScale = allowedScale(afterZMoving, 0, dr);
+      const finalMoving = moveSubset(afterZMoving, 0, dr * rScale);
+      const movedById = new Map(finalMoving.map((segment) => [segment.id, segment]));
+      onSegs(segs.map((segment) => movedById.get(segment.id) ?? segment), false);
       return;
     }
 
@@ -2369,6 +2553,7 @@ export default function ProfileEditor({
     const d = drag.current;
     drag.current = null;
     setSnapHit(null);
+    if (tool === "move") return;
 
     /* --- حالت ویرایش مسیر: ثبت ژست (نرمال‌سازی + تاریخچه) --- */
     if (d?.mode === "eline" || d?.mode === "evert") {
@@ -2492,32 +2677,35 @@ export default function ProfileEditor({
         if (d.moved) {
           onSegs(segs, true); // ثبت در تاریخچه
           if (!e.shiftKey && !exists) setSelPoints([ref]); // نقطهٔ درگ‌شده انتخاب بماند
-        } else if (e.shiftKey) {
-          setSelPoints(exists ? selPoints.filter((p) => pkey(p) !== pkey(ref)) : [...selPoints, ref]);
+          return;
+        }
+        if (tool === "select") {
+          if (e.shiftKey) setSelPoints(exists ? selPoints.filter((p) => pkey(p) !== pkey(ref)) : [...selPoints, ref]);
+          else if (e.ctrlKey || e.metaKey) setSelPoints(selPoints.filter((p) => pkey(p) !== pkey(ref)));
+          else setSelPoints([ref]);
+          return;
+        }
+        /* کلیک بدون Drag در ابزار رسم باید نقطهٔ مرحلهٔ رسم را ثبت کند. */
+      }
+      if (d.mode === "move") {
+        if (d.moved) {
+          onSegs(segs, true); // ثبت در تاریخچه
+          return;
+        }
+        /* کلیک بدون درگ روی المان */
+        const id = d.clicked;
+        if (e.shiftKey) {
+          onSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
         } else if (e.ctrlKey || e.metaKey) {
-          setSelPoints(selPoints.filter((p) => pkey(p) !== pkey(ref)));
+          onSelected(selected.filter((x) => x !== id));
         } else {
-          setSelPoints([ref]);
+          onSelected([id]);
         }
         return;
       }
-      if (d.moved) {
-        onSegs(segs, true); // ثبت در تاریخچه
-        return;
-      }
-      /* کلیک بدون درگ روی المان */
-      const id = d.clicked;
-      if (e.shiftKey) {
-        onSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
-      } else if (e.ctrlKey || e.metaKey) {
-        onSelected(selected.filter((x) => x !== id));
-      } else {
-        onSelected([id]);
-      }
-      return;
     }
 
-    if (tool !== "select" && (!d || ((d.mode === "draw" || d.mode === "pan") && !d.moved))) {
+    if (tool !== "select" && (!d || (((d.mode === "draw" || d.mode === "pan" || d.mode === "handle") && !d.moved)))) {
       /* ابزار Split: قرار دادن نقطه تعیین‌کننده روی پروفیل */
       if (tool === "split") {
         const hit = nearestOnSketch(toWorld(e.clientX, e.clientY));
@@ -2863,14 +3051,33 @@ export default function ProfileEditor({
   } else {
     stepIdx = draft.length;
   }
-  const stepText = tool !== "select" ? STEP_HINT[tool][Math.min(stepIdx, STEP_HINT[tool].length - 1)] : "";
+  const stepText = tool !== "select" && tool !== "move" ? STEP_HINT[tool][Math.min(stepIdx, STEP_HINT[tool].length - 1)] : "";
 
   /* اندازهٔ زندهٔ خط در حال ترسیم */
   let liveInfo = "";
-  if (tool !== "select" && draft.length >= 1 && cursor) {
+  if (tool !== "select" && tool !== "move" && draft.length >= 1 && cursor) {
     const a = draft[0];
     const b = draft.length === 1 ? cursor : draft[1];
     liveInfo = `طول ${dist(a, b).toFixed(1)}  •  زاویه ${lineAngle(a, b).toFixed(1)}°`;
+  }
+
+  const concise = (value: number) => {
+    const rounded = Math.round(value * 1000) / 1000;
+    return Object.is(rounded, -0) ? "0" : String(rounded);
+  };
+  let moveReadout = "0, 0";
+  if (moveSession) {
+    const editBase = moveSession.editBase?.find((vertex) => moveSession.editVertexIds?.includes(vertex.id));
+    const editCurrent = editBase ? edit?.verts.find((vertex) => vertex.id === editBase.id) : null;
+    const base = moveSession.base.find((segment) => moveSession.ids.includes(segment.id));
+    const current = base ? segs.find((segment) => segment.id === base.id) : null;
+    const bz = editBase?.z ?? base?.a.z, br = editBase ? editBase.x / 2 : base?.a.r;
+    const cz = editCurrent?.z ?? current?.a.z, cr = editCurrent ? editCurrent.x / 2 : current?.a.r;
+    if (bz != null && br != null && cz != null && cr != null) {
+      moveReadout = moveSession.mode === "absolute"
+        ? `${concise(cz)}, ${concise(cr)} · ABS`
+        : `${concise(cz - bz)}, ${concise(cr - br)}`;
+    }
   }
 
   return (
@@ -2887,10 +3094,12 @@ export default function ProfileEditor({
         height={size.h}
         className={cn(
           "block touch-none select-none",
-          panMode || spaceDown
+          panMode
             ? "cursor-grab"
-            : tool !== "select"
-              ? "cursor-crosshair"
+            : tool === "move"
+              ? "cursor-move"
+              : tool !== "select"
+                ? "cursor-crosshair"
               : marquee
                 ? "cursor-crosshair"
                 : hoverPathEndpoint != null
@@ -3319,7 +3528,7 @@ export default function ProfileEditor({
             )}
           </g>
         )}
-        {tool !== "select" && cursor && (
+        {tool !== "select" && tool !== "move" && cursor && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
@@ -3466,6 +3675,41 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {/* راهنمای شعاع Move: از مرکز دایرهٔ فرضی تا موقعیت زنده نشانگر */}
+        {moveSession && (() => {
+          const [x1, y1] = P(moveSession.origin.z, moveSession.origin.r);
+          let guidePoint = moveSession.pointer;
+          /* هنگام Shift خود راهنما نیز دقیقاً روی جهت قفل‌شده می‌نشیند. */
+          if (moveSession.axis === "x") guidePoint = { z: guidePoint.z, r: moveSession.origin.r };
+          else if (moveSession.axis === "y") guidePoint = { z: moveSession.origin.z, r: guidePoint.r };
+          const guideParts = moveBox?.value.split(",") ?? [];
+          const guideAmount = guideParts.length === 1 ? arithmeticValue(guideParts[0]) : null;
+          if (guideAmount != null) {
+            const dz = guidePoint.z - moveSession.origin.z;
+            const dr = guidePoint.r - moveSession.origin.r;
+            const distance = Math.hypot(dz, dr);
+            const maxLength = Math.abs(guideAmount);
+            if (distance > maxLength && distance > 1e-9) {
+              guidePoint = {
+                z: moveSession.origin.z + dz / distance * maxLength,
+                r: moveSession.origin.r + dr / distance * maxLength,
+              };
+            }
+          }
+          const [x2, y2] = P(guidePoint.z, guidePoint.r);
+          const guideColor = moveSession.axis === "x"
+            ? "#754052"
+            : moveSession.axis === "y"
+              ? "#3b7373"
+              : moveSession.mode === "absolute" ? "#a99cff" : "#28dfc2";
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
+            </g>
+          );
+        })()}
+
       </svg>
 
       {/* ---------- منوی راست‌کلیک سرعت Segmentهای انتخاب‌شده ---------- */}
@@ -3563,14 +3807,68 @@ export default function ProfileEditor({
         </div>
       )}
 
+      {moveBox && moveSession && (
+        <div className="absolute z-50" style={{ left: moveBox.x, top: moveBox.y, width: `${Math.max(42, Math.min(150, 24 + moveBox.value.length * 8))}px` }} dir="ltr">
+          <input ref={moveInputRef} value={moveBox.value} aria-label="Move value" className={cn(
+            "h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 py-1 font-mono text-xs text-[#d9f7f5] outline-none shadow-[0_8px_24px_rgba(0,0,0,.55)] transition-colors",
+            moveSession.mode === "absolute" ? "border-[#9b8cff] focus:border-[#b3a8ff]" : "border-[#00a9c7] focus:border-[#20c9df]",
+            moveBox.error && "!border-danger"
+          )}
+            onChange={(e) => setMoveBox({ ...moveBox, value: e.target.value, error: "" })}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") { if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false); else onSegs(moveSession.base, false); setMoveBox(null); setMoveSession(null); return; }
+              if (e.key === "Tab") { e.preventDefault(); setMoveSession({ ...moveSession, mode: moveSession.mode === "relative" ? "absolute" : "relative" }); return; }
+              if (e.key !== "Enter") return;
+              const parts = moveBox.value.split(",");
+              const values = parts.map(arithmeticValue);
+              if (parts.length > 2 || values.some((v) => v == null)) { setMoveBox({ ...moveBox, error: "Invalid value" }); return; }
+              const dx = moveSession.pointer.z - moveSession.origin.z, dy = moveSession.pointer.r - moveSession.origin.r;
+              let dz = 0, dr = 0;
+              if (values.length === 2) { dz = values[0]!; dr = values[1]!; }
+              else {
+      const amount = values[0]!;
+      if (moveSession.axis === "x") dz = amount * moveSession.dirX;
+      else if (moveSession.axis === "y") dr = amount * moveSession.dirY;
+      else {
+        /* مقدار تکی شعاع حرکت است، نه قفل مختصات: نشانگر جهت را تعیین می‌کند
+           و نقطه/خط آزادانه روی دایره‌ای با همین شعاع حرکت می‌کند. */
+        const length = Math.hypot(dx, dy);
+        if (length > 1e-9) { dz = amount * dx / length; dr = amount * dy / length; }
+        else { dz = amount * moveSession.dirX; dr = 0; }
+      }
+    }
+              if (moveSession.mode === "absolute") {
+      const editAnchor = moveSession.editBase?.find((v) => moveSession.editVertexIds?.includes(v.id));
+      const sketchAnchor = moveSession.base.find((s) => moveSession.ids.includes(s.id))?.a;
+      const anchor = editAnchor ? { z: editAnchor.z, r: editAnchor.x / 2 } : sketchAnchor!;
+      if (values.length === 2) { dz -= anchor.z; dr -= anchor.r; }
+      else if (dz) dz = Math.abs(dz) - anchor.z; else dr = Math.abs(dr) - anchor.r;
+    }
+              if (moveSession.editBase && moveSession.editVertexIds && edit) {
+                const moving = new Set(moveSession.editVertexIds);
+                onEditBuf({ ...edit, verts: moveSession.editBase.map((v) => moving.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dr } : v) }, true);
+              } else {
+                const next = moveSession.base.map((s) => moveSession.ids.includes(s.id) ? moveSeg(s, dz, dr) : s);
+                onSegs(next, true);
+              }
+              setLastMove({ dz, dr }); setMoveBox(null); setMoveSession(null);
+            }} />
+          <div className={cn(
+            "mt-1 whitespace-nowrap pl-0.5 font-mono text-[10px] font-bold leading-none tracking-wide",
+            moveSession.mode === "absolute" ? "text-[#b1a4ff]" : "text-[#26e6c7]"
+          )}>{moveReadout}</div>
+        </div>
+      )}
+
       {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
       <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          {(editOpen ? TOOLS.filter((t) => t.id === "select") : TOOLS).map((t, i) => (
+          {(editOpen ? TOOLS.filter((t) => t.id === "select" || t.id === "move") : TOOLS).map((t, i) => (
             <button
               key={t.id}
               onClick={() => {
-                setTool(t.id);
+                chooseTool(t.id);
                 cancelDraft();
               }}
               title={`${t.name} (${t.key}) — ${t.hint}`}
@@ -3623,7 +3921,7 @@ export default function ProfileEditor({
               "grid h-[27px] w-full place-items-center rounded-lg border bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm transition-colors",
               panMode ? "border-teal/60 text-teal" : "border-edge text-mute hover:border-edge2 hover:text-ink"
             )}
-            title="پن (جابه‌جایی نما) — یا Space را نگه دارید، یا با دکمهٔ وسط/راست بکشید"
+            title="پن (جابه‌جایی نما) — با دکمهٔ وسط/راست بکشید"
             onClick={() => setPanMode((v) => !v)}
           >
             <IconHand className="h-3.5 w-3.5" />
@@ -3693,7 +3991,7 @@ export default function ProfileEditor({
           <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
           {stepText}
           {liveInfo && <span className="font-mono text-[10px] font-normal text-mute">{liveInfo}</span>}
-          <button onClick={() => { setTool("select"); cancelDraft(); }} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="لغو (Esc)">
+          <button onClick={() => { chooseTool("select"); cancelDraft(); }} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="لغو (Esc)">
             <IconX className="h-3 w-3" />
           </button>
         </div>
@@ -3936,7 +4234,7 @@ export default function ProfileEditor({
         </span>
         <span
           className="hidden items-center gap-1.5 rounded-full border border-edge bg-panel/85 px-2.5 py-1 text-[10.5px] text-mute backdrop-blur-sm xl:inline-flex"
-          title="درگ چپ‌به‌راست: فقط المان‌های کاملاً داخل باکس (آبی) • راست‌به‌چپ: المان‌های متقاطع (سبز) • Shift: افزودن • Ctrl: حذف • دابل‌کلیک: انتخاب زنجیره • پن: Space یا دکمهٔ وسط/راست"
+          title="درگ چپ‌به‌راست: فقط المان‌های کاملاً داخل باکس (آبی) • راست‌به‌چپ: المان‌های متقاطع (سبز) • Shift: افزودن • Ctrl: حذف • دابل‌کلیک: انتخاب زنجیره • پن: دکمهٔ وسط/راست • Space: سوییچ دو ابزار آخر"
         >
           <span className="inline-block h-2.5 w-4 rounded-[2px] border border-[#4aa3ff] bg-[#4aa3ff]/25" />
           <span className="inline-block h-2.5 w-4 rounded-[2px] border border-dashed border-[#3faf5d] bg-[#3faf5d]/20" />
