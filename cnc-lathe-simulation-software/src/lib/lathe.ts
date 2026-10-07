@@ -952,6 +952,33 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   const OD = Math.max(0, p.offsetDist);
   const IOD = Math.max(0, p.innerOffsetDist);
 
+  /* آفست دیواره داخلی باید یک مسیر یکنواخت در X باشد. آفست نرمال در نزدیکی
+     Split/دیواره‌های تقریباً عمودی می‌تواند چند نمونه با ترتیب X معکوس بسازد؛
+     مرتب‌سازی و ادغام این نمونه‌ها از حلقه و رفت‌وبرگشت مسیر جلوگیری می‌کند. */
+  const innerOffSamples: Sample[] = hasInner ? (() => {
+    const raw = normalOffset(innerSamples, IOD, false).sort((a, b) => a.z - b.z);
+    const clean: Sample[] = [];
+    for (const point of raw) {
+      const last = clean[clean.length - 1];
+      if (last && Math.abs(last.z - point.z) < 0.015) {
+        if (point.r < last.r) last.r = point.r;
+      } else clean.push({ ...point });
+    }
+    return clean;
+  })() : [];
+  const innerOffsetRadiusAt = (z: number): number => {
+    if (!innerOffSamples.length) return 0;
+    if (z <= innerOffSamples[0].z) return innerOffSamples[0].r;
+    for (let i = 1; i < innerOffSamples.length; i++) {
+      if (innerOffSamples[i].z >= z) {
+        const a = innerOffSamples[i - 1], b = innerOffSamples[i];
+        const t = (z - a.z) / Math.max(1e-9, b.z - a.z);
+        return a.r + (b.r - a.r) * t;
+      }
+    }
+    return innerOffSamples[innerOffSamples.length - 1].r;
+  };
+
   /* آخرین عملیات داخل‌تراشیِ واقعاً قابل اجرا؛ عملیات بی‌اثر (مثلاً کف‌تراشی
      بدون طول اضافه یا آفست صفر) نقطه پایان برنامه محسوب نمی‌شود. */
   const lastRunnableInnerOpId = [...p.ops].reverse().find((o) => {
@@ -1152,7 +1179,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               rawRapid(centerD, prevZ + 0.5);
               mv(1, centerD, zk, p.feedRough * 0.7, "bottom"); // شیرجه −X به عمق بار بعدی
             }
-            mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // کف‌تراشی از مرکز به بیرون (+Y)
+            /* در کاسه، کف‌تراشی دقیقاً روی مرز آفست داخلی متوقف می‌شود و
+               هرگز از دیوارهٔ رزروشده برای پاس آفست/پرداخت عبور نمی‌کند. */
+            const passOutsideD = hasInner
+              ? Math.min(outsideD, 2 * Math.max(centerD / 2, innerOffsetRadiusAt(zk)))
+              : outsideD;
+            mv(1, passOutsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → مرز مجاز
           }
           if (!finishLastInner(op.id)) mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
           physCut(zEnd, p.blankL, 0); // طول اضافی کاملاً برداشته شد
@@ -1438,7 +1470,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const zBot = IW[0].z;
         const zRim = IW[IW.length - 1].z;
         /* خط آفست یکنواخت داخل: آفست نرمال به سمت حفره (نه wallIn−OD شعاعی) */
-        const innerOff = normalOffset(IW, IOD, false);
+        const innerOff = innerOffSamples;
         const wallInOff = (z: number): number => {
           if (z <= innerOff[0].z) return innerOff[0].r;
           for (let i = 1; i < innerOff.length; i++) {
@@ -1487,8 +1519,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         curOp = "inner-offset";
         if (!hasInner || IOD <= 0.01) break;
         note(`INNER OFFSET PASS ${f2(IOD)} MM (HOLDER ${op.holder})`);
-        const IW = innerSamples;
-        const innerOff = normalOffset(IW, IOD, false);
+        const innerOff = innerOffSamples;
         if (innerOff.length < 2) break;
         const zBot = innerOff[0].z;
         const zRimF = innerOff[innerOff.length - 1].z;
