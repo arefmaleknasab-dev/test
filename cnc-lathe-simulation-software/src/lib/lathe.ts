@@ -1082,6 +1082,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */
   let innerCleared = false; // آیا حفره داخل با خشن‌کاری خالی شده است؟
+  /* پاس نهایی کف‌تراشی در صفحه Split همان پاس نخست خشن داخل است؛ مالکیت این
+     صفحه فقط به عملیاتی داده می‌شود که زودتر اجرا شده تا مسیرها هم‌پوشان نشوند. */
+  let splitPlaneAlreadyCut = false;
   /* کمترین شعاع باقی‌مانده در انتهای خام پس از خشن شعاعی؛ کف‌تراشی بعدی فقط
      بخش مرکز تا این مرز را می‌تراشد و وارد ناحیه‌ای که قبلاً خالی شده نمی‌شود. */
   let radialRoughEndR: number | null = null;
@@ -1171,6 +1174,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           enterFirstInner(centerD, depths[0] + p.innerStartClearance);
           for (let k = 0; k < depths.length; k++) {
             const zk = depths[k];
+            const isSplitPlane = Math.abs(zk - zEnd) < 0.05;
+            if (isSplitPlane && splitPlaneAlreadyCut) continue;
             if (k === 0) {
               if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
             } else {
@@ -1185,6 +1190,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               ? Math.min(outsideD, 2 * Math.max(centerD / 2, innerOffsetRadiusAt(zk)))
               : outsideD;
             mv(1, passOutsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → مرز مجاز
+            if (isSplitPlane && hasInner) splitPlaneAlreadyCut = true;
           }
           if (!finishLastInner(op.id)) mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
           physCut(zEnd, p.blankL, 0); // طول اضافی کاملاً برداشته شد
@@ -1485,8 +1491,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         };
         const step = Math.max(0.5, p.innerDoc);
         const depths: number[] = [];
-        for (let z = zRim; z > zBot + 0.05; z -= step) depths.push(z);
-        depths.push(zBot);
+        /* اگر کف‌تراشی صفحه Split را تا مرز آفست برده، خشن داخل از عمق بعدی
+           آغاز می‌شود. در غیر این صورت خود خشن داخل مالک پاس دهانه است. */
+        const firstDepth = splitPlaneAlreadyCut ? zRim - step : zRim;
+        for (let z = firstDepth; z > zBot + 0.05; z -= step) depths.push(z);
+        if (!depths.length || Math.abs(depths[depths.length - 1] - zBot) > 0.05) depths.push(zBot);
+        if (!splitPlaneAlreadyCut && depths.length && Math.abs(depths[0] - zRim) < 0.05) splitPlaneAlreadyCut = true;
         note(`INNER DEPTHS ${depths.length} x ${f2(step)} MM`);
         const rEntry = 0.6; // ورود در امتداد محور
         /* نقطه ورود به‌اندازه فاصله تنظیم‌شده جلوتر (+X) از شروع اولین عملیات داخل‌تراشی است.
