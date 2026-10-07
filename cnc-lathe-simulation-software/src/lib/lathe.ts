@@ -464,6 +464,24 @@ export function normalOffset(pts: Sample[], dist: number, outward: boolean): Sam
   return trimOffsetLoops(out);
 }
 
+/* آفست یک سمتِ پیوسته برای مسیرهای برگشتی/Overhang. برخلاف normalOffset، با
+   عبور مماس از قله علامت نرمال را براساس مؤلفه شعاعی عوض نمی‌کند؛ سمت چپ مسیر
+   در تمام زنجیره ثابت می‌ماند و بنابراین Offset ناگهان به داخل منحنی نمی‌پرد. */
+function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sample[] {
+  const n = pts.length;
+  if (n < 2 || dist === 0) return pts.map((point) => ({ ...point }));
+  const sign = leftSide ? 1 : -1;
+  const out: Sample[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    const length = Math.hypot(b.z - a.z, b.r - a.r);
+    if (length < 1e-9) { out[i] = { ...pts[i] }; continue; }
+    const tz = (b.z - a.z) / length, tr = (b.r - a.r) / length;
+    out[i] = { z: pts[i].z + (-tr) * dist * sign, r: pts[i].r + tz * dist * sign };
+  }
+  return trimOffsetLoops(out);
+}
+
 /* تقاطع واقعی (داخلی-داخلی، نه سرهای مشترک) دو پاره‌خط */
 function segCross(p1: Sample, p2: Sample, p3: Sample, p4: Sample): Sample | null {
   const dz1 = p2.z - p1.z, dr1 = p2.r - p1.r, dz2 = p4.z - p3.z, dr2 = p4.r - p3.r;
@@ -991,7 +1009,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
      مرتب‌سازی و ادغام این نمونه‌ها از حلقه و رفت‌وبرگشت مسیر جلوگیری می‌کند. */
   /* مسیر نمایشی/پرداختی با ترتیب اصلی شاخه، بدون مرتب‌سازی مخرب برحسب X. */
   const innerFinishOffSamples: Sample[] = hasInner
-    ? normalOffset(innerPathSamples, IOD, true).reverse()
+    ? continuousPathOffset(innerPathSamples, IOD, true).reverse()
     : [];
   const innerOffSamples: Sample[] = hasInner ? (() => {
     /* پوشش خشن از همان آفست یکپارچه ساخته می‌شود؛ مسیر دومی با نرمال مخالف نداریم. */
