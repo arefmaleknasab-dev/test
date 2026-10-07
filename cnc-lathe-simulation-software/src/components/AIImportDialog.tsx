@@ -79,12 +79,12 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
             {!doc ? <button className="absolute inset-0 m-auto h-24 w-60 rounded-lg border border-dashed border-teal/50 text-sm font-bold text-teal hover:bg-teal/10" onClick={() => inputRef.current?.click()}>انتخاب فایل AI</button> : (
               <>
               {/* مقادیر اصلی خط‌کش قابل ویرایش‌اند و مستقیماً Scale را تغییر می‌دهند. */}
-              <label className="absolute top-1.5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded border border-teal/50 bg-[#071018]/95 px-1.5 py-1 text-[9px] text-teal shadow-lg" onPointerDown={(e) => e.stopPropagation()}>
+              <label className="absolute top-1.5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded border border-[#9aa7b4]/60 bg-[#071018]/95 px-1.5 py-1 text-[9px] text-[#9aa7b4] shadow-lg" onPointerDown={(e) => e.stopPropagation()}>
                 W
                 <input type="number" min={.001} step={.1} value={Number(width.toFixed(3))} onChange={(e) => setFinalDimension("width", Number(e.target.value))} className="w-16 bg-transparent text-center font-mono text-[10px] text-ink outline-none" dir="ltr" />
                 mm
               </label>
-              <label className="absolute top-1/2 right-1.5 z-20 flex -translate-y-1/2 items-center gap-1 rounded border border-brass/50 bg-[#071018]/95 px-1.5 py-1 text-[9px] text-brass2 shadow-lg" onPointerDown={(e) => e.stopPropagation()}>
+              <label className="absolute top-1/2 right-1.5 z-20 flex -translate-y-1/2 items-center gap-1 rounded border border-[#9aa7b4]/60 bg-[#071018]/95 px-1.5 py-1 text-[9px] text-[#9aa7b4] shadow-lg" onPointerDown={(e) => e.stopPropagation()}>
                 H
                 <input type="number" min={.001} step={.1} value={Number(height.toFixed(3))} onChange={(e) => setFinalDimension("height", Number(e.target.value))} className="w-16 bg-transparent text-center font-mono text-[10px] text-ink outline-none" dir="ltr" />
                 mm
@@ -99,15 +99,15 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
                 <rect width={width} height={height} fill="#111923" stroke="#334155" strokeWidth={Math.max(width, height) / 500} />
                 {/* خط‌کش افقی عرض و خط‌کش عمودی ارتفاع؛ دو سر ضخیم، محدوده واقعی Bounding Box هستند. */}
                 <defs>
-                  <marker id="ai-ruler-arrow-x" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M8 0 0 4l8 4z" fill="#28dfc2" /></marker>
-                  <marker id="ai-ruler-arrow-y" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M8 0 0 4l8 4z" fill="#e3a94e" /></marker>
+                  <marker id="ai-ruler-arrow-x" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0 8 4 0 8z" fill="#9aa7b4" /></marker>
+                  <marker id="ai-ruler-arrow-y" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0 8 4 0 8z" fill="#9aa7b4" /></marker>
                 </defs>
                 <g pointerEvents="none">
-                  <line x1={0} y1={-height * .045} x2={width} y2={-height * .045} stroke="#28dfc2" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-x)" markerEnd="url(#ai-ruler-arrow-x)" vectorEffect="non-scaling-stroke" />
-                  <line x1={width * 1.045} y1={0} x2={width * 1.045} y2={height} stroke="#e3a94e" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-y)" markerEnd="url(#ai-ruler-arrow-y)" vectorEffect="non-scaling-stroke" />
+                  <line x1={0} y1={-height * .045} x2={width} y2={-height * .045} stroke="#9aa7b4" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-x)" markerEnd="url(#ai-ruler-arrow-x)" vectorEffect="non-scaling-stroke" />
+                  <line x1={width * 1.045} y1={0} x2={width * 1.045} y2={height} stroke="#9aa7b4" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-y)" markerEnd="url(#ai-ruler-arrow-y)" vectorEffect="non-scaling-stroke" />
                 </g>
                 <g fill="none" stroke="#46d7ba" strokeWidth={Math.max(width, height) / 350} vectorEffect="non-scaling-stroke">{preview.map((segment) => <path key={segment.id} d={pathOf({ ...segment, a: { z: segment.a.z, r: height - segment.a.r }, b: { z: segment.b.z, r: height - segment.b.r }, c1: segment.c1 ? { z: segment.c1.z, r: height - segment.c1.r } : undefined, c2: segment.c2 ? { z: segment.c2.z, r: height - segment.c2.r } : undefined })} />)}</g>
-                <g transform={`translate(${anchor.x * width} ${anchor.y * height})`}><circle r={Math.max(width, height) / 45} fill="#ffcf66" stroke="#111" strokeWidth={2} vectorEffect="non-scaling-stroke" /><path d={`M${-Math.max(width,height)/25} 0H${Math.max(width,height)/25}M0 ${-Math.max(width,height)/25}V${Math.max(width,height)/25}`} stroke="#ffcf66" strokeWidth={2} vectorEffect="non-scaling-stroke" /></g>
+                <g transform={`translate(${anchor.x * width} ${anchor.y * height})`}><circle r={Math.max(width, height) / 90} fill="#ffcf66" stroke="#111" strokeWidth={2} vectorEffect="non-scaling-stroke" /><path d={`M${-Math.max(width,height)/50} 0H${Math.max(width,height)/50}M0 ${-Math.max(width,height)/50}V${Math.max(width,height)/50}`} stroke="#ffcf66" strokeWidth={1.25} vectorEffect="non-scaling-stroke" /></g>
               </svg>
               </>
             )}

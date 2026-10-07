@@ -1051,8 +1051,8 @@ function BlankDims({
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
-        <Num label="قطر خام" unit="mm" value={d} min={10} max={200} step={2} onChange={setD} />
-        <Num label="طول خام" unit="mm" value={l} min={20} max={400} step={5} onChange={setL} />
+        <Num label="قطر خام" unit="mm" value={d} step={2} onChange={setD} />
+        <Num label="طول خام" unit="mm" value={l} step={5} onChange={setL} />
       </div>
       <button
         onClick={() => onApply(d, l)}

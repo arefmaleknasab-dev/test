@@ -693,6 +693,9 @@ export default function App() {
   };
 
   const importAi = (segments: SketchSeg[], length: number, diameter: number) => {
+    /* حذف نویز ممیز شناور (مثلاً 28.000000000000004) پیش از ثبت ابعاد خام. */
+    length = Math.round(length * 1e6) / 1e6;
+    diameter = Math.round(diameter * 1e6) / 1e6;
     pushPast(snap());
     setSketch(segments);
     setGenerationSketch(segments);
