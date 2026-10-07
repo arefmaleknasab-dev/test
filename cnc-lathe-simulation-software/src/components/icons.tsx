@@ -92,3 +92,6 @@ export const IconHand = (p: P) =>
 
 export const IconMove = (p: P) =>
   base(p, <><path d="M12 2v20M2 12h20" /><path d="m8.5 5.5 3.5-3.5 3.5 3.5M8.5 18.5 12 22l3.5-3.5M5.5 8.5 2 12l3.5 3.5M18.5 8.5 22 12l-3.5 3.5" /></>);
+
+export const IconFillet = (p: P) =>
+  base(p, <><path d="M4 4v16h16" /><path d="M4 13a7 7 0 0 0 7 7" /></>);

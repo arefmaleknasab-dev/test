@@ -36,6 +36,7 @@ import {
   IconCubic,
   IconCursor,
   IconFit,
+  IconFillet,
   IconGrid,
   IconHand,
   IconLayers,
@@ -75,11 +76,12 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "line" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "fillet" | "line" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
+  { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
@@ -87,11 +89,12 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, fillet: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   move: [],
+  fillet: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
   quad: ["نقطهٔ شروع", "نقطهٔ پایان", "نقطهٔ کنترل منحنی"],
   cubic: ["نقطهٔ شروع", "نقطهٔ پایان", "دستهٔ خروج از پایان", "دستهٔ ورود به شروع"],
@@ -566,6 +569,69 @@ const constrainSegPointToStock = (
   };
 };
 
+type FilletPick = { id: number; click: SPoint };
+type FilletResult = { first: SketchSeg; second: SketchSeg; arc: SketchSeg };
+
+/** Fillet دقیق دو پاره‌خط: محل کلیک، شاخه‌ای را که باید باقی بماند تعیین می‌کند. */
+function buildLineFillet(a: SketchSeg, b: SketchSeg, pickA: SPoint, pickB: SPoint, radius: number, blankL: number, blankR: number): { result?: FilletResult; error?: string; maxRadius?: number } {
+  if (a.kind !== "line" || b.kind !== "line" || a.id === b.id) return { error: "دو خط متفاوت انتخاب کنید" };
+  if (!(radius > 0) || !Number.isFinite(radius)) return { error: "شعاع باید بزرگ‌تر از صفر باشد" };
+  const ad = { z: a.b.z - a.a.z, r: a.b.r - a.a.r };
+  const bd = { z: b.b.z - b.a.z, r: b.b.r - b.a.r };
+  const cross = ad.z * bd.r - ad.r * bd.z;
+  if (Math.abs(cross) < 1e-9) return { error: "خطوط موازی یا منطبق هستند" };
+  const q = { z: b.a.z - a.a.z, r: b.a.r - a.a.r };
+  const ta = (q.z * bd.r - q.r * bd.z) / cross;
+  const intersection = { z: a.a.z + ad.z * ta, r: a.a.r + ad.r * ta };
+  const unitToward = (line: SketchSeg, click: SPoint) => {
+    const d = { z: line.b.z - line.a.z, r: line.b.r - line.a.r };
+    const len = Math.hypot(d.z, d.r);
+    const u = { z: d.z / len, r: d.r / len };
+    const sign = (click.z - intersection.z) * u.z + (click.r - intersection.r) * u.r >= 0 ? 1 : -1;
+    return { z: u.z * sign, r: u.r * sign };
+  };
+  const u1 = unitToward(a, pickA), u2 = unitToward(b, pickB);
+  const dot = Math.max(-1, Math.min(1, u1.z * u2.z + u1.r * u2.r));
+  const theta = Math.acos(dot);
+  if (theta < 1e-5 || Math.PI - theta < 1e-5) return { error: "زاویه خطوط برای Fillet معتبر نیست" };
+  const tanHalf = Math.tan(theta / 2);
+  const tangentDistance = radius / tanHalf;
+  const available = (line: SketchSeg, u: SPoint) => Math.max(
+    (line.a.z - intersection.z) * u.z + (line.a.r - intersection.r) * u.r,
+    (line.b.z - intersection.z) * u.z + (line.b.r - intersection.r) * u.r,
+  );
+  const availA = available(a, u1), availB = available(b, u2);
+  const minimum = (line: SketchSeg, u: SPoint) => Math.max(0, Math.min(
+    (line.a.z - intersection.z) * u.z + (line.a.r - intersection.r) * u.r,
+    (line.b.z - intersection.z) * u.z + (line.b.r - intersection.r) * u.r,
+  ));
+  const minDistance = Math.max(minimum(a, u1), minimum(b, u2));
+  const maxRadius = Math.max(0, Math.min(availA, availB) * tanHalf);
+  if (tangentDistance < minDistance - 1e-7 || tangentDistance > availA + 1e-7 || tangentDistance > availB + 1e-7 || maxRadius <= 1e-7) {
+    return { error: `شعاع نامعتبر — حداکثر ${Math.max(0, maxRadius).toFixed(2)}`, maxRadius };
+  }
+  const t1 = { z: intersection.z + u1.z * tangentDistance, r: intersection.r + u1.r * tangentDistance };
+  const t2 = { z: intersection.z + u2.z * tangentDistance, r: intersection.r + u2.r * tangentDistance };
+  const bisector = { z: u1.z + u2.z, r: u1.r + u2.r };
+  const bl = Math.hypot(bisector.z, bisector.r);
+  const centerDistance = radius / Math.sin(theta / 2);
+  const center = { z: intersection.z + bisector.z / bl * centerDistance, r: intersection.r + bisector.r / bl * centerDistance };
+  const v1 = { z: t1.z - center.z, r: t1.r - center.r }, v2 = { z: t2.z - center.z, r: t2.r - center.r };
+  const vm = { z: v1.z + v2.z, r: v1.r + v2.r };
+  const vl = Math.hypot(vm.z, vm.r);
+  const via = { z: center.z + vm.z / vl * radius, r: center.r + vm.r / vl * radius };
+  const trim = (line: SketchSeg, tangent: SPoint, u: SPoint) => {
+    const pa = (line.a.z - intersection.z) * u.z + (line.a.r - intersection.r) * u.r;
+    const pb = (line.b.z - intersection.z) * u.z + (line.b.r - intersection.r) * u.r;
+    return pa >= pb ? { ...line, b: tangent } : { ...line, a: tangent };
+  };
+  const result = { first: trim(a, t1, u1), second: trim(b, t2, u2), arc: { id: -999999, kind: "arc" as const, a: t1, b: t2, via } };
+  if (!segInsideStock(result.first, blankL, blankR) || !segInsideStock(result.second, blankL, blankR) || !segInsideStock(result.arc, blankL, blankR)) {
+    return { error: "قوس از محدوده خام خارج می‌شود", maxRadius };
+  }
+  return { result, maxRadius };
+}
+
 /** Evaluates a deliberately small arithmetic grammar; no eval/Function is used. */
 function arithmeticValue(source: string): number | null {
   const text = latinDigits(source).replace(/\s+/g, "");
@@ -640,10 +706,14 @@ export default function ProfileEditor({
     toolRef.current = next;
     setTool(next);
   };
+  const [filletPicks, setFilletPicks] = useState<FilletPick[]>([]);
+  const [filletBox, setFilletBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const filletInputRef = useRef<HTMLInputElement>(null);
   const [moveBox, setMoveBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const [moveSession, setMoveSession] = useState<MoveSession | null>(null);
   const moveInputRef = useRef<HTMLInputElement>(null);
   const [lastMove, setLastMove] = useState<{ dz: number; dr: number } | null>(null);
+  useEffect(() => { if (filletBox) requestAnimationFrame(() => { filletInputRef.current?.focus(); filletInputRef.current?.select(); }); }, [!!filletBox]);
   useEffect(() => { if (moveBox) requestAnimationFrame(() => { moveInputRef.current?.focus(); moveInputRef.current?.select(); }); }, [!!moveBox]);
   useEffect(() => {
     const releaseAxis = (event: KeyboardEvent) => {
@@ -834,6 +904,9 @@ export default function ProfileEditor({
     setSplitSelected(false);
     setSplitHovered(false);
   }, [split.enabled]);
+  useEffect(() => {
+    if (tool !== "fillet") { setFilletPicks([]); setFilletBox(null); }
+  }, [tool]);
   useEffect(() => {
     if (tool !== "select") {
       setSplitSelected(false);
@@ -1964,6 +2037,26 @@ export default function ProfileEditor({
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
+    if (tool === "fillet" && e.button === 0 && !editOpen) {
+      const hit = hitSeg(raw);
+      if (!hit || hit.kind !== "line") {
+        if (filletPicks.length === 0) setFilletBox(null);
+        return;
+      }
+      if (filletPicks.length === 0 || filletPicks[0].id === hit.id) {
+        setFilletPicks([{ id: hit.id, click: raw }]);
+        onSelected([hit.id]);
+        setFilletBox(null);
+      } else {
+        const next = [filletPicks[0], { id: hit.id, click: raw }];
+        setFilletPicks(next);
+        onSelected(next.map((pick) => pick.id));
+        const rect = wrapRef.current!.getBoundingClientRect();
+        setFilletBox({ x: Math.min(rect.width - 128, Math.max(40, e.clientX - rect.left + 14)), y: Math.min(rect.height - 58, Math.max(8, e.clientY - rect.top - 44)), value: "5", error: "" });
+      }
+      drag.current = null;
+      return;
+    }
     if (tool === "move" && e.button === 0) {
       /* کلیک دوم، پیش‌نمایش فعلی را تأیید می‌کند و پنجره را می‌بندد. */
       if (moveSession) {
@@ -2211,6 +2304,26 @@ export default function ProfileEditor({
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const raw = toWorld(e.clientX, e.clientY);
+    if (tool === "fillet" && e.button === 0 && !editOpen) {
+      const hit = hitSeg(raw);
+      if (!hit || hit.kind !== "line") {
+        if (filletPicks.length === 0) setFilletBox(null);
+        return;
+      }
+      if (filletPicks.length === 0 || filletPicks[0].id === hit.id) {
+        setFilletPicks([{ id: hit.id, click: raw }]);
+        onSelected([hit.id]);
+        setFilletBox(null);
+      } else {
+        const next = [filletPicks[0], { id: hit.id, click: raw }];
+        setFilletPicks(next);
+        onSelected(next.map((pick) => pick.id));
+        const rect = wrapRef.current!.getBoundingClientRect();
+        setFilletBox({ x: Math.min(rect.width - 128, Math.max(40, e.clientX - rect.left + 14)), y: Math.min(rect.height - 58, Math.max(8, e.clientY - rect.top - 44)), value: "5", error: "" });
+      }
+      drag.current = null;
+      return;
+    }
     if (tool === "move" && moveSession) {
       const rect = wrapRef.current!.getBoundingClientRect();
       setMoveBox((box) => box ? {
@@ -2553,7 +2666,7 @@ export default function ProfileEditor({
     const d = drag.current;
     drag.current = null;
     setSnapHit(null);
-    if (tool === "move") return;
+    if (tool === "move" || tool === "fillet") return;
 
     /* --- حالت ویرایش مسیر: ثبت ژست (نرمال‌سازی + تاریخچه) --- */
     if (d?.mode === "eline" || d?.mode === "evert") {
@@ -3079,6 +3192,26 @@ export default function ProfileEditor({
         : `${concise(cz - bz)}, ${concise(cr - br)}`;
     }
   }
+
+  const filletRadius = filletBox ? arithmeticValue(filletBox.value) : null;
+  const filletLines = filletPicks.length === 2
+    ? filletPicks.map((pick) => segs.find((segment) => segment.id === pick.id))
+    : [];
+  const filletCalc = filletLines.length === 2 && filletLines[0] && filletLines[1] && filletRadius != null
+    ? buildLineFillet(filletLines[0], filletLines[1], filletPicks[0].click, filletPicks[1].click, filletRadius, L, R)
+    : null;
+
+  const confirmFillet = () => {
+    if (!filletBox || !filletCalc?.result || filletRadius == null) {
+      if (filletBox) setFilletBox({ ...filletBox, error: filletCalc?.error ?? "شعاع نامعتبر" });
+      return;
+    }
+    const result = filletCalc.result;
+    const arc = { ...result.arc, id: newSegId() };
+    commit(segs.map((segment) => segment.id === result.first.id ? result.first : segment.id === result.second.id ? result.second : segment).concat(arc));
+    onSelected([arc.id]);
+    setFilletPicks([]); setFilletBox(null);
+  };
 
   return (
     <div
@@ -3675,6 +3808,15 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {/* پیش‌نمایش Fillet: خطوط Trim‌شده و Arc مماس پیش از Enter */}
+        {tool === "fillet" && filletCalc?.result && (
+          <g pointerEvents="none" filter="url(#curveGlow)">
+            <path d={segPath(filletCalc.result.first, cam)} fill="none" stroke="#ffd166" strokeWidth={3} strokeDasharray="7 3" />
+            <path d={segPath(filletCalc.result.second, cam)} fill="none" stroke="#ffd166" strokeWidth={3} strokeDasharray="7 3" />
+            <path d={segPath(filletCalc.result.arc, cam)} fill="none" stroke="#28dfc2" strokeWidth={3.5} />
+          </g>
+        )}
+
         {/* راهنمای شعاع Move: از مرکز دایرهٔ فرضی تا موقعیت زنده نشانگر */}
         {moveSession && (() => {
           const [x1, y1] = P(moveSession.origin.z, moveSession.origin.r);
@@ -3804,6 +3946,26 @@ export default function ProfileEditor({
               ? "نقطه به نزدیک‌ترین هم‌جوار می‌چسبد و دوباره با آن حرکت می‌کند"
               : "نقطه مستقل می‌شود و دیگر با نقاط هم‌مکان جابه‌جا نمی‌شود"}
           </p>
+        </div>
+      )}
+
+      {filletBox && filletPicks.length === 2 && (
+        <div className="absolute z-50 w-[126px] rounded-md border border-[#28dfc2]/70 bg-[#071018]/95 p-1.5 shadow-2xl" style={{ left: filletBox.x, top: filletBox.y }} dir="ltr">
+          <div className="mb-1 text-[9px] font-bold text-[#28dfc2]">Radius</div>
+          <input
+            ref={filletInputRef}
+            value={filletBox.value}
+            aria-label="Fillet radius"
+            className={cn("h-7 w-full rounded border bg-[#050b10] px-2 font-mono text-xs text-ink outline-none", filletBox.error || filletCalc?.error ? "border-danger" : "border-[#28dfc2]")}
+            onChange={(e) => setFilletBox({ ...filletBox, value: e.target.value, error: "" })}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") { setFilletPicks([]); setFilletBox(null); onSelected([]); return; }
+              if (e.key === "Enter") { e.preventDefault(); confirmFillet(); }
+            }}
+          />
+          {(filletBox.error || filletCalc?.error) && <div className="mt-1 text-[9px] leading-3 text-danger" dir="rtl">{filletBox.error || filletCalc?.error}</div>}
+          {!filletCalc?.error && <div className="mt-1 text-[8px] text-dim" dir="rtl">Enter برای ساخت قوس</div>}
         </div>
       )}
 
