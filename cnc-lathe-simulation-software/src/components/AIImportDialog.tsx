@@ -98,11 +98,13 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
               >
                 <rect width={width} height={height} fill="#111923" stroke="#334155" strokeWidth={Math.max(width, height) / 500} />
                 {/* خط‌کش افقی عرض و خط‌کش عمودی ارتفاع؛ دو سر ضخیم، محدوده واقعی Bounding Box هستند. */}
-                <g pointerEvents="none" fontFamily="ui-monospace, monospace" fontSize={Math.max(width, height) / 42}>
-                  <line x1={0} y1={-height * .045} x2={width} y2={-height * .045} stroke="#28dfc2" strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
-                  {[0, .25, .5, .75, 1].map((tick) => <g key={`rx${tick}`} transform={`translate(${width * tick} ${-height * .045})`}><line y1={-height * (tick === 0 || tick === 1 ? .025 : .015)} y2={height * .015} stroke="#28dfc2" strokeWidth={tick === 0 || tick === 1 ? 2 : 1} vectorEffect="non-scaling-stroke" /><text y={-height * .022} textAnchor={tick === 0 ? "start" : tick === 1 ? "end" : "middle"} fill="#84f5df">{(width * tick).toFixed(width < 10 ? 2 : 1)}</text></g>)}
-                  <line x1={width * 1.045} y1={0} x2={width * 1.045} y2={height} stroke="#e3a94e" strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
-                  {[0, .25, .5, .75, 1].map((tick) => <g key={`ry${tick}`} transform={`translate(${width * 1.045} ${height * tick})`}><line x1={-width * .015} x2={width * (tick === 0 || tick === 1 ? .025 : .015)} stroke="#e3a94e" strokeWidth={tick === 0 || tick === 1 ? 2 : 1} vectorEffect="non-scaling-stroke" /><text x={width * .018} y={height * .009} fill="#f3c26b">{(height * tick).toFixed(height < 10 ? 2 : 1)}</text></g>)}
+                <defs>
+                  <marker id="ai-ruler-arrow-x" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M8 0 0 4l8 4z" fill="#28dfc2" /></marker>
+                  <marker id="ai-ruler-arrow-y" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M8 0 0 4l8 4z" fill="#e3a94e" /></marker>
+                </defs>
+                <g pointerEvents="none">
+                  <line x1={0} y1={-height * .045} x2={width} y2={-height * .045} stroke="#28dfc2" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-x)" markerEnd="url(#ai-ruler-arrow-x)" vectorEffect="non-scaling-stroke" />
+                  <line x1={width * 1.045} y1={0} x2={width * 1.045} y2={height} stroke="#e3a94e" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-y)" markerEnd="url(#ai-ruler-arrow-y)" vectorEffect="non-scaling-stroke" />
                 </g>
                 <g fill="none" stroke="#46d7ba" strokeWidth={Math.max(width, height) / 350} vectorEffect="non-scaling-stroke">{preview.map((segment) => <path key={segment.id} d={pathOf({ ...segment, a: { z: segment.a.z, r: height - segment.a.r }, b: { z: segment.b.z, r: height - segment.b.r }, c1: segment.c1 ? { z: segment.c1.z, r: height - segment.c1.r } : undefined, c2: segment.c2 ? { z: segment.c2.z, r: height - segment.c2.r } : undefined })} />)}</g>
                 <g transform={`translate(${anchor.x * width} ${anchor.y * height})`}><circle r={Math.max(width, height) / 45} fill="#ffcf66" stroke="#111" strokeWidth={2} vectorEffect="non-scaling-stroke" /><path d={`M${-Math.max(width,height)/25} 0H${Math.max(width,height)/25}M0 ${-Math.max(width,height)/25}V${Math.max(width,height)/25}`} stroke="#ffcf66" strokeWidth={2} vectorEffect="non-scaling-stroke" /></g>
