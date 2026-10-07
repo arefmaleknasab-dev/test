@@ -675,7 +675,8 @@ function ControlsPanel({
       {/* پارامترهای تراش */}
       <Section title="پارامترهای برداشت">
         <div className="grid grid-cols-2 gap-2">
-          <Num label="عمق بار / گام" unit="mm" value={params.doc} min={0.5} max={10} step={0.5} onChange={(v) => onParams({ doc: v })} />
+          <Num label="عمق بار / گام بیرونی" unit="mm" value={params.doc} min={0.5} max={10} step={0.5} onChange={(v) => onParams({ doc: v })} />
+          <Num label="عمق بار داخل‌تراشی" unit="mm" value={params.innerDoc} min={0.5} max={10} step={0.5} onChange={(v) => onParams({ innerDoc: Math.min(10, Math.max(0.5, v)) })} />
           <Num label="فاصله آفست" unit="mm" value={params.offsetDist} min={0} max={3} step={0.1} onChange={(v) => onParams({ offsetDist: v })} />
           <Num label="فاصله آفست داخل تراش" unit="mm" value={params.innerOffsetDist} min={0} max={3} step={0.1} onChange={(v) => onParams({ innerOffsetDist: v })} />
           <Num label="فاصله شروع داخل تراشی" unit="mm" value={params.innerStartClearance} min={0} max={20} step={0.5} onChange={(v) => onParams({ innerStartClearance: Math.min(20, Math.max(0, v)) })} />
