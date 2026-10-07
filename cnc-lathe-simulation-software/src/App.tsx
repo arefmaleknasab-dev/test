@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ControlsPanel from "./components/ControlsPanel";
+import AIImportDialog from "./components/AIImportDialog";
 import { DockPanel, DockSplitter, MAX_PANEL, MIN_PANEL, WindowMenu, defaultLayout, normalizeLayout } from "./components/Dock";
 import type { LayoutState, PanelId, PanelState, PanelVis, WindowMenuItem } from "./components/Dock";
 import GCodePanel from "./components/GCodePanel";
@@ -88,6 +89,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
 }
 
 export default function App() {
+  const [showAiImport, setShowAiImport] = useState(false);
   const [sketch, setSketch] = useState<SketchSeg[]>(() => {
     const fromSaved = normalizeSketch(SAVED?.sketch);
     if (fromSaved) return fromSaved;
@@ -690,6 +692,20 @@ export default function App() {
     showToast(`مسیر برشی ${opCount.toLocaleString("fa-IR")} عملیات با ${vertexCount.toLocaleString("fa-IR")} نقطه به DXF تبدیل شد`);
   };
 
+  const importAi = (segments: SketchSeg[], length: number, diameter: number) => {
+    pushPast(snap());
+    setSketch(segments);
+    setGenerationSketch(segments);
+    setParams((current) => normalizeParams({ ...current, blankL: Math.max(1, length), blankD: Math.max(1, diameter) }, false));
+    setSelectedIds([]);
+    setActivePreset(null);
+    setGcodeOvr({});
+    setEditBuf(null);
+    setShowAiImport(false);
+    setMode("design");
+    showToast(`فایل AI با ابعاد ${length.toFixed(1)} × ${diameter.toFixed(1)} میلی‌متر وارد شد`);
+  };
+
   const editorTitle = mode === "design" ? "طراحی پروفایل" : "شبیه‌سازی تراش";
   const menuItems: WindowMenuItem[] = [
     { id: "controls", label: "تنظیمات", vis: panelVis("controls") },
@@ -699,6 +715,7 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col @container">
+      {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
       {/* ---------- سربرگ ---------- */}
       <header className="relative z-40 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-panel/85 px-3.5 py-2 backdrop-blur">
         <div className="flex items-center gap-2.5">
@@ -727,6 +744,10 @@ export default function App() {
             <IconRedo className="h-4 w-4" />
           </button>
           <span className="mx-1 h-5 w-px bg-edge" />
+          <button className="btn !px-2.5 !py-1.5 text-[11.5px]" onClick={() => setShowAiImport(true)} title="وارد کردن فایل Adobe Illustrator با پیش‌نمایش و مقیاس">
+            <IconDownload className="h-3.5 w-3.5 rotate-180" />
+            ورود AI
+          </button>
           <button
             className="btn btn-teal !px-2.5 !py-1.5 text-[11.5px]"
             onClick={downloadDxf}
