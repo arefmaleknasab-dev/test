@@ -46,11 +46,25 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
   };
   const moveAnchor = (event: ReactPointerEvent<SVGSVGElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
-    /* viewBox از هر طرف ۸٪ حاشیه دارد؛ مختصات نشانگر را به Bounding Box خود
-       طرح برمی‌گردانیم تا نقطه دقیقاً زیر موس بماند. */
-    const viewX = ((event.clientX - rect.left) / rect.width) * 1.16 - .08;
-    const viewY = ((event.clientY - rect.top) / rect.height) * 1.16 - .08;
-    setAnchor({ x: Math.min(1, Math.max(0, viewX)), y: Math.min(1, Math.max(0, viewY)), name: "دستی" });
+    /* preserveAspectRatio فضای letterbox می‌سازد؛ آن حاشیه و ۸٪ فضای viewBox
+       هر دو حذف می‌شوند تا Origin هنگام Drag دقیقاً زیر نشانگر بماند. */
+    const vbW = Math.max(1e-9, width * 1.16), vbH = Math.max(1e-9, height * 1.16);
+    const renderScale = Math.min(rect.width / vbW, rect.height / vbH);
+    const renderedW = vbW * renderScale, renderedH = vbH * renderScale;
+    const offsetX = (rect.width - renderedW) / 2, offsetY = (rect.height - renderedH) / 2;
+    const localX = (event.clientX - rect.left - offsetX) / renderScale + width * .08;
+    const localY = (event.clientY - rect.top - offsetY) / renderScale + height * .08;
+    setAnchor({ x: Math.min(1, Math.max(0, localX / width)), y: Math.min(1, Math.max(0, localY / height)), name: "دستی" });
+  };
+  const setFinalDimension = (axis: "width" | "height", value: number) => {
+    if (!doc || !Number.isFinite(value) || value <= 0) return;
+    if (axis === "width") {
+      const percent = value / doc.widthMm * 100;
+      setScaleX(percent); if (locked) setScaleY(percent);
+    } else {
+      const percent = value / doc.heightMm * 100;
+      setScaleY(percent); if (locked) setScaleX(percent);
+    }
   };
 
   return (
@@ -63,6 +77,18 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
         <div className="grid min-h-0 flex-1 gap-3 overflow-y-auto p-3 md:grid-cols-[1fr_260px]">
           <div className="relative min-h-[360px] overflow-hidden rounded-lg border border-edge bg-[#070b10]">
             {!doc ? <button className="absolute inset-0 m-auto h-24 w-60 rounded-lg border border-dashed border-teal/50 text-sm font-bold text-teal hover:bg-teal/10" onClick={() => inputRef.current?.click()}>انتخاب فایل AI</button> : (
+              <>
+              {/* مقادیر اصلی خط‌کش قابل ویرایش‌اند و مستقیماً Scale را تغییر می‌دهند. */}
+              <label className="absolute top-1.5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded border border-teal/50 bg-[#071018]/95 px-1.5 py-1 text-[9px] text-teal shadow-lg" onPointerDown={(e) => e.stopPropagation()}>
+                W
+                <input type="number" min={.001} step={.1} value={Number(width.toFixed(3))} onChange={(e) => setFinalDimension("width", Number(e.target.value))} className="w-16 bg-transparent text-center font-mono text-[10px] text-ink outline-none" dir="ltr" />
+                mm
+              </label>
+              <label className="absolute top-1/2 right-1.5 z-20 flex -translate-y-1/2 items-center gap-1 rounded border border-brass/50 bg-[#071018]/95 px-1.5 py-1 text-[9px] text-brass2 shadow-lg" onPointerDown={(e) => e.stopPropagation()}>
+                H
+                <input type="number" min={.001} step={.1} value={Number(height.toFixed(3))} onChange={(e) => setFinalDimension("height", Number(e.target.value))} className="w-16 bg-transparent text-center font-mono text-[10px] text-ink outline-none" dir="ltr" />
+                mm
+              </label>
               <svg
                 className="h-full min-h-[360px] w-full touch-none cursor-crosshair"
                 viewBox={`${-width * .08} ${-height * .08} ${width * 1.16 || 1} ${height * 1.16 || 1}`}
@@ -71,9 +97,17 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
                 onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}
               >
                 <rect width={width} height={height} fill="#111923" stroke="#334155" strokeWidth={Math.max(width, height) / 500} />
+                {/* خط‌کش افقی عرض و خط‌کش عمودی ارتفاع؛ دو سر ضخیم، محدوده واقعی Bounding Box هستند. */}
+                <g pointerEvents="none" fontFamily="ui-monospace, monospace" fontSize={Math.max(width, height) / 42}>
+                  <line x1={0} y1={-height * .045} x2={width} y2={-height * .045} stroke="#28dfc2" strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
+                  {[0, .25, .5, .75, 1].map((tick) => <g key={`rx${tick}`} transform={`translate(${width * tick} ${-height * .045})`}><line y1={-height * (tick === 0 || tick === 1 ? .025 : .015)} y2={height * .015} stroke="#28dfc2" strokeWidth={tick === 0 || tick === 1 ? 2 : 1} vectorEffect="non-scaling-stroke" /><text y={-height * .022} textAnchor={tick === 0 ? "start" : tick === 1 ? "end" : "middle"} fill="#84f5df">{(width * tick).toFixed(width < 10 ? 2 : 1)}</text></g>)}
+                  <line x1={width * 1.045} y1={0} x2={width * 1.045} y2={height} stroke="#e3a94e" strokeWidth={1.2} vectorEffect="non-scaling-stroke" />
+                  {[0, .25, .5, .75, 1].map((tick) => <g key={`ry${tick}`} transform={`translate(${width * 1.045} ${height * tick})`}><line x1={-width * .015} x2={width * (tick === 0 || tick === 1 ? .025 : .015)} stroke="#e3a94e" strokeWidth={tick === 0 || tick === 1 ? 2 : 1} vectorEffect="non-scaling-stroke" /><text x={width * .018} y={height * .009} fill="#f3c26b">{(height * tick).toFixed(height < 10 ? 2 : 1)}</text></g>)}
+                </g>
                 <g fill="none" stroke="#46d7ba" strokeWidth={Math.max(width, height) / 350} vectorEffect="non-scaling-stroke">{preview.map((segment) => <path key={segment.id} d={pathOf({ ...segment, a: { z: segment.a.z, r: height - segment.a.r }, b: { z: segment.b.z, r: height - segment.b.r }, c1: segment.c1 ? { z: segment.c1.z, r: height - segment.c1.r } : undefined, c2: segment.c2 ? { z: segment.c2.z, r: height - segment.c2.r } : undefined })} />)}</g>
                 <g transform={`translate(${anchor.x * width} ${anchor.y * height})`}><circle r={Math.max(width, height) / 45} fill="#ffcf66" stroke="#111" strokeWidth={2} vectorEffect="non-scaling-stroke" /><path d={`M${-Math.max(width,height)/25} 0H${Math.max(width,height)/25}M0 ${-Math.max(width,height)/25}V${Math.max(width,height)/25}`} stroke="#ffcf66" strokeWidth={2} vectorEffect="non-scaling-stroke" /></g>
               </svg>
+              </>
             )}
           </div>
           <aside className="space-y-3">
