@@ -990,9 +990,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
      Split/دیواره‌های تقریباً عمودی می‌تواند چند نمونه با ترتیب X معکوس بسازد؛
      مرتب‌سازی و ادغام این نمونه‌ها از حلقه و رفت‌وبرگشت مسیر جلوگیری می‌کند. */
   /* مسیر نمایشی/پرداختی با ترتیب اصلی شاخه، بدون مرتب‌سازی مخرب برحسب X. */
-  const innerFinishOffSamples: Sample[] = hasInner ? normalOffset(innerFinishPath, IOD, true) : [];
+  const innerFinishOffSamples: Sample[] = hasInner
+    ? normalOffset(innerPathSamples, IOD, true).reverse()
+    : [];
   const innerOffSamples: Sample[] = hasInner ? (() => {
-    const raw = normalOffset(innerSamples, IOD, false).sort((a, b) => a.z - b.z);
+    /* پوشش خشن از همان آفست یکپارچه ساخته می‌شود؛ مسیر دومی با نرمال مخالف نداریم. */
+    const raw = [...innerFinishOffSamples].sort((a, b) => a.z - b.z);
     const clean: Sample[] = [];
     for (const point of raw) {
       const last = clean[clean.length - 1];
@@ -1015,11 +1018,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     return innerOffSamples[innerOffSamples.length - 1].r;
   };
 
+  /* مرز مشترک کف‌تراشی/خشن داخل، بیشترین X واقعیِ خط آفست داخلی است؛
+     Split فقط شاخه‌ها را معرفی می‌کند و مرز ماشین‌کاری محسوب نمی‌شود. */
+  const innerOperationBoundaryZ = innerFinishOffSamples.length
+    ? Math.max(...innerFinishOffSamples.map((point) => point.z))
+    : zEnd;
+
   /* آخرین عملیات داخل‌تراشیِ واقعاً قابل اجرا؛ عملیات بی‌اثر (مثلاً کف‌تراشی
      بدون طول اضافه یا آفست صفر) نقطه پایان برنامه محسوب نمی‌شود. */
   const lastRunnableInnerOpId = [...p.ops].reverse().find((o) => {
     if (!o.on) return false;
-    if (o.type === "bottom") return hasOuter && p.blankL - zEnd > 0.05;
+    if (o.type === "bottom") return hasOuter && p.blankL - innerOperationBoundaryZ > 0.05;
     if (o.type === "inner-offset") return hasInner && IOD > 0.01;
     return hasInner && (o.type === "inner-rough" || o.type === "inner-finish");
   })?.id;
@@ -1192,7 +1201,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
       case "bottom": {
         curOp = "bottom";
         if (!hasOuter) break;
-        const excess = p.blankL - zEnd;
+        const bottomEndZ = innerOperationBoundaryZ;
+        const excess = p.blankL - bottomEndZ;
         if (excess > 0.05) {
           note(`BOTTOM FACING - EXCESS ${f2(excess)} (HOLDER ${op.holder})`);
           /* هر پاس از مرکز به بیرون (+Y) انجام می‌شود. اگر خشن شعاعی قبلاً
@@ -1205,12 +1215,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           const outsideD = 2 * outsideR;
           const centerD = 1.2;
           const N = Math.max(1, Math.ceil(excess / p.innerDoc - 1e-9));
-          const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? zEnd : p.blankL - (i + 1) * p.innerDoc));
+          const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? bottomEndZ : p.blankL - (i + 1) * p.innerDoc));
           /* اگر کف‌تراشی وجود دارد، اولین صفحه آن مبنای فاصله شروع داخل‌تراشی است. */
           enterFirstInner(centerD, depths[0] + p.innerStartClearance);
           for (let k = 0; k < depths.length; k++) {
             const zk = depths[k];
-            const isSplitPlane = Math.abs(zk - zEnd) < 0.05;
+            const isSplitPlane = Math.abs(zk - bottomEndZ) < 0.05;
             if (isSplitPlane && splitPlaneAlreadyCut) continue;
             if (k === 0) {
               if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
@@ -1228,9 +1238,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             mv(1, passOutsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → مرز مجاز
             if (isSplitPlane && hasInner) splitPlaneAlreadyCut = true;
           }
-          if (!finishLastInner(op.id)) mv(0, retractX, zEnd, 0, "rapid"); // جمع‌کردن پایانی
-          physCut(zEnd, p.blankL, 0); // طول اضافی کاملاً برداشته شد
-          bottomCoveredFromZ = zEnd;
+          if (!finishLastInner(op.id)) mv(0, retractX, bottomEndZ, 0, "rapid"); // جمع‌کردن پایانی
+          physCut(bottomEndZ, p.blankL, 0); // طول اضافی کاملاً برداشته شد
+          bottomCoveredFromZ = bottomEndZ;
         }
         break;
       }
