@@ -11,7 +11,7 @@ import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
 import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset, SplitState } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
-import { autoSplitPoint, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, segMid, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
+import { autoSplitPoint, branchPathPoints, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, segMid, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
 
 const STORE_KEY = "kharraatcode-v1";
@@ -197,7 +197,9 @@ export default function App() {
         const sp = splitChainAt(poly, { z: params.split.z, r: params.split.r });
         return {
           points: branchPoints(sp.outer, blankR, params.blankL, "max"),
-          innerPoints: branchPoints(sp.inner, blankR, params.blankL, "min"),
+          /* ترتیب واقعی شاخه برای Offset/Finish حفظ می‌شود؛ موتور مسیر یک پوشش
+             یکنواخت جداگانه برای پاس‌های خشن می‌سازد. */
+          innerPoints: branchPathPoints(sp.inner, blankR, params.blankL),
           splitInfo: { outerDir: sp.outerDir, innerDir: sp.innerDir, at: sp.splitAt },
         };
       }

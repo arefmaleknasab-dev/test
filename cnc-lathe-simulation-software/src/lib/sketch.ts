@@ -596,6 +596,13 @@ let branchUid = 95000;
  * keep = "max" برای شاخه خارجی (پوشش بیرونی) و "min" برای شاخه داخلی
  * (مرز حفره — در Zهای مشترک مثل لبه، شعاع کوچک‌تر مرز داخلی است).
  */
+/** شاخهٔ داخلی با ترتیب توپولوژیک اصلی؛ برای Offset و Finish نباید برحسب Z مرتب شود. */
+export function branchPathPoints(branch: SPoint[], blankR: number, blankL: number): PPoint[] {
+  return branch
+    .filter((p) => Number.isFinite(p.z) && Number.isFinite(p.r))
+    .map((p) => ({ id: ++branchUid, z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0.2, p.r)), smooth: false }));
+}
+
 export function branchPoints(branch: SPoint[], blankR: number, blankL: number, keep: "max" | "min"): PPoint[] {
   const raw: SPoint[] = [];
   for (const p of branch) {

@@ -690,6 +690,37 @@ export function sampleProfile(points: PPoint[], blankR: number): Sample[] {
   return out;
 }
 
+/** نمونه‌برداری مسیر با حفظ ترتیب زنجیره؛ برای شاخه داخلیِ برگشتی ضروری است. */
+function sampleOrderedProfile(points: PPoint[], blankR: number): Sample[] {
+  const clampR = (r: number) => Math.min(Math.max(r, 0), blankR);
+  const pts = [...points];
+  const out: Sample[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+    const steps = Math.max(6, Math.ceil(Math.hypot(p2.z - p1.z, p2.r - p1.r) / 1.2));
+    for (let j = i === 0 ? 0 : 1; j <= steps; j++) {
+      const t = j / steps;
+      out.push(p1.smooth && p2.smooth
+        ? { z: cr(p0.z, p1.z, p2.z, p3.z, t), r: clampR(cr(p0.r, p1.r, p2.r, p3.r, t)) }
+        : { z: p1.z + (p2.z - p1.z) * t, r: clampR(p1.r + (p2.r - p1.r) * t) });
+    }
+  }
+  return out;
+}
+
+/** پوشش امن و یکنواخت X برای خشن‌کاری از یک مسیر داخلیِ چندمقداری. */
+function innerRoughEnvelope(path: Sample[]): Sample[] {
+  const sorted = [...path].sort((a, b) => a.z - b.z);
+  const out: Sample[] = [];
+  for (const point of sorted) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last.z - point.z) < 0.06) {
+      if (point.r < last.r) last.r = point.r; // شاخه امن‌تر/داخلی‌تر
+    } else out.push({ ...point });
+  }
+  return out;
+}
+
 /* ---------------- بازه‌های برش برای یک لایه خشن ---------------- */
 
 function cutIntervals(samples: Sample[], layer: number) {
@@ -836,8 +867,11 @@ export function resolveZones(samples: Sample[], manualBounds: number[], z0: numb
 export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResult {
   const R = p.blankD / 2;
   const samples = sampleProfile(pts, R);
-  /* شاخه داخلی فقط وقتی معتبر است که Split فعال باشد و شاخه داخلی داده داشته باشد */
-  const innerSamples = p.split.enabled && innerPts && innerPts.length >= 2 ? sampleProfile(innerPts, R) : [];
+  /* مسیر ترتیبی برای Offset/Finish و پوشش یکنواخت جدا برای پاس‌های خشن. */
+  const innerPathSamples = p.split.enabled && innerPts && innerPts.length >= 2 ? sampleOrderedProfile(innerPts, R) : [];
+  /* splitChain شاخه داخلی را از لبه به کف می‌دهد؛ ماشین‌کاری پرداخت از کف به لبه است. */
+  const innerFinishPath = [...innerPathSamples].reverse();
+  const innerSamples = innerRoughEnvelope(innerPathSamples);
   const segs: Seg[] = [];
   const hasOuter = samples.length >= 2;
   const hasInner = innerSamples.length >= 2;
@@ -955,6 +989,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   /* آفست دیواره داخلی باید یک مسیر یکنواخت در X باشد. آفست نرمال در نزدیکی
      Split/دیواره‌های تقریباً عمودی می‌تواند چند نمونه با ترتیب X معکوس بسازد؛
      مرتب‌سازی و ادغام این نمونه‌ها از حلقه و رفت‌وبرگشت مسیر جلوگیری می‌کند. */
+  /* مسیر نمایشی/پرداختی با ترتیب اصلی شاخه، بدون مرتب‌سازی مخرب برحسب X. */
+  const innerFinishOffSamples: Sample[] = hasInner ? normalOffset(innerFinishPath, IOD, false) : [];
   const innerOffSamples: Sample[] = hasInner ? (() => {
     const raw = normalOffset(innerSamples, IOD, false).sort((a, b) => a.z - b.z);
     const clean: Sample[] = [];
@@ -1529,7 +1565,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         curOp = "inner-offset";
         if (!hasInner || IOD <= 0.01) break;
         note(`INNER OFFSET PASS ${f2(IOD)} MM (HOLDER ${op.holder})`);
-        const innerOff = innerOffSamples;
+        const innerOff = innerFinishOffSamples;
         if (innerOff.length < 2) break;
         const zBot = innerOff[0].z;
         const zRimF = innerOff[innerOff.length - 1].z;
@@ -1562,7 +1598,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         curOp = "inner-finish";
         if (!hasInner) break;
         note(`INNER FINISH - BOWL WALL (HOLDER ${op.holder})`);
-        const IW = innerSamples;
+        const IW = innerFinishPath;
         const zBot = IW[0].z;
         const zRimF = IW[IW.length - 1].z;
         const rEntry = 0.6;
