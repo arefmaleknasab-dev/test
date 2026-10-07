@@ -990,7 +990,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
      Split/دیواره‌های تقریباً عمودی می‌تواند چند نمونه با ترتیب X معکوس بسازد؛
      مرتب‌سازی و ادغام این نمونه‌ها از حلقه و رفت‌وبرگشت مسیر جلوگیری می‌کند. */
   /* مسیر نمایشی/پرداختی با ترتیب اصلی شاخه، بدون مرتب‌سازی مخرب برحسب X. */
-  const innerFinishOffSamples: Sample[] = hasInner ? normalOffset(innerFinishPath, IOD, false) : [];
+  const innerFinishOffSamples: Sample[] = hasInner ? normalOffset(innerFinishPath, IOD, true) : [];
   const innerOffSamples: Sample[] = hasInner ? (() => {
     const raw = normalOffset(innerSamples, IOD, false).sort((a, b) => a.z - b.z);
     const clean: Sample[] = [];

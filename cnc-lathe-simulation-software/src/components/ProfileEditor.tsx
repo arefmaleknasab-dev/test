@@ -2980,34 +2980,22 @@ export default function ProfileEditor({
   }, [gen.segs, cam, layerVisibilityKey, toolpathLayersVisible]);
 
   const ghostPath = useMemo(() => {
-    if (!settings.showGhost || !cam || gen.samples.length < 2) return "";
+    if (!settings.showGhost || !cam) return "";
+    /* سایه همیشه از زنجیره کامل طرح ساخته می‌شود، نه شاخه‌های تولیدشده توسط
+       Split؛ بنابراین جابه‌جایی Split هیچ مرز یا سطح جدیدی در سایه نمی‌سازد. */
+    const fullProfile = chainPolyline(orderChain(segs));
+    if (fullProfile.length < 2) return "";
     let d = "";
-    gen.samples.forEach((s, i) => {
-      const [x, y] = screenPt(cam, s.z, s.r);
+    fullProfile.forEach((point, i) => {
+      const [x, y] = screenPt(cam, point.z, point.r);
       d += `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)} `;
     });
-    for (let i = gen.samples.length - 1; i >= 0; i--) {
-      const [x, y] = screenPt(cam, gen.samples[i].z, -gen.samples[i].r);
+    for (let i = fullProfile.length - 1; i >= 0; i--) {
+      const [x, y] = screenPt(cam, fullProfile[i].z, -fullProfile[i].r);
       d += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
     }
     return d + "Z";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen.samples, cam, settings.showGhost]);
-
-  const innerGhost = useMemo(() => {
-    if (!settings.showGhost || !cam || gen.innerSamples.length < 2) return "";
-    let d = "";
-    gen.innerSamples.forEach((s, i) => {
-      const [x, y] = screenPt(cam, s.z, s.r);
-      d += `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)} `;
-    });
-    for (let i = gen.innerSamples.length - 1; i >= 0; i--) {
-      const [x, y] = screenPt(cam, gen.innerSamples[i].z, -gen.innerSamples[i].r);
-      d += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
-    }
-    return d + "Z";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen.innerSamples, cam, settings.showGhost]);
+  }, [segs, cam, settings.showGhost]);
 
   /* ---------- مسیر SVG المان‌های اسکچ ---------- */
   const segPath = (s: SketchSeg, c: Cam, mirror = false): string => {
@@ -3350,12 +3338,6 @@ export default function ProfileEditor({
             <path d={ghostPath} fill="rgba(227,169,78,0.12)" stroke="rgba(227,169,78,0.4)" strokeWidth={1} />
           </g>
         )}
-        {!editOpen && settings.showGhost && innerGhost && (
-          <g style={{ opacity: (iso ? 0.15 : 1) * layerOpacity, ...fadeStyle }}>
-            <path d={innerGhost} fill="rgba(76,201,240,0.10)" stroke="rgba(76,201,240,0.55)" strokeWidth={1} strokeDasharray="5 4" />
-          </g>
-        )}
-
         {/* مسیر ابزار */}
         <g>
           {runs.map((run, i) => {
