@@ -60,7 +60,7 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
                 setAnchor({ x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)), y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)), name: "دستی" });
               }}>
                 <rect width={width} height={height} fill="#111923" stroke="#334155" strokeWidth={Math.max(width, height) / 500} />
-                <g fill="none" stroke="#46d7ba" strokeWidth={Math.max(width, height) / 350} vectorEffect="non-scaling-stroke">{preview.map((segment) => <path key={segment.id} d={pathOf({ ...segment, a: { z: segment.a.z, r: segment.a.r * 2 }, b: { z: segment.b.z, r: segment.b.r * 2 }, c1: segment.c1 ? { z: segment.c1.z, r: segment.c1.r * 2 } : undefined, c2: segment.c2 ? { z: segment.c2.z, r: segment.c2.r * 2 } : undefined })} />)}</g>
+                <g fill="none" stroke="#46d7ba" strokeWidth={Math.max(width, height) / 350} vectorEffect="non-scaling-stroke">{preview.map((segment) => <path key={segment.id} d={pathOf({ ...segment, a: { z: segment.a.z, r: height - segment.a.r }, b: { z: segment.b.z, r: height - segment.b.r }, c1: segment.c1 ? { z: segment.c1.z, r: height - segment.c1.r } : undefined, c2: segment.c2 ? { z: segment.c2.z, r: height - segment.c2.r } : undefined })} />)}</g>
                 <g transform={`translate(${anchor.x * width} ${anchor.y * height})`}><circle r={Math.max(width, height) / 45} fill="#ffcf66" stroke="#111" strokeWidth={2} vectorEffect="non-scaling-stroke" /><path d={`M${-Math.max(width,height)/25} 0H${Math.max(width,height)/25}M0 ${-Math.max(width,height)/25}V${Math.max(width,height)/25}`} stroke="#ffcf66" strokeWidth={2} vectorEffect="non-scaling-stroke" /></g>
               </svg>
             )}
@@ -71,7 +71,7 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
             {fileName && <div className="truncate rounded border border-edge bg-bg/50 px-2 py-1 font-mono text-[10px] text-mute" dir="ltr">{fileName}</div>}
             {error && <div className="rounded border border-danger/40 bg-danger/10 p-2 text-[10px] leading-5 text-danger">{error}</div>}
             {doc && <>
-              <div className="rounded-lg border border-edge p-2 text-[10px] text-mute"><div>ابعاد اصلی: <b dir="ltr" className="text-ink">{doc.widthMm.toFixed(2)} × {doc.heightMm.toFixed(2)} mm</b></div><div>ابعاد نهایی: <b dir="ltr" className="text-teal">{width.toFixed(2)} × {height.toFixed(2)} mm</b></div><div>{doc.segments.length.toLocaleString("fa-IR")} مسیر قابل ویرایش</div></div>
+              <div className="rounded-lg border border-edge p-2 text-[10px] text-mute"><div>ابعاد اصلی: <b dir="ltr" className="text-ink">{doc.widthMm.toFixed(2)} × {doc.heightMm.toFixed(2)} mm</b></div><div>ابعاد نهایی طرح: <b dir="ltr" className="text-teal">{width.toFixed(2)} × {height.toFixed(2)} mm</b></div><div>صفحه تراش L×D: <b dir="ltr" className="text-brass2">{width.toFixed(2)} × {(height * 2).toFixed(2)} mm</b></div><div>{doc.segments.length.toLocaleString("fa-IR")} مسیر قابل ویرایش</div></div>
               <div className="grid grid-cols-2 gap-2"><label className="text-[10px] text-mute">Scale X %<input className="field-input mt-1" type="number" value={scaleX} min={.1} max={10000} onChange={(e) => setScale("x", Number(e.target.value))} /></label><label className="text-[10px] text-mute">Scale Y %<input className="field-input mt-1" type="number" value={scaleY} min={.1} max={10000} onChange={(e) => setScale("y", Number(e.target.value))} /></label></div>
               <button className={cn("chip-toggle w-full justify-center", locked ? "border-teal/50 text-teal" : "border-edge text-mute")} onClick={() => setLocked(!locked)}><IconCheck className="h-3 w-3" /> حفظ نسبت ابعاد</button>
               <div><div className="mb-1 text-[10px] font-bold text-mute">Origin / Anchor</div><div className="grid grid-cols-3 gap-1">{ANCHORS.map((item) => <button key={item.name} title={item.name} className={cn("h-7 rounded border", Math.abs(anchor.x-item.x)<.001 && Math.abs(anchor.y-item.y)<.001 ? "border-brass bg-brass/15" : "border-edge bg-bg/40")} onClick={() => setAnchor(item)}><span className="mx-auto block h-1.5 w-1.5 rounded-full bg-brass2" /></button>)}</div></div>
@@ -80,7 +80,7 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
             </>}
           </aside>
         </div>
-        <footer className="flex items-center justify-between border-t border-edge px-4 py-3"><span className="text-[9px] text-dim">AI Legacy/EPS · خطوط و Bézier به هندسه قابل ویرایش تبدیل می‌شوند</span><div className="flex gap-2"><button className="btn" onClick={onClose}>لغو</button><button className="btn btn-brass" disabled={!doc} onClick={() => doc && onImport(preview, Math.max(1,width), Math.max(1,height))}>ایجاد صفحه و وارد کردن</button></div></footer>
+        <footer className="flex items-center justify-between border-t border-edge px-4 py-3"><span className="text-[9px] text-dim">AI Legacy/EPS · خطوط و Bézier به هندسه قابل ویرایش تبدیل می‌شوند</span><div className="flex gap-2"><button className="btn" onClick={onClose}>لغو</button><button className="btn btn-brass" disabled={!doc} onClick={() => doc && onImport(preview, Math.max(1,width), Math.max(1,height * 2))}>ایجاد صفحه و وارد کردن</button></div></footer>
       </div>
     </div>
   );

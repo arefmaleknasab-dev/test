@@ -60,7 +60,9 @@ export function parseIllustrator(text: string): AiDocument {
 }
 
 export function transformAiSegments(doc: AiDocument, scaleX: number, scaleY = scaleX): SketchSeg[] {
-  const mapPoint = (p: SPoint): SPoint => ({ z: (p.z - doc.bounds.minX) * scaleX, r: (doc.bounds.maxY - p.r) * scaleY / 2 });
+  /* Illustrator و محیط طراحی هر دو Y رو‌به‌بالا دارند؛ شعاع نصف نمی‌شود تا
+     نسبت بصری X/Y دقیقاً حفظ شود. قطر خام بعداً دو برابر ارتفاع طرح می‌شود. */
+  const mapPoint = (p: SPoint): SPoint => ({ z: (p.z - doc.bounds.minX) * scaleX, r: (p.r - doc.bounds.minY) * scaleY });
   return doc.segments.map((s, index) => ({
     ...s,
     id: 800000 + index,
