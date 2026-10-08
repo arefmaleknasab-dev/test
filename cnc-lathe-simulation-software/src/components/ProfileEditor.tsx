@@ -3533,9 +3533,25 @@ export default function ProfileEditor({
 
         {/* المان‌های اسکچ */}
         <g style={{ opacity: editOpen ? 0.12 : iso ? 0.3 : 1, ...fadeStyle }}>
-          {/* آینهٔ پایین محور */}
-          {segs.map((s) => (
-            <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke={segSide.get(s.id) === "inner" ? "#4cc9f0" : "#e3a94e"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+          {/* رنگ شاخه‌ها مستقیماً از زنجیرهٔ تقسیم‌شده رسم می‌شود. بنابراین اگر
+              Split وسط یک Arc/Bezier باشد، رنگ داخلی دقیقاً تا خود Split می‌رسد
+              و کل منحنی جدید به اشتباه در یک سمت طبقه‌بندی نمی‌شود. */}
+          {split.enabled && (() => {
+            const divided = splitChainAt(chainPolyline(orderChain(segs)), { z: split.z, r: split.r });
+            const pathOf = (points: SPoint[], mirror = false) => points.map((point, i) => {
+              const [x, y] = P(point.z, mirror ? -point.r : point.r);
+              return `${i ? "L" : "M"}${x},${y}`;
+            }).join(" ");
+            return <>
+              <path d={pathOf(divided.outer, true)} fill="none" stroke="#e3a94e" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+              <path d={pathOf(divided.inner, true)} fill="none" stroke="#4cc9f0" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+              <path d={pathOf(divided.outer)} fill="none" stroke="#f3c26b" strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.inner)} fill="none" stroke="#4cc9f0" strokeWidth={2.4} strokeLinecap="round" />
+            </>;
+          })()}
+          {/* بدون Split، رنگ معمول هر المان استفاده می‌شود. */}
+          {!split.enabled && segs.map((s) => (
+            <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke="#e3a94e" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
           ))}
           {segs.map((s) => {
             const sel = selected.includes(s.id);
@@ -3547,7 +3563,7 @@ export default function ProfileEditor({
                 key={s.id}
                 d={segPath(s, cam)}
                 fill="none"
-                stroke={sel ? "#45b394" : hasSelPt ? "#ffd27a" : hov ? "#fff3dc" : base}
+                stroke={sel ? "#45b394" : hasSelPt ? "#ffd27a" : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
                 strokeWidth={sel ? 3.2 : hasSelPt ? 3.4 : hov ? 3 : 2.4}
                 strokeLinecap="round"
                 filter={sel || hasSelPt ? "url(#curveGlow)" : undefined}
