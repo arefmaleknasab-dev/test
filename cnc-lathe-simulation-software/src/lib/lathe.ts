@@ -1515,7 +1515,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         note(`INNER ROUGH - BOWL HOLLOWING (HOLDER ${op.holder})`);
         /* ترانهادهٔ منطق خشن شعاعی: پروفیل آفست به‌صورت X=f(R) خوانده
            می‌شود و هر پاس در X ثابت، بازه‌های شعاعی مجاز را عمودی می‌تراشد. */
-        const wallByR: Sample[] = [...innerFinishOffSamples].sort((a, b) => a.r - b.r);
+        const wallByR: Sample[] = innerFinishOffSamples
+          .map((point) => ({ ...point, r: Math.max(0, point.r) }))
+          .sort((a, b) => a.r - b.r);
         const mergedWall: Sample[] = [];
         for (const point of wallByR) {
           const last = mergedWall[mergedWall.length - 1];
@@ -1525,6 +1527,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           } else mergedWall.push({ ...point });
         }
         if (mergedWall.length < 2) break;
+        /* حفره از محور دوران آغاز می‌شود. اگر Offset نرمالِ نقطه انتهایی، اولین
+           نمونه را اندکی از R=0 دور کرده باشد، همان مرز تا محور امتداد می‌یابد. */
+        if (mergedWall[0].r > 1e-9) mergedWall.unshift({ z: mergedWall[0].z, r: 0 });
         const zOuter = Math.max(...mergedWall.map((point) => point.z));
         const zInner = Math.min(...mergedWall.map((point) => point.z));
         const step = Math.max(0.5, p.innerDoc);
@@ -1551,7 +1556,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         };
 
         note(`INNER VERTICAL LAYERS ${layers.length} x ${f2(step)} MM`);
-        const rEntry = 0.6;
+        const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zOuter + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX);
         for (const layerZ of layers) {
@@ -1583,7 +1588,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (innerOff.length < 2) break;
         const zBot = innerOff[0].z;
         const zRimF = innerOff[innerOff.length - 1].z;
-        const rEntry = 0.6;
+        const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zRimF + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX);
         if (innerCleared) rawRapid(2 * rEntry, zBot);
@@ -1615,7 +1620,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const IW = innerFinishPath;
         const zBot = IW[0].z;
         const zRimF = IW[IW.length - 1].z;
-        const rEntry = 0.6;
+        const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
         const mouthX = zRimF + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX); // پشت دهانه، بیرون خط داخلی
