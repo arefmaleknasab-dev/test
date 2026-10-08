@@ -71,6 +71,7 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
   const [speed, setSpeed] = useState(2);
 
   const camRef = useRef({ s: 1, ox: 0, oy: 0 });
+  const fitScaleRef = useRef(1);
   const radiiRef = useRef<Float64Array>(new Float64Array(GRID + 1));
   const cavRef = useRef<Float64Array>(new Float64Array(GRID + 1)); // شعاع حفره داخل کاسه
   const progRef = useRef(0);
@@ -171,11 +172,38 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
       /* دوربین طوری تنظیم می‌شود که پوشش دورانی (دورترین گوشه) نیز جا شود */
       const envD = rotationalEnvelope(params.blankD, params.blankShape).maxRotD;
       const s = Math.min((r.width - pad * 2) / params.blankL, (r.height - pad * 2) / envD);
+      fitScaleRef.current = Math.max(0.0001, s);
       camRef.current = { s, ox: (r.width - params.blankL * s) / 2, oy: r.height / 2 };
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, [params.blankL, params.blankD, params.blankShape]);
+
+  /* زوم شبیه‌سازی با چرخ ماوس، حول موقعیت نشانگر. تغییر دوربین مستقیماً در
+     camRef ثبت می‌شود تا حین پخش انیمیشن باعث بازسازی یا توقف شبیه‌سازی نشود. */
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      const cam = camRef.current;
+      const worldZ = (sx - cam.ox) / cam.s;
+      const worldR = (cam.oy - sy) / cam.s;
+      const factor = Math.exp(-event.deltaY * 0.0015);
+      const fit = fitScaleRef.current;
+      const nextS = Math.max(fit * 0.5, Math.min(fit * 24, cam.s * factor));
+      camRef.current = {
+        s: nextS,
+        ox: sx - worldZ * nextS,
+        oy: sy + worldR * nextS,
+      };
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   useEffect(() => {
     const cv = canvasRef.current;
