@@ -22,6 +22,8 @@ export interface SketchSeg {
   via?: SPoint; // کمان: نقطهٔ روی کمان
   /** شناسهٔ دو خط سازنده؛ برای جایگزینی Fillet قبلی روی همان جفت خط */
   filletOf?: [number, number];
+  /** تعداد پاره‌خط‌های نمایش/تبدیل کمان؛ در نبود آن مقدار خودکار استفاده می‌شود. */
+  arcDivisions?: number;
 }
 
 export const KIND_FA: Record<SketchKind, string> = {
@@ -106,7 +108,10 @@ export function evalSeg(s: SketchSeg, t: number): SPoint {
 /** نقاط گسسته روی المان (برای ترسیم و تخت‌سازی) */
 export function segPoints(s: SketchSeg, n?: number): SPoint[] {
   if (s.kind === "line") return [s.a, s.b];
-  const steps = n ?? Math.max(10, Math.min(90, Math.ceil(segLength(s) / 1.2)));
+  const configured = s.kind === "arc" && Number.isFinite(s.arcDivisions)
+    ? Math.max(2, Math.min(500, Math.round(s.arcDivisions!)))
+    : undefined;
+  const steps = n ?? configured ?? Math.max(10, Math.min(90, Math.ceil(segLength(s) / 1.2)));
   const out: SPoint[] = [];
   for (let i = 0; i <= steps; i++) out.push(evalSeg(s, i / steps));
   return out;
@@ -276,6 +281,7 @@ export function moveSeg(s: SketchSeg, dz: number, dr: number): SketchSeg {
     c2: s.c2 ? movePt(s.c2, dz, dr) : undefined,
     via: s.via ? movePt(s.via, dz, dr) : undefined,
     filletOf: s.filletOf ? [...s.filletOf] : undefined,
+    arcDivisions: s.arcDivisions,
   };
 }
 
@@ -650,6 +656,9 @@ export function normalizeSketch(raw: unknown): SketchSeg[] | null {
       via: s.via ? { z: s.via.z, r: s.via.r } : undefined,
       filletOf: Array.isArray(s.filletOf) && s.filletOf.length === 2 && s.filletOf.every(Number.isFinite)
         ? [s.filletOf[0], s.filletOf[1]]
+        : undefined,
+      arcDivisions: typeof s.arcDivisions === "number" && Number.isFinite(s.arcDivisions)
+        ? Math.max(2, Math.min(500, Math.round(s.arcDivisions)))
         : undefined,
     });
   }

@@ -4538,6 +4538,8 @@ function Inspector({
   const len = segLength(seg);
   const ang = lineAngle(seg.a, seg.b);
   const rad = seg.kind === "arc" ? arcRadius(seg) : 0;
+  const arcDivisions = seg.kind === "arc" ? (seg.arcDivisions ?? Math.max(2, segPoints(seg).length - 1)) : 0;
+  const setArcDivisions = (value: number) => onPatch({ arcDivisions: Math.max(2, Math.min(500, Math.round(value))) });
   const constrainPoint = (part: SketchPointPart, p: SPoint) =>
     constrainSegPointToStock(seg, part, p, blankL, blankR);
 
@@ -4568,30 +4570,49 @@ function Inspector({
       )}
 
       {seg.kind === "arc" && (
-        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF
-            label="شعاع"
-            v={rad}
-            onC={(v) => {
-              const nextVia = arcWithRadius(seg, v).via;
-              if (nextVia) onPatch({ via: constrainPoint("via", nextVia) });
-            }}
-          />
-          <div className="flex items-end">
-            <button
-              onClick={() => {
-                const mz = (seg.a.z + seg.b.z) / 2;
-                const mr = (seg.a.r + seg.b.r) / 2;
-                const via = seg.via ?? { z: mz, r: mr };
-                onPatch({ via: constrainPoint("via", { z: 2 * mz - via.z, r: 2 * mr - via.r }) });
+        <>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            <NumF
+              label="شعاع"
+              v={rad}
+              onC={(v) => {
+                const nextVia = arcWithRadius(seg, v).via;
+                if (nextVia) onPatch({ via: constrainPoint("via", nextVia) });
               }}
-              className="btn w-full justify-center !py-1.5 text-[10.5px]"
-              title="معکوس‌کردن جهت برآمدگی کمان"
-            >
-              معکوس کمان
-            </button>
+            />
+            <div className="flex items-end">
+              <button
+                onClick={() => {
+                  const mz = (seg.a.z + seg.b.z) / 2;
+                  const mr = (seg.a.r + seg.b.r) / 2;
+                  const via = seg.via ?? { z: mz, r: mr };
+                  onPatch({ via: constrainPoint("via", { z: 2 * mz - via.z, r: 2 * mr - via.r }) });
+                }}
+                className="btn w-full justify-center !py-1.5 text-[10.5px]"
+                title="معکوس‌کردن جهت برآمدگی کمان"
+              >
+                معکوس کمان
+              </button>
+            </div>
           </div>
-        </div>
+          <div className="mt-1.5">
+            <div className="mb-1 text-[9px] font-semibold text-dim">تعداد تقسیمات کمان</div>
+            <div className="flex h-7 overflow-hidden rounded border border-edge bg-panel2" dir="ltr">
+              <button type="button" className="grid w-8 place-items-center border-r border-edge text-sm font-bold text-teal hover:bg-teal/10" onClick={() => setArcDivisions(arcDivisions - 1)} title="کاهش تقسیمات">−</button>
+              <input
+                type="number"
+                min={2}
+                max={500}
+                step={1}
+                value={arcDivisions}
+                onChange={(e) => setArcDivisions(Number(e.target.value))}
+                className="min-w-0 flex-1 bg-transparent text-center font-mono text-[11px] text-ink outline-none"
+                aria-label="تعداد تقسیمات کمان"
+              />
+              <button type="button" className="grid w-8 place-items-center border-l border-edge text-sm font-bold text-teal hover:bg-teal/10" onClick={() => setArcDivisions(arcDivisions + 1)} title="افزایش تقسیمات">+</button>
+            </div>
+          </div>
+        </>
       )}
 
       {(seg.kind === "quad" || seg.kind === "cubic") && seg.c1 && (
