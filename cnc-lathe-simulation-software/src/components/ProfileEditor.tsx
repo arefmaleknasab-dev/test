@@ -1438,10 +1438,7 @@ export default function ProfileEditor({
     p.z >= r.z0 - 1e-9 && p.z <= r.z1 + 1e-9 && p.r >= r.r0 - 1e-9 && p.r <= r.r1 + 1e-9;
 
   const marqueeHitsSplit = (r: { z0: number; z1: number; r0: number; r1: number }) =>
-    !editOpen && split.enabled && (
-      pointInRectW({ z: split.z, r: split.r }, r) ||
-      pointInRectW({ z: split.z, r: -split.r }, r)
-    );
+    !editOpen && split.enabled && pointInRectW({ z: split.z, r: split.r }, r);
 
   const segSegInt = (p1: SPoint, p2: SPoint, p3: SPoint, p4: SPoint) => {
     const d = (p2.z - p1.z) * (p4.r - p3.r) - (p2.r - p1.r) * (p4.z - p3.z);
@@ -2042,14 +2039,12 @@ export default function ProfileEditor({
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
-  /* هر دو نشانِ بالا/پایین نمایندهٔ یک Split منطقی‌اند و محدودهٔ کلیک آن‌ها
-     کمی بزرگ‌تر از علامت کوچک بصری است تا انتخاب در هر سطح زوم راحت بماند. */
+  /* فقط نشان اصلی Split روی پروفایل فعال است؛ قرینهٔ سمت مقابل حذف شده است. */
   const hitSplitMarker = (px: number, py: number): boolean => {
     const c = camRef.current;
     if (!c || editOpen || !split.enabled) return false;
     const [x, y] = screenPt(c, split.z, split.r);
-    const [, ym] = screenPt(c, split.z, -split.r);
-    return Math.min(Math.hypot(px - x, py - y), Math.hypot(px - x, py - ym)) <= 10;
+    return Math.hypot(px - x, py - y) <= 10;
   };
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -3783,35 +3778,30 @@ export default function ProfileEditor({
           <g>
             {(() => {
               const [x, y] = P(split.z, split.r);
-              const ym = P(split.z, -split.r)[1];
               return (
-                <g>
-                  {[y, ym].map((yy, k) => (
-                    <g key={k} style={{ cursor: "pointer" }}>
-                      {(splitSelected || splitHovered || marqueeSplitHit) && (
-                        <circle
-                          cx={x}
-                          cy={yy}
-                          r={splitSelected ? 8 : 7}
-                          fill={marqueeSplitHit ? "#4aa3ff" : "#f72585"}
-                          fillOpacity={splitSelected ? 0.2 : 0.12}
-                          stroke={splitSelected ? "#fff3dc" : marqueeSplitHit ? "#8fc5ff" : "#ff84bc"}
-                          strokeWidth={splitSelected ? 1.6 : 1}
-                        />
-                      )}
-                      <rect
-                        x={x - 4}
-                        y={yy - 4}
-                        width={8}
-                        height={8}
-                        transform={`rotate(45 ${x} ${yy})`}
-                        fill={splitSelected ? "#ffd27a" : splitHovered ? "#ff5ba6" : "#f72585"}
-                        stroke="#120e09"
-                        strokeWidth={1.2}
-                      />
-                      <circle cx={x} cy={yy} r={1.25} fill="#ffffff" />
-                    </g>
-                  ))}
+                <g style={{ cursor: "pointer" }}>
+                  {(splitSelected || splitHovered || marqueeSplitHit) && (
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={splitSelected ? 8 : 7}
+                      fill={marqueeSplitHit ? "#4aa3ff" : "#f72585"}
+                      fillOpacity={splitSelected ? 0.2 : 0.12}
+                      stroke={splitSelected ? "#fff3dc" : marqueeSplitHit ? "#8fc5ff" : "#ff84bc"}
+                      strokeWidth={splitSelected ? 1.6 : 1}
+                    />
+                  )}
+                  <rect
+                    x={x - 4}
+                    y={y - 4}
+                    width={8}
+                    height={8}
+                    transform={`rotate(45 ${x} ${y})`}
+                    fill={splitSelected ? "#ffd27a" : splitHovered ? "#ff5ba6" : "#f72585"}
+                    stroke="#120e09"
+                    strokeWidth={1.2}
+                  />
+                  <circle cx={x} cy={y} r={1.25} fill="#ffffff" />
                 </g>
               );
             })()}
