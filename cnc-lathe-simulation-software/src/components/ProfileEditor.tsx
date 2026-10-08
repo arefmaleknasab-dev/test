@@ -602,13 +602,11 @@ function buildLineFillet(a: SketchSeg, b: SketchSeg, pickA: SPoint, pickB: SPoin
     (line.b.z - intersection.z) * u.z + (line.b.r - intersection.r) * u.r,
   );
   const availA = available(a, u1), availB = available(b, u2);
-  const minimum = (line: SketchSeg, u: SPoint) => Math.max(0, Math.min(
-    (line.a.z - intersection.z) * u.z + (line.a.r - intersection.r) * u.r,
-    (line.b.z - intersection.z) * u.z + (line.b.r - intersection.r) * u.r,
-  ));
-  const minDistance = Math.max(minimum(a, u1), minimum(b, u2));
   const maxRadius = Math.max(0, Math.min(availA, availB) * tanHalf);
-  if (tangentDistance < minDistance - 1e-7 || tangentDistance > availA + 1e-7 || tangentDistance > availB + 1e-7 || maxRadius <= 1e-7) {
+  /* نقطه مماس مجاز است به سمت تقاطع خطوط برگردد. این حالت هنگام جایگزینی
+     Fillet موجود با شعاع کوچک‌تر ضروری است، چون دو خط قبلاً تا نقاط مماس
+     شعاع بزرگ‌تر کوتاه شده‌اند و باید دوباره به سمت گوشه امتداد یابند. */
+  if (tangentDistance > availA + 1e-7 || tangentDistance > availB + 1e-7 || maxRadius <= 1e-7) {
     return { error: `شعاع نامعتبر — حداکثر ${Math.max(0, maxRadius).toFixed(2)}`, maxRadius };
   }
   const t1 = { z: intersection.z + u1.z * tangentDistance, r: intersection.r + u1.r * tangentDistance };
