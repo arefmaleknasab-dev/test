@@ -1011,31 +1011,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   const innerFinishOffSamples: Sample[] = hasInner
     ? continuousPathOffset(innerPathSamples, IOD, true).reverse()
     : [];
-  const innerOffSamples: Sample[] = hasInner ? (() => {
-    /* پوشش خشن از همان آفست یکپارچه ساخته می‌شود؛ مسیر دومی با نرمال مخالف نداریم. */
-    const raw = [...innerFinishOffSamples].sort((a, b) => a.z - b.z);
-    const clean: Sample[] = [];
-    for (const point of raw) {
-      const last = clean[clean.length - 1];
-      if (last && Math.abs(last.z - point.z) < 0.015) {
-        if (point.r < last.r) last.r = point.r;
-      } else clean.push({ ...point });
-    }
-    return clean;
-  })() : [];
-  const innerOffsetRadiusAt = (z: number): number => {
-    if (!innerOffSamples.length) return 0;
-    if (z <= innerOffSamples[0].z) return innerOffSamples[0].r;
-    for (let i = 1; i < innerOffSamples.length; i++) {
-      if (innerOffSamples[i].z >= z) {
-        const a = innerOffSamples[i - 1], b = innerOffSamples[i];
-        const t = (z - a.z) / Math.max(1e-9, b.z - a.z);
-        return a.r + (b.r - a.r) * t;
-      }
-    }
-    return innerOffSamples[innerOffSamples.length - 1].r;
-  };
-
   /* مرز مشترک کف‌تراشی/خشن داخل، بیشترین X واقعیِ خط آفست داخلی است؛
      Split فقط شاخه‌ها را معرفی می‌کند و مرز ماشین‌کاری محسوب نمی‌شود. */
   const innerOperationBoundaryZ = innerFinishOffSamples.length
@@ -1250,10 +1225,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             }
             /* در کاسه، کف‌تراشی دقیقاً روی مرز آفست داخلی متوقف می‌شود و
                هرگز از دیوارهٔ رزروشده برای پاس آفست/پرداخت عبور نمی‌کند. */
-            const passOutsideD = hasInner
-              ? Math.min(outsideD, 2 * Math.max(centerD / 2, innerOffsetRadiusAt(zk)))
-              : outsideD;
-            mv(1, passOutsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → مرز مجاز
+            /* کف‌تراشی تا مرز همپوشانی خشن شعاعی ادامه دارد؛ مرز X عملیات
+               با خشن داخل مشترک است، اما محدوده شعاعی آن کوتاه نمی‌شود. */
+            mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → همپوشانی خشن شعاعی
             if (isSplitPlane && hasInner) splitPlaneAlreadyCut = true;
           }
           if (!finishLastInner(op.id)) mv(0, retractX, bottomEndZ, 0, "rapid"); // جمع‌کردن پایانی
@@ -1536,53 +1510,62 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         curOp = "inner-rough";
         if (!hasInner) break;
         note(`INNER ROUGH - BOWL HOLLOWING (HOLDER ${op.holder})`);
-        const IW = innerSamples;
-        const zBot = IW[0].z;
-        const zRim = IW[IW.length - 1].z;
-        /* خط آفست یکنواخت داخل: آفست نرمال به سمت حفره (نه wallIn−OD شعاعی) */
-        const innerOff = innerOffSamples;
-        const wallInOff = (z: number): number => {
-          if (z <= innerOff[0].z) return innerOff[0].r;
-          for (let i = 1; i < innerOff.length; i++) {
-            if (innerOff[i].z >= z) {
-              const a = innerOff[i - 1];
-              const b = innerOff[i];
-              const t = (z - a.z) / Math.max(1e-9, b.z - a.z);
-              return a.r + (b.r - a.r) * t;
-            }
-          }
-          return innerOff[innerOff.length - 1].r;
-        };
+        /* ترانهادهٔ منطق خشن شعاعی: پروفیل آفست به‌صورت X=f(R) خوانده
+           می‌شود و هر پاس در X ثابت، بازه‌های شعاعی مجاز را عمودی می‌تراشد. */
+        const wallByR: Sample[] = [...innerFinishOffSamples].sort((a, b) => a.r - b.r);
+        const mergedWall: Sample[] = [];
+        for (const point of wallByR) {
+          const last = mergedWall[mergedWall.length - 1];
+          if (last && Math.abs(last.r - point.r) < 0.04) {
+            /* راست‌ترین مرز محافظه‌کارانه است و اجازه ورود به قله را نمی‌دهد. */
+            if (point.z > last.z) last.z = point.z;
+          } else mergedWall.push({ ...point });
+        }
+        if (mergedWall.length < 2) break;
+        const zOuter = Math.max(...mergedWall.map((point) => point.z));
+        const zInner = Math.min(...mergedWall.map((point) => point.z));
         const step = Math.max(0.5, p.innerDoc);
-        const depths: number[] = [];
-        /* اگر کف‌تراشی صفحه Split را تا مرز آفست برده، خشن داخل از عمق بعدی
-           آغاز می‌شود. در غیر این صورت خود خشن داخل مالک پاس دهانه است. */
-        const firstDepth = splitPlaneAlreadyCut ? zRim - step : zRim;
-        for (let z = firstDepth; z > zBot + 0.05; z -= step) depths.push(z);
-        if (!depths.length || Math.abs(depths[depths.length - 1] - zBot) > 0.05) depths.push(zBot);
-        if (!splitPlaneAlreadyCut && depths.length && Math.abs(depths[0] - zRim) < 0.05) splitPlaneAlreadyCut = true;
-        note(`INNER DEPTHS ${depths.length} x ${f2(step)} MM`);
-        const rEntry = 0.6; // ورود در امتداد محور
-        /* نقطه ورود به‌اندازه فاصله تنظیم‌شده جلوتر (+X) از شروع اولین عملیات داخل‌تراشی است.
-           mv پیش از آن ابتدا +Y تا صفحه امن، سپس +X و در پایان −Y را می‌سازد. */
-        const mouthX = zRim + p.innerStartClearance;
-        innerCleared = true;
-        depths.forEach((zk, k) => {
-          const target = Math.max(0.8, wallInOff(zk));
-          if (k === 0) {
-            enterFirstInner(2 * rEntry, mouthX); // ورود از دهانه
-            mv(1, 2 * rEntry, zk, p.feedRough * 0.8, "bore"); // شیرجه نخست در −X
-          } else {
-            const prevZ = depths[k - 1];
-            /* بازگشت مورب سریع: −Y تا مرکز و هم‌زمان +X به‌اندازه ۰٫۵mm */
-            rawRapid(2 * rEntry, prevZ + 0.5);
-            mv(1, 2 * rEntry, zk, p.feedRough * 0.7, "bore"); // شیرجه −X به عمق بار بعدی
+        const layers: number[] = [];
+        const firstLayer = splitPlaneAlreadyCut ? zOuter - step : zOuter;
+        for (let z = firstLayer; z > zInner + 0.05; z -= step) layers.push(z);
+        if (!layers.length || Math.abs(layers[layers.length - 1] - zInner) > 0.05) layers.push(zInner);
+        if (!splitPlaneAlreadyCut && Math.abs(layers[0] - zOuter) < 0.05) splitPlaneAlreadyCut = true;
+
+        const intervalsAt = (layerZ: number): { a: number; b: number }[] => {
+          const intervals: { a: number; b: number }[] = [];
+          let open: number | null = mergedWall[0].z <= layerZ + 1e-7 ? mergedWall[0].r : null;
+          for (let i = 1; i < mergedWall.length; i++) {
+            const prev = mergedWall[i - 1], curPoint = mergedWall[i];
+            const prevIn = prev.z <= layerZ + 1e-7, curIn = curPoint.z <= layerZ + 1e-7;
+            if (prevIn === curIn) continue;
+            const t = (layerZ - prev.z) / Math.max(1e-12, curPoint.z - prev.z);
+            const crossR = prev.r + (curPoint.r - prev.r) * Math.max(0, Math.min(1, t));
+            if (curIn) open = crossR;
+            else if (open != null) { intervals.push({ a: open, b: crossR }); open = null; }
           }
-          if (target > rEntry + 0.05) mv(1, 2 * target, zk, p.feedRough, "bore"); // برداشت از مرکز به بیرون (+Y)
-        });
+          if (open != null) intervals.push({ a: open, b: mergedWall[mergedWall.length - 1].r });
+          return intervals.filter((interval) => interval.b - interval.a > 0.05);
+        };
+
+        note(`INNER VERTICAL LAYERS ${layers.length} x ${f2(step)} MM`);
+        const rEntry = 0.6;
+        const mouthX = zOuter + p.innerStartClearance;
+        enterFirstInner(2 * rEntry, mouthX);
+        for (const layerZ of layers) {
+          for (const interval of intervalsAt(layerZ)) {
+            const startR = Math.max(rEntry, interval.a);
+            const endR = Math.max(startR, interval.b);
+            /* در صفحه امن به شعاع شروع می‌رویم، در همان شعاع تا عمق پاس وارد
+               می‌شویم و سپس برش اصلی را عمودی تا انتهای بازه انجام می‌دهیم. */
+            rawRapid(2 * startR, mouthX);
+            mv(1, 2 * startR, layerZ, p.feedRough * 0.7, "bore");
+            if (endR > startR + 0.05) mv(1, 2 * endR, layerZ, p.feedRough, "bore");
+            rawRapid(2 * endR, mouthX);
+          }
+        }
+        innerCleared = true;
         /* اگر این آخرین عملیات داخل است، بدون هیچ حرکت واسط مستقیماً +X می‌رود. */
         if (!finishLastInner(op.id)) {
-          rawRapid(2 * rEntry, depths[depths.length - 1]);
           rawRapid(2 * rEntry, mouthX);
           mv(0, retractX, mouthX, 0, "rapid");
         }
@@ -2236,6 +2219,27 @@ export const PRESETS: Preset[] = [
       /* شاخه داخلی: از لبه داخلی تا کف حفره */
       [82, 61, true], [70, 55, true], [56, 45, true], [42, 32, true],
       [32, 20, true], [26, 10, true], [24, 4, false],
+    ],
+  },
+  {
+    id: "inner-rough-test",
+    name: "تست خشن داخل عمودی",
+    blankD: 1000,
+    blankL: 100,
+    shape: "circle",
+    strategy: "bowl",
+    split: { z: 66, r: 420 },
+    pts: [
+      [0, 365, false], [8, 420, true], [22, 462, true], [40, 475, true],
+      [56, 460, true], [66, 420, false],
+    ],
+    wall: [
+      /* بیرون قطعه تا لبه */
+      [0, 365, false], [8, 420, true], [22, 462, true], [40, 475, true],
+      [56, 460, true], [66, 420, false],
+      /* دیواره داخلی زیگزاگی برای آزمون قله‌ها و بازه‌های عمودی */
+      [60, 365, false], [34, 315, false], [54, 245, false], [30, 190, false],
+      [54, 125, false], [30, 65, false], [54, 2, false],
     ],
   },
   {
