@@ -20,6 +20,8 @@ export interface SketchSeg {
   c1?: SPoint; // منحنی درجه۲: تنها نقطه کنترل | درجه۳: دستهٔ اول
   c2?: SPoint; // منحنی درجه۳: دستهٔ دوم
   via?: SPoint; // کمان: نقطهٔ روی کمان
+  /** شناسهٔ دو خط سازنده؛ برای جایگزینی Fillet قبلی روی همان جفت خط */
+  filletOf?: [number, number];
 }
 
 export const KIND_FA: Record<SketchKind, string> = {
@@ -273,6 +275,7 @@ export function moveSeg(s: SketchSeg, dz: number, dr: number): SketchSeg {
     c1: s.c1 ? movePt(s.c1, dz, dr) : undefined,
     c2: s.c2 ? movePt(s.c2, dz, dr) : undefined,
     via: s.via ? movePt(s.via, dz, dr) : undefined,
+    filletOf: s.filletOf ? [...s.filletOf] : undefined,
   };
 }
 
@@ -645,6 +648,9 @@ export function normalizeSketch(raw: unknown): SketchSeg[] | null {
       c1: s.c1 ? { z: s.c1.z, r: s.c1.r } : undefined,
       c2: s.c2 ? { z: s.c2.z, r: s.c2.r } : undefined,
       via: s.via ? { z: s.via.z, r: s.via.r } : undefined,
+      filletOf: Array.isArray(s.filletOf) && s.filletOf.length === 2 && s.filletOf.every(Number.isFinite)
+        ? [s.filletOf[0], s.filletOf[1]]
+        : undefined,
     });
   }
   for (const s of out) segUid = Math.max(segUid, s.id);

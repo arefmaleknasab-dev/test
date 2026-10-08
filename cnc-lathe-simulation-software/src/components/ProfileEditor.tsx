@@ -3260,8 +3260,23 @@ export default function ProfileEditor({
       return;
     }
     const result = filletCalc.result;
-    const arc = { ...result.arc, id: newSegId() };
-    commit(segs.map((segment) => segment.id === result.first.id ? result.first : segment.id === result.second.id ? result.second : segment).concat(arc));
+    const pair = [result.first.id, result.second.id].sort((a, b) => a - b) as [number, number];
+    const arc: SketchSeg = { ...result.arc, id: newSegId(), filletOf: pair };
+    const sourceLines = [
+      segs.find((segment) => segment.id === pair[0]),
+      segs.find((segment) => segment.id === pair[1]),
+    ].filter((segment): segment is SketchSeg => !!segment);
+    const touches = (candidate: SketchSeg, line: SketchSeg) =>
+      [candidate.a, candidate.b].some((point) => [line.a, line.b].some((end) => dist(point, end) < 1e-5));
+    /* روی یک جفت خط فقط یک Fillet معتبر می‌ماند. علاوه بر metadata، اتصال
+       هندسی نیز بررسی می‌شود تا Filletهای ساخته‌شده با نسخه‌های قدیمی جایگزین شوند. */
+    const withoutPrevious = segs.filter((segment) => {
+      if (segment.kind !== "arc" || segment.id === result.first.id || segment.id === result.second.id) return true;
+      const tagged = segment.filletOf && [...segment.filletOf].sort((a, b) => a - b).every((id, i) => id === pair[i]);
+      const geometricallyAttached = sourceLines.length === 2 && touches(segment, sourceLines[0]) && touches(segment, sourceLines[1]);
+      return !tagged && !geometricallyAttached;
+    });
+    commit(withoutPrevious.map((segment) => segment.id === result.first.id ? result.first : segment.id === result.second.id ? result.second : segment).concat(arc));
     onSelected([arc.id]);
     setFilletPicks([]); setFilletBox(null);
   };
