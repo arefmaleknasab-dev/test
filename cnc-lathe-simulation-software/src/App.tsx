@@ -195,12 +195,18 @@ export default function App() {
       const poly = chainPolyline(orderChain(generationSketch));
       if (poly.length >= 3) {
         const sp = splitChainAt(poly, { z: params.split.z, r: params.split.r });
+        const outerBranch = params.split.swapped ? sp.inner : sp.outer;
+        const innerBranch = params.split.swapped ? sp.outer : sp.inner;
         return {
-          points: branchPoints(sp.outer, blankR, params.blankL, "max"),
+          points: branchPoints(outerBranch, blankR, params.blankL, "max"),
           /* ترتیب واقعی شاخه برای Offset/Finish حفظ می‌شود؛ موتور مسیر یک پوشش
              یکنواخت جداگانه برای پاس‌های خشن می‌سازد. */
-          innerPoints: branchPathPoints(sp.inner, blankR, params.blankL),
-          splitInfo: { outerDir: sp.outerDir, innerDir: sp.innerDir, at: sp.splitAt },
+          innerPoints: branchPathPoints(innerBranch, blankR, params.blankL),
+          splitInfo: {
+            outerDir: params.split.swapped ? sp.innerDir : sp.outerDir,
+            innerDir: params.split.swapped ? sp.outerDir : sp.innerDir,
+            at: sp.splitAt,
+          },
         };
       }
     }

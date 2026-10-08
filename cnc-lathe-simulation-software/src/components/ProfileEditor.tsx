@@ -916,6 +916,7 @@ export default function ProfileEditor({
   /* نقاط جداشده (unjoined) — به‌صورت پیش‌فرض همهٔ نقاطِ هم‌مکان متصل‌اند */
   const [separated, setSeparated] = useState<Set<string>>(new Set());
   /* منوی راست‌کلیک برای اتصال/جداسازی نقطه */
+  const [splitCtxMenu, setSplitCtxMenu] = useState<{ x: number; y: number } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
     y: number;
@@ -2033,6 +2034,7 @@ export default function ProfileEditor({
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!camRef.current) return;
     setCtxMenu(null);
+    setSplitCtxMenu(null);
     setSpeedMenu(null);
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
@@ -2645,6 +2647,14 @@ export default function ProfileEditor({
   /* بازکردن منوی اتصال/جداسازی نقطه در موقعیت صفحه */
   const openJoinMenu = (clientX: number, clientY: number) => {
     if (tool !== "select") return;
+    const local = toLocal(clientX, clientY);
+    if (hitSplitMarker(local.x, local.y)) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setCtxMenu(null);
+      setSplitCtxMenu({ x: clientX - rect.left, y: clientY - rect.top });
+      return;
+    }
+    setSplitCtxMenu(null);
     const raw = toWorld(clientX, clientY);
     const h = hitHandle(raw);
     if (h && (h.part === "a" || h.part === "b")) {
@@ -3543,10 +3553,10 @@ export default function ProfileEditor({
               return `${i ? "L" : "M"}${x},${y}`;
             }).join(" ");
             return <>
-              <path d={pathOf(divided.outer, true)} fill="none" stroke="#e3a94e" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
-              <path d={pathOf(divided.inner, true)} fill="none" stroke="#4cc9f0" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
-              <path d={pathOf(divided.outer)} fill="none" stroke="#f3c26b" strokeWidth={2.4} strokeLinecap="round" />
-              <path d={pathOf(divided.inner)} fill="none" stroke="#4cc9f0" strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.outer, true)} fill="none" stroke={split.swapped ? "#4cc9f0" : "#e3a94e"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+              <path d={pathOf(divided.inner, true)} fill="none" stroke={split.swapped ? "#e3a94e" : "#4cc9f0"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+              <path d={pathOf(divided.outer)} fill="none" stroke={split.swapped ? "#4cc9f0" : "#f3c26b"} strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.inner)} fill="none" stroke={split.swapped ? "#f3c26b" : "#4cc9f0"} strokeWidth={2.4} strokeLinecap="round" />
             </>;
           })()}
           {/* بدون Split، رنگ معمول هر المان استفاده می‌شود. */}
@@ -3906,6 +3916,30 @@ export default function ProfileEditor({
               <span className="font-mono">G1 F{feed}</span>
             </button>
           ))}
+        </div>
+      )}
+
+      {/* ---------- منوی راست‌کلیک نقطه Split ---------- */}
+      {splitCtxMenu && (
+        <div
+          className="anim-in absolute z-30 w-52 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
+          style={{ left: Math.min(splitCtxMenu.x, size.w - 216), top: Math.min(splitCtxMenu.y, size.h - 72) }}
+        >
+          <button
+            onClick={() => {
+              onSplit({ ...split, swapped: !split.swapped });
+              setSplitCtxMenu(null);
+            }}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-right text-[12px] font-semibold text-ink transition-colors hover:bg-panel3"
+          >
+            <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" aria-hidden="true">
+              <path d="M4 8.5C6.1 4.9 10.2 3.4 14 4.7l1.7.7" stroke="#f3c26b" strokeWidth="2.2" strokeLinecap="round" />
+              <path d="m14.2 2.8 3.4 3.2-4.4 1" stroke="#f3c26b" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M20 15.5c-2.1 3.6-6.2 5.1-10 3.8l-1.7-.7" stroke="#4cc9f0" strokeWidth="2.2" strokeLinecap="round" />
+              <path d="m9.8 21.2-3.4-3.2 4.4-1" stroke="#4cc9f0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>جابه‌جایی داخل و خارج</span>
+          </button>
         </div>
       )}
 

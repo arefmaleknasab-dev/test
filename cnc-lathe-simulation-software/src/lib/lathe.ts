@@ -71,6 +71,8 @@ export interface SplitState {
   enabled: boolean;
   z: number; // موقعیت طولی نقطه روی پروفیل (mm)
   r: number; // شعاع نقطه روی پروفیل (mm)
+  /** جابه‌جایی عمدی شاخه‌های داخل/خارج نسبت به ترتیب زنجیره */
+  swapped?: boolean;
 }
 
 /**
@@ -421,6 +423,7 @@ export function normalizeParams(
     if (typeof s.enabled === "boolean") base.split.enabled = s.enabled;
     if (typeof s.z === "number" && Number.isFinite(s.z)) base.split.z = s.z;
     if (typeof s.r === "number" && Number.isFinite(s.r)) base.split.r = s.r;
+    if (typeof s.swapped === "boolean") base.split.swapped = s.swapped;
   }
   if (raw.holder2 && typeof raw.holder2 === "object") {
     const h = raw.holder2 as Partial<Holder2State>;
