@@ -1209,7 +1209,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             ? fullOutsideR
             : Math.min(fullOutsideR, radialRoughEndR + p.bottomRoughOverlap);
           const outsideD = 2 * outsideR;
-          const centerD = 1.2;
+          const centerD = 0; // کف‌تراشی دقیقاً از خط محور (X/قطر صفر) آغاز می‌شود
           const N = Math.max(1, Math.ceil(excess / p.innerDoc - 1e-9));
           const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? bottomEndZ : p.blankL - (i + 1) * p.innerDoc));
           /* اگر کف‌تراشی وجود دارد، اولین صفحه آن مبنای فاصله شروع داخل‌تراشی است. */
@@ -1717,7 +1717,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (arr.length === 1) {
           const sg = segs[arr[0]];
           const pa = machineUV(sg.z1, sg.x1, sg.holder, p);
-          const funnelV = 1.2 - (sg.holder === 2 ? p.holder2.yOff : 0);
+          /* کریدور ورود عملیات داخل اکنون روی قطر صفر است؛ مقدار قدیمی 1.2
+             باعث می‌شد حرکتِ واقعی محور، اشتباهاً از مسیر امن کنار گذاشته شود. */
+          const funnelV = 0 - (sg.holder === 2 ? p.holder2.yOff : 0);
           if (Math.abs(pa.v - funnelV) >= 1.0) sg.fan = 3;
         }
         continue;
