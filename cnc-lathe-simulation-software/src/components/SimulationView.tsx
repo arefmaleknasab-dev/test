@@ -69,7 +69,9 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
+  const [panning, setPanning] = useState(false);
 
+  const panRef = useRef<{ pointerId: number; x: number; y: number; ox: number; oy: number } | null>(null);
   const camRef = useRef({ s: 1, ox: 0, oy: 0 });
   const fitScaleRef = useRef(1);
   const radiiRef = useRef<Float64Array>(new Float64Array(GRID + 1));
@@ -725,6 +727,32 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
     scrubbingRef.current = false;
     hideTip();
   };
+  /* پن دوربین شبیه‌سازی با Drag روی خود بوم. هر سه دکمه ماوس پذیرفته می‌شوند؛
+     کنترل‌های پخش روی لایه بالاتر هستند و این Drag با اسکرابر تداخل ندارد. */
+  const onCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const cam = camRef.current;
+    panRef.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy };
+    setPanning(true);
+  };
+  const onCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== e.pointerId) return;
+    camRef.current = {
+      ...camRef.current,
+      ox: pan.ox + e.clientX - pan.x,
+      oy: pan.oy + e.clientY - pan.y,
+    };
+  };
+  const finishCanvasPan = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (panRef.current?.pointerId !== e.pointerId) return;
+    panRef.current = null;
+    setPanning(false);
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  };
+
   const onTrackKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const totalL = totalRef.current;
     if (totalL <= 0) return;
@@ -742,8 +770,16 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-lg border border-edge bg-[#120e09]">
-      <div ref={wrapRef} className="absolute inset-0">
-        <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} className="block" />
+      <div
+        ref={wrapRef}
+        className={cn("absolute inset-0 touch-none", panning ? "cursor-grabbing" : "cursor-grab")}
+        onPointerDown={onCanvasPointerDown}
+        onPointerMove={onCanvasPointerMove}
+        onPointerUp={finishCanvasPan}
+        onPointerCancel={finishCanvasPan}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} className="pointer-events-none block" />
       </div>
 
       {/* DRO */}
