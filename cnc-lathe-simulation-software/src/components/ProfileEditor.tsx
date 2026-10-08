@@ -11,6 +11,7 @@ import {
   dist,
   distToSeg,
   endFromLenAngle,
+  evalSeg,
   intersectionPoints,
   KIND_FA,
   lineAngle,
@@ -1306,18 +1307,38 @@ export default function ProfileEditor({
   };
 
   /* نزدیک‌ترین نقطه روی پروفیل (برای ابزار Split) */
+  const nearestOnSeg = (s: SketchSeg, w: SPoint): { point: SPoint; t: number; distance: number } => {
+    /* جست‌وجوی پارامتری باعث می‌شود وسط Line نیز واقعاً قابل انتخاب باشد؛ روش
+       قبلی برای Line فقط دو سر را آزمایش می‌کرد. برای همه انواع منحنی نیز نقطه
+       نهایی روی خود هندسه باقی می‌ماند. */
+    if (s.kind === "line") {
+      const dz = s.b.z - s.a.z, dr = s.b.r - s.a.r;
+      const l2 = dz * dz + dr * dr;
+      const t = l2 > 1e-12 ? Math.max(0, Math.min(1, ((w.z - s.a.z) * dz + (w.r - s.a.r) * dr) / l2)) : 0;
+      const point = evalSeg(s, t);
+      return { point, t, distance: dist(point, w) };
+    }
+    let bestT = 0, bestD = Infinity;
+    const samples = 80;
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples, d = dist(evalSeg(s, t), w);
+      if (d < bestD) { bestD = d; bestT = t; }
+    }
+    let lo = Math.max(0, bestT - 1 / samples), hi = Math.min(1, bestT + 1 / samples);
+    for (let i = 0; i < 18; i++) {
+      const t1 = lo + (hi - lo) / 3, t2 = hi - (hi - lo) / 3;
+      if (dist(evalSeg(s, t1), w) <= dist(evalSeg(s, t2), w)) hi = t2;
+      else lo = t1;
+    }
+    const t = (lo + hi) / 2, point = evalSeg(s, t);
+    return { point, t, distance: dist(point, w) };
+  };
+
   const nearestOnSketch = (w: SPoint): SPoint | null => {
-    let best: SPoint | null = null;
-    let bestD = Infinity;
+    let best: SPoint | null = null, bestD = Infinity;
     for (const s of segs) {
-      const pts = s.kind === "line" ? [s.a, s.b] : segPoints(s, 40);
-      for (const p of pts) {
-        const d = dist(p, w);
-        if (d < bestD) {
-          bestD = d;
-          best = p;
-        }
-      }
+      const hit = nearestOnSeg(s, w);
+      if (hit.distance < bestD) { bestD = hit.distance; best = hit.point; }
     }
     return best ? clampPt({ ...best }) : null;
   };
@@ -2644,9 +2665,48 @@ export default function ProfileEditor({
     }
   };
 
+  const cutSegmentAtSplit = () => {
+    if (!split.enabled || !segs.length) return;
+    let target: SketchSeg | null = null;
+    let targetT = 0;
+    let bestD = Infinity;
+    for (const segment of segs) {
+      const hit = nearestOnSeg(segment, { z: split.z, r: split.r });
+      if (hit.distance < bestD) { bestD = hit.distance; target = segment; targetT = hit.t; }
+    }
+    if (!target || targetT <= 1e-4 || targetT >= 1 - 1e-4) {
+      setSplitCtxMenu(null);
+      return;
+    }
+    const s = target, t = targetT;
+    const mix = (a: SPoint, b: SPoint, k: number): SPoint => ({ z: a.z + (b.z - a.z) * k, r: a.r + (b.r - a.r) * k });
+    const at = evalSeg(s, t);
+    let first: SketchSeg;
+    let second: SketchSeg;
+    if (s.kind === "quad" && s.c1) {
+      const ac = mix(s.a, s.c1, t), cb = mix(s.c1, s.b, t);
+      first = { id: s.id, kind: "quad", a: { ...s.a }, b: at, c1: ac };
+      second = { id: newSegId(), kind: "quad", a: at, b: { ...s.b }, c1: cb };
+    } else if (s.kind === "cubic" && s.c1 && s.c2) {
+      const p01 = mix(s.a, s.c1, t), p12 = mix(s.c1, s.c2, t), p23 = mix(s.c2, s.b, t);
+      const p012 = mix(p01, p12, t), p123 = mix(p12, p23, t);
+      first = { id: s.id, kind: "cubic", a: { ...s.a }, b: at, c1: p01, c2: p012 };
+      second = { id: newSegId(), kind: "cubic", a: at, b: { ...s.b }, c1: p123, c2: p23 };
+    } else if (s.kind === "arc") {
+      first = { id: s.id, kind: "arc", a: { ...s.a }, b: at, via: evalSeg(s, t / 2) };
+      second = { id: newSegId(), kind: "arc", a: at, b: { ...s.b }, via: evalSeg(s, (t + 1) / 2) };
+    } else {
+      first = { id: s.id, kind: "line", a: { ...s.a }, b: at };
+      second = { id: newSegId(), kind: "line", a: at, b: { ...s.b } };
+    }
+    onSegs(segs.flatMap((segment) => segment.id === s.id ? [first, second] : [segment]), true);
+    onSplit({ ...split, z: at.z, r: at.r });
+    setSplitCtxMenu(null);
+  };
+
   /* بازکردن منوی اتصال/جداسازی نقطه در موقعیت صفحه */
   const openJoinMenu = (clientX: number, clientY: number) => {
-    if (tool !== "select") return;
+    if (tool !== "select" && tool !== "split") return;
     const local = toLocal(clientX, clientY);
     if (hitSplitMarker(local.x, local.y)) {
       const rect = wrapRef.current!.getBoundingClientRect();
@@ -2832,7 +2892,7 @@ export default function ProfileEditor({
       /* ابزار Split: قرار دادن نقطه تعیین‌کننده روی پروفیل */
       if (tool === "split") {
         const hit = nearestOnSketch(toWorld(e.clientX, e.clientY));
-        if (hit) onSplit({ enabled: true, z: Math.round(hit.z * 10) / 10, r: Math.round(hit.r * 10) / 10 });
+        if (hit) onSplit({ enabled: true, z: hit.z, r: hit.r, swapped: split.swapped });
         return;
       }
       /* افزودن نقطهٔ جدید به ترسیم در حال انجام */
@@ -3922,23 +3982,34 @@ export default function ProfileEditor({
       {/* ---------- منوی راست‌کلیک نقطه Split ---------- */}
       {splitCtxMenu && (
         <div
-          className="anim-in absolute z-30 w-52 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
-          style={{ left: Math.min(splitCtxMenu.x, size.w - 216), top: Math.min(splitCtxMenu.y, size.h - 72) }}
+          className="anim-in absolute z-30 w-44 overflow-hidden rounded-md border border-edge bg-panel/97 shadow-xl shadow-black/50 backdrop-blur-sm"
+          style={{ left: Math.min(splitCtxMenu.x, size.w - 180), top: Math.min(splitCtxMenu.y, size.h - 82) }}
         >
           <button
             onClick={() => {
               onSplit({ ...split, swapped: !split.swapped });
               setSplitCtxMenu(null);
             }}
-            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-right text-[12px] font-semibold text-ink transition-colors hover:bg-panel3"
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-right text-[11px] font-semibold text-ink transition-colors hover:bg-panel3"
           >
-            <svg viewBox="0 0 24 24" className="h-6 w-6 shrink-0" fill="none" aria-hidden="true">
+            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" aria-hidden="true">
               <path d="M4 8.5C6.1 4.9 10.2 3.4 14 4.7l1.7.7" stroke="#f3c26b" strokeWidth="2.2" strokeLinecap="round" />
               <path d="m14.2 2.8 3.4 3.2-4.4 1" stroke="#f3c26b" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
               <path d="M20 15.5c-2.1 3.6-6.2 5.1-10 3.8l-1.7-.7" stroke="#4cc9f0" strokeWidth="2.2" strokeLinecap="round" />
               <path d="m9.8 21.2-3.4-3.2 4.4-1" stroke="#4cc9f0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span>جابه‌جایی داخل و خارج</span>
+          </button>
+          <button
+            onClick={cutSegmentAtSplit}
+            className="flex w-full items-center gap-2 border-t border-edge px-2 py-1.5 text-right text-[11px] font-semibold text-ink transition-colors hover:bg-panel3"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" aria-hidden="true">
+              <circle cx="7" cy="7" r="2.6" stroke="#4cc9f0" strokeWidth="1.8" />
+              <circle cx="7" cy="17" r="2.6" stroke="#f3c26b" strokeWidth="1.8" />
+              <path d="m9.2 8.4 10 7.4M9.2 15.6l10-7.4" stroke="#b9c7cf" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+            <span>تقسیم المان در Split</span>
           </button>
         </div>
       )}
