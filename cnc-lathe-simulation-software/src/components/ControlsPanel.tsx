@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "reac
 import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
 import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
-import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconSplit, IconTool, IconTrash } from "./icons";
+import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconTool, IconTrash } from "./icons";
 
 const COLLAPSIBLE_SECTION_TITLES = [
   "پیش‌تنظیم‌های طرح",
@@ -41,10 +41,6 @@ function ControlsPanel({
   onHolder2,
   onParams,
   points,
-  innerPoints,
-  splitInfo,
-  onAutoSplit,
-
   activePreset,
   onApplyPreset,
   onStrategy,
@@ -424,40 +420,6 @@ function ControlsPanel({
         />
         {params.split.enabled ? (
           <div className="anim-in mt-2 space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Num label="X نقطه Split" unit="mm" value={params.split.z} min={0} max={params.blankL} step={1} onChange={(v) => onParams({ split: { ...params.split, z: v } })} />
-              <Num label="⌀ نقطه Split" unit="mm" value={Math.round(params.split.r * 2 * 100) / 100} min={0} max={params.blankD} step={1} onChange={(v) => onParams({ split: { ...params.split, r: v / 2 } })} />
-            </div>
-            <button onClick={onAutoSplit} className="btn w-full justify-center !py-1.5 text-[11.5px]" title="قرار دادن خودکار نقطه روی لبه (بیشترین X زنجیره)">
-              <IconSplit className="h-3.5 w-3.5" />
-              Split خودکار روی لبه
-            </button>
-            <p className="rounded-md border border-dashed border-edge px-2 py-1 text-[9.5px] leading-4 text-dim">
-              یا با ابزار <span className="font-bold text-[#f72585]">نقطه Split (کلید S)</span> مستقیم روی پروفیل در بوم کلیک کنید.
-            </p>
-
-            {splitInfo ? (
-              <div className="rounded-md border border-edge bg-bg/50 px-2 py-1.5 text-[10px] leading-5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-brass2">شاخه خارجی</span>
-                  <span className="font-mono text-mute" dir="ltr">{splitInfo.outerDir > 0 ? "+X" : "−X"} • {faNum(points.length)} نقطه</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-[#4cc9f0]">شاخه داخلی</span>
-                  <span className="font-mono text-mute" dir="ltr">{splitInfo.innerDir > 0 ? "+X" : "−X"} • {faNum(innerPoints.length)} نقطه</span>
-                </div>
-              </div>
-            ) : (
-              <p className="rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[10px] leading-4 text-danger">
-                شاخه‌ای ساخته نشد — پروفیل زنجیره‌ای (حداقل ۳ نقطه) ترسیم کنید.
-              </p>
-            )}
-            {splitInfo && innerPoints.length < 2 && (
-              <p className="rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[10px] leading-4 text-danger">
-                شاخه داخلی خالی است — نقطه Split را روی پروفیل (نزدیک لبه) بگذارید.
-              </p>
-            )}
-
             {/* نوع عملیات */}
             <div>
               <span className="mb-1 block text-[10.5px] font-semibold text-mute">نوع عملیات</span>
