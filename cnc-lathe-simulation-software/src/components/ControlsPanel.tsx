@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
-import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
+import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconSplit, IconTool, IconTrash } from "./icons";
 
@@ -54,8 +54,6 @@ function ControlsPanel({
 }: Props) {
   /* امضای استراتژی فعلی برای تشخیص پیش‌تنظیم فعال (با قاعدهٔ پیش‌فرض: بیرونی‌ها اول) */
   const sig = outerFirstOps(params.ops.filter((o) => o.on)).map((o) => o.type).join(",");
-  const bowlStrategy = STRATEGIES.find((st) => st.id === "bowl")!;
-  const bowlActive = sig === outerFirstTypes(bowlStrategy.types).join(",");
   const sectionsAreCollapsed = () => {
     const saved = loadCollapsedSections();
     return COLLAPSIBLE_SECTION_TITLES.every((title) => !!saved[title]);
@@ -103,7 +101,6 @@ function ControlsPanel({
   const shownHolder2 = holder2Draft ?? params.holder2;
   const holder2IsDraft = !!holder2Draft &&
     (holder2Draft.xOff !== params.holder2.xOff || holder2Draft.yOff !== params.holder2.yOff);
-  const h2example = machineUV(80, 120, 2, holder2IsDraft ? { ...params, holder2: shownHolder2 } : params);
   const moveOp = (i: number, dir: -1 | 1) => {
     const j = i + dir;
     if (j < 0 || j >= params.ops.length) return;
@@ -495,49 +492,35 @@ function ControlsPanel({
               </div>
             </div>
 
-            {/* هلدر دوم فقط پس از Split معتبر و با استراتژی کاسه داخل+خارج */}
-            {bowlActive && splitInfo && (
-            <div className="rounded-lg border border-[#4cc9f0]/30 bg-[#4cc9f0]/5 p-2">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="text-[11px] font-bold text-[#4cc9f0]">هلدر دوم (داخل‌تراش)</span>
-                <div className="flex items-center gap-1">
-                  {holder2IsDraft && (
-                    <span className="rounded-full border border-teal/50 bg-teal/10 px-2 py-0.5 text-[8.5px] font-bold text-teal">
-                      زنده · پیش‌نویس
-                    </span>
-                  )}
-                  <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
-                    ROT {HOLDER2_ROT}°
-                  </span>
-                </div>
-              </div>
-              <span className="mb-1 block text-[9.5px] font-bold text-mute">تنظیم مستقیم افست</span>
-              <div className="grid grid-cols-2 gap-2">
-                <Num label="X Offset (+X)" unit="mm" value={shownHolder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
-                <Num label="Y Offset (−Y)" unit="mm" value={shownHolder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
-              </div>
-
-              <Holder2CoordinateCalibration
-                current={shownHolder2}
-                onApply={onHolder2}
-              />
-
-              <p className="mt-1.5 rounded-md bg-bg/60 px-2 py-1 font-mono text-[9px] leading-4 text-mute" dir="ltr">
-                Xm = Xw + Xoff , Ym = Yw/2 − Yoff
-                <br />
-                ex: (80.0, 120.0) → ({h2example.u.toFixed(1)}, {h2example.v.toFixed(1)})
-              </p>
-              <p className="mt-1 text-[9px] leading-4 text-dim">
-                هر آفست مستقیم روی محور خودش اثر می‌گذارد: X مثبت به سمت ‎+X‎ و Y مثبت به سمت ‎−Y‎. چرخش ‎−۹۰°‎ مربوط به جهت ابزار است. تبدیل فقط در جی‌کد اعمال می‌شود؛ شبیه‌سازی در مختصات قطعه است.
-              </p>
-            </div>
-            )}
           </div>
         ) : (
           <p className="mt-1.5 rounded-md border border-dashed border-edge px-2 py-1.5 text-[10px] leading-5 text-dim">
             با فعال‌سازی، پروفیل در نقطه Split به دو شاخه داخل/خارج تقسیم می‌شود. نمونه آماده: <span className="font-bold text-brass2">«کاسه (داخل+خارج)»</span> از پیش‌تنظیم‌ها.
           </p>
         )}
+
+        {/* تنظیمات هلدر دوم مستقل از استراتژی و Split همیشه در دسترس است. */}
+        <div className="mt-2 rounded-lg border border-[#4cc9f0]/30 bg-[#4cc9f0]/5 p-2">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[11px] font-bold text-[#4cc9f0]">هلدر دوم (داخل‌تراش)</span>
+            <div className="flex items-center gap-1">
+              {holder2IsDraft && (
+                <span className="rounded-full border border-teal/50 bg-teal/10 px-2 py-0.5 text-[8.5px] font-bold text-teal">
+                  زنده · پیش‌نویس
+                </span>
+              )}
+              <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
+                ROT {HOLDER2_ROT}°
+              </span>
+            </div>
+          </div>
+          <span className="mb-1 block text-[9.5px] font-bold text-mute">تنظیم مستقیم افست</span>
+          <div className="grid grid-cols-2 gap-2">
+            <Num label="X Offset (+X)" unit="mm" value={shownHolder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
+            <Num label="Y Offset (−Y)" unit="mm" value={shownHolder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
+          </div>
+          <Holder2CoordinateCalibration current={shownHolder2} onApply={onHolder2} />
+        </div>
       </Section>
 
       {/* ابزار تراش */}
