@@ -3171,7 +3171,6 @@ export default function ProfileEditor({
      Gaussian blur. این کار تعداد nodeها و هزینهٔ GPU را هنگام pan ثابت نگه می‌دارد. */
   let selectedLinesPath = "";
   let activeLinePath = "";
-  let activeLineSpeedColor = "";
   const selectedSpeedPaths = new Map<string, string>();
   if (editOpen && toolpathLayersVisible && selectedLineIds.size) {
     for (const line of lines) {
@@ -3179,7 +3178,6 @@ export default function ProfileEditor({
       const d = `${lineD(line)} `;
       if (line.id === activeLine) {
         activeLinePath += d;
-        activeLineSpeedColor = speedStroke(line.motion, line.feed);
       } else {
         selectedLinesPath += d;
         const color = speedStroke(line.motion, line.feed);
@@ -3646,11 +3644,9 @@ export default function ProfileEditor({
                 )}
               </>
             )}
+            {/* خط Active فقط با رنگ آبی روشن مشخص می‌شود؛ بدون Glow یا تغییر ضخامت. */}
             {activeLinePath && (
-              <>
-                <path d={activeLinePath} fill="none" stroke="#ffd27a" strokeOpacity={pickerHover ? 0.02 : showPathBySpeed ? 0.55 : 0.24} strokeWidth={9} strokeLinecap="round" pointerEvents="none" />
-                <path d={activeLinePath} fill="none" stroke={showPathBySpeed ? activeLineSpeedColor : "#ffd27a"} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={4.2} strokeLinecap="round" pointerEvents="none" />
-              </>
+              <path d={activeLinePath} fill="none" stroke="#7bb8ff" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3.2} strokeLinecap="round" pointerEvents="none" />
             )}
             {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
             {rangePreviewPath && (
