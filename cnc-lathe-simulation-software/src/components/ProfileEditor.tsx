@@ -3667,8 +3667,8 @@ export default function ProfileEditor({
               const shared = (vertexLineCount.get(vid) ?? 0) > 1;
               return (
                 <g key={`bv${vid}`} opacity={pickerHover ? 0.1 : 1}>
-                  <circle cx={x} cy={y} r={8} fill={on ? "#ffd27a" : "#45b394"} fillOpacity={0.12} pointerEvents="none" />
-                  <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={on ? "#ffd27a" : shared ? "#0f2a22" : "#120e09"} stroke={on ? "#120e09" : "#45b394"} strokeWidth={2.4} />
+                  <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={shared ? "#0f2a22" : "#120e09"} stroke="#45b394" strokeWidth={2.4} />
+                  {on && <circle cx={x} cy={y} r={2.1} fill="#ffd27a" pointerEvents="none" />}
                 </g>
               );
             })}
@@ -3729,26 +3729,14 @@ export default function ProfileEditor({
             />
           )}
 
-          {/* نشانگر نقاط مستقلِ انتخاب‌شده — رنگ خود نقطه تغییر می‌کند */}
+          {/* نقطهٔ فعال با Dot کوچک داخلی مشخص می‌شود؛ اندازه، حاشیه و رنگ
+              اصلی Handle تغییر نمی‌کند و دیگر هاله‌ای دور آن ساخته نمی‌شود. */}
           {selPoints.map((ps, i) => {
             const s = segs.find((x) => x.id === ps.segId);
             const pt = s ? s[ps.part] : null;
             if (!s || !pt) return null;
             const [x, y] = P(pt.z, pt.r);
-            const isCtrl = ps.part === "c1" || ps.part === "c2";
-            return (
-              <g key={`selpt-${i}`} filter="url(#curveGlow)">
-                <circle
-                  className="pt-hover"
-                  cx={x}
-                  cy={y}
-                  r={isCtrl ? 6 : 6.5}
-                  fill="#ffd27a"
-                  stroke="#120e09"
-                  strokeWidth={1.8}
-                />
-              </g>
-            );
+            return <circle key={`selpt-${i}`} cx={x} cy={y} r={2.1} fill="#ffd27a" pointerEvents="none" />;
           })}
 
           {/* دسته‌ها و نقاط المان‌های انتخاب‌شده یا دارای نقطهٔ مستقلِ انتخاب‌شده */}
