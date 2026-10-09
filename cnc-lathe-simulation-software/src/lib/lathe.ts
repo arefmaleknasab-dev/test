@@ -471,16 +471,39 @@ export function normalOffset(pts: Sample[], dist: number, outward: boolean): Sam
    عبور مماس از قله علامت نرمال را براساس مؤلفه شعاعی عوض نمی‌کند؛ سمت چپ مسیر
    در تمام زنجیره ثابت می‌ماند و بنابراین Offset ناگهان به داخل منحنی نمی‌پرد. */
 function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sample[] {
-  const n = pts.length;
-  if (n < 2 || dist === 0) return pts.map((point) => ({ ...point }));
+  const clean = pts.filter((point, i) => i === 0 || Math.hypot(point.z - pts[i - 1].z, point.r - pts[i - 1].r) > 1e-9);
+  const n = clean.length;
+  if (n < 2 || dist === 0) return clean.map((point) => ({ ...point }));
   const sign = leftSide ? 1 : -1;
-  const out: Sample[] = new Array(n);
-  for (let i = 0; i < n; i++) {
-    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+  const segments = Array.from({ length: n - 1 }, (_, i) => {
+    const a = clean[i], b = clean[i + 1];
     const length = Math.hypot(b.z - a.z, b.r - a.r);
-    if (length < 1e-9) { out[i] = { ...pts[i] }; continue; }
     const tz = (b.z - a.z) / length, tr = (b.r - a.r) / length;
-    out[i] = { z: pts[i].z + (-tr) * dist * sign, r: pts[i].r + tz * dist * sign };
+    const nz = -tr * sign, nr = tz * sign;
+    return { tz, tr, a: { z: a.z + nz * dist, r: a.r + nr * dist } };
+  });
+  const out: Sample[] = new Array(n);
+  out[0] = { ...segments[0].a };
+  out[n - 1] = {
+    z: clean[n - 1].z + (-segments[n - 2].tr * sign) * dist,
+    r: clean[n - 1].r + (segments[n - 2].tz * sign) * dist,
+  };
+  for (let i = 1; i < n - 1; i++) {
+    const prev = segments[i - 1], next = segments[i];
+    const cross = prev.tz * next.tr - prev.tr * next.tz;
+    if (Math.abs(cross) < 1e-8) {
+      out[i] = { z: (prev.a.z + next.a.z) / 2, r: (prev.a.r + next.a.r) / 2 };
+      continue;
+    }
+    /* تقاطع دو خط آفست‌شده، گوشهٔ Miter دقیق می‌سازد؛ بنابراین فاصله از هر
+       دو ضلع در دو طرف قله دقیقاً dist و در کل زیگزاگ یکدست باقی می‌ماند. */
+    const qz = next.a.z - prev.a.z, qr = next.a.r - prev.a.r;
+    const t = (qz * next.tr - qr * next.tz) / cross;
+    const joined = { z: prev.a.z + prev.tz * t, r: prev.a.r + prev.tr * t };
+    const miter = Math.hypot(joined.z - clean[i].z, joined.r - clean[i].r);
+    out[i] = Number.isFinite(miter) && miter <= Math.max(1, Math.abs(dist) * 25)
+      ? joined
+      : { z: (prev.a.z + next.a.z) / 2, r: (prev.a.r + next.a.r) / 2 };
   }
   return trimOffsetLoops(out);
 }
@@ -1532,21 +1555,26 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (mergedWall[0].r > 1e-9) mergedWall.unshift({ z: mergedWall[0].z, r: 0 });
         const zOuter = Math.max(...mergedWall.map((point) => point.z));
         const zInner = Math.min(...mergedWall.map((point) => point.z));
+        /* خشن‌کاری باید کاملاً در سمت حفرهٔ خط آفست بماند. این کلیرنس کوچک
+           محاسباتی مانع می‌شود مرکز مسیر یا خطای اعشاری وارد ناحیه رزرو آفست شود. */
+        const roughOffsetClearance = 0.05;
+        const roughInnerZ = zInner + roughOffsetClearance;
         const step = Math.max(0.5, p.innerDoc);
         const layers: number[] = [];
         const firstLayer = splitPlaneAlreadyCut ? zOuter - step : zOuter;
-        for (let z = firstLayer; z > zInner + 0.05; z -= step) layers.push(z);
-        if (!layers.length || Math.abs(layers[layers.length - 1] - zInner) > 0.05) layers.push(zInner);
+        for (let z = firstLayer; z > roughInnerZ + 0.05; z -= step) layers.push(z);
+        if (!layers.length || Math.abs(layers[layers.length - 1] - roughInnerZ) > 0.05) layers.push(roughInnerZ);
         if (!splitPlaneAlreadyCut && Math.abs(layers[0] - zOuter) < 0.05) splitPlaneAlreadyCut = true;
 
         const intervalsAt = (layerZ: number): { a: number; b: number }[] => {
           const intervals: { a: number; b: number }[] = [];
-          let open: number | null = mergedWall[0].z <= layerZ + 1e-7 ? mergedWall[0].r : null;
+          let open: number | null = mergedWall[0].z + roughOffsetClearance <= layerZ + 1e-7 ? mergedWall[0].r : null;
           for (let i = 1; i < mergedWall.length; i++) {
             const prev = mergedWall[i - 1], curPoint = mergedWall[i];
-            const prevIn = prev.z <= layerZ + 1e-7, curIn = curPoint.z <= layerZ + 1e-7;
+            const prevIn = prev.z + roughOffsetClearance <= layerZ + 1e-7;
+            const curIn = curPoint.z + roughOffsetClearance <= layerZ + 1e-7;
             if (prevIn === curIn) continue;
-            const t = (layerZ - prev.z) / Math.max(1e-12, curPoint.z - prev.z);
+            const t = (layerZ - roughOffsetClearance - prev.z) / Math.max(1e-12, curPoint.z - prev.z);
             const crossR = prev.r + (curPoint.r - prev.r) * Math.max(0, Math.min(1, t));
             if (curIn) open = crossR;
             else if (open != null) { intervals.push({ a: open, b: crossR }); open = null; }
