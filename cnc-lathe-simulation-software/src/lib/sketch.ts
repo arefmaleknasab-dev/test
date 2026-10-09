@@ -609,7 +609,10 @@ let branchUid = 95000;
 export function branchPathPoints(branch: SPoint[], blankR: number, blankL: number): PPoint[] {
   return branch
     .filter((p) => Number.isFinite(p.z) && Number.isFinite(p.r))
-    .map((p) => ({ id: ++branchUid, z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0.2, p.r)), smooth: false }));
+    /* شاخهٔ داخلی باید نقطهٔ واقعی R=0 را حفظ کند. حداقل‌کردن شعاع روی ۰٫۲mm
+       یک پاره‌خط اضافه بین محور و ابتدای پرداخت داخل می‌ساخت و مسیر قرمز را از
+       پروفایل آبی جدا نشان می‌داد. */
+    .map((p) => ({ id: ++branchUid, z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)), smooth: false }));
 }
 
 export function branchPoints(branch: SPoint[], blankR: number, blankL: number, keep: "max" | "min"): PPoint[] {
