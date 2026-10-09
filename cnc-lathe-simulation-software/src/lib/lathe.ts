@@ -480,35 +480,53 @@ function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sam
     const length = Math.hypot(b.z - a.z, b.r - a.r);
     const tz = (b.z - a.z) / length, tr = (b.r - a.r) / length;
     const nz = -tr * sign, nr = tz * sign;
-    return { tz, tr, a: { z: a.z + nz * dist, r: a.r + nr * dist } };
+    return {
+      tz, tr,
+      a: { z: a.z + nz * dist, r: a.r + nr * dist },
+      b: { z: b.z + nz * dist, r: b.r + nr * dist },
+    };
   });
-  const out: Sample[] = new Array(n);
-  out[0] = { ...segments[0].a };
-  out[n - 1] = {
-    z: clean[n - 1].z + (-segments[n - 2].tr * sign) * dist,
-    r: clean[n - 1].r + (segments[n - 2].tz * sign) * dist,
-  };
+  const out: Sample[] = [{ ...segments[0].a }];
   for (let i = 1; i < n - 1; i++) {
     const prev = segments[i - 1], next = segments[i];
     const cross = prev.tz * next.tr - prev.tr * next.tz;
-    if (Math.abs(cross) < 1e-8) {
-      out[i] = { z: (prev.a.z + next.a.z) / 2, r: (prev.a.r + next.a.r) / 2 };
+    let joined: Sample | null = null;
+    if (Math.abs(cross) >= 1e-8) {
+      const qz = next.a.z - prev.a.z, qr = next.a.r - prev.a.r;
+      const t = (qz * next.tr - qr * next.tz) / cross;
+      const candidate = { z: prev.a.z + prev.tz * t, r: prev.a.r + prev.tr * t };
+      const miter = Math.hypot(candidate.z - clean[i].z, candidate.r - clean[i].r);
+      /* در زاویه‌های بسته Miter به‌سرعت بلند و وارونه می‌شود. محدودیت استاندارد
+         ۶×Offset جلوی اسپایک/تقاطع را می‌گیرد؛ آن گوشه با Bevel دقیق بسته می‌شود. */
+      if (Number.isFinite(miter) && miter <= Math.max(0.05, Math.abs(dist) * 6)) joined = candidate;
+    }
+    if (joined) out.push(joined);
+    else {
+      /* Bevel: هر دو انتهای واقعی خطوط موازی حفظ می‌شوند، نه میانگینی که دیگر
+         در فاصله ثابت از اضلاع نیست و در زاویه بسته رفت‌وبرگشت ایجاد می‌کند. */
+      out.push({ ...prev.b });
+      if (Math.hypot(next.a.z - prev.b.z, next.a.r - prev.b.r) > 1e-9) out.push({ ...next.a });
+    }
+  }
+  out.push({ ...segments[segments.length - 1].b });
+
+  /* مسیر داخلی از لبه به کف می‌رود. اگر آفست در انتهای کف از محور عبور کند،
+     دقیقاً در تقاطع R=0 بریده می‌شود و هیچ بخش منفی یا امتداد روی محور ساخته نمی‌شود. */
+  const clipped: Sample[] = [];
+  for (let i = 0; i < out.length; i++) {
+    const point = out[i];
+    if (point.r >= -1e-9) {
+      clipped.push({ z: point.z, r: Math.max(0, point.r) });
       continue;
     }
-    /* تقاطع دو خط آفست‌شده، گوشهٔ Miter دقیق می‌سازد؛ بنابراین فاصله از هر
-       دو ضلع در دو طرف قله دقیقاً dist و در کل زیگزاگ یکدست باقی می‌ماند. */
-    const qz = next.a.z - prev.a.z, qr = next.a.r - prev.a.r;
-    const t = (qz * next.tr - qr * next.tz) / cross;
-    const joined = { z: prev.a.z + prev.tz * t, r: prev.a.r + prev.tr * t };
-    const miter = Math.hypot(joined.z - clean[i].z, joined.r - clean[i].r);
-    out[i] = Number.isFinite(miter) && miter <= Math.max(1, Math.abs(dist) * 25)
-      ? joined
-      : { z: (prev.a.z + next.a.z) / 2, r: (prev.a.r + next.a.r) / 2 };
+    if (clipped.length && i > 0) {
+      const prev = out[i - 1];
+      const t = prev.r / Math.max(1e-12, prev.r - point.r);
+      clipped.push({ z: prev.z + (point.z - prev.z) * t, r: 0 });
+    }
+    break;
   }
-  /* ترتیب Miterها خودِ زنجیرهٔ پیوسته است. trimOffsetLoops در گوشه‌های مقعر
-     تیز می‌توانست بخشی از دو ضلع معتبر را با یک رفت‌وبرگشت کوتاه جایگزین کند
-     و در نوک آفست یک زائده بسازد، بنابراین روی این آفست دقیق اجرا نمی‌شود. */
-  return out;
+  return clipped.length >= 2 ? clipped : out.map((point) => ({ z: point.z, r: Math.max(0, point.r) }));
 }
 
 /* تقاطع واقعی (داخلی-داخلی، نه سرهای مشترک) دو پاره‌خط */
@@ -1707,6 +1725,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         if (innerCleared) {
           /* ورود سریع مستقیماً به ابتدای هندسی آفست؛ خط اتصال از محور نباید
              با رنگ بنفش جزئی از Offset دیده شود یا در نوک آن بیرون‌زدگی بسازد. */
+          rawRapid(2 * innerOff[0].r, mouthX);
           rawRapid(2 * innerOff[0].r, zBot);
         } else {
           mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "bore");
