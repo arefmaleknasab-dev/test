@@ -1560,25 +1560,43 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const mouthX = zOuter + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX);
         for (const layerZ of layers) {
-          for (const interval of intervalsAt(layerZ)) {
+          const layerIntervals = intervalsAt(layerZ);
+          for (let intervalIndex = 0; intervalIndex < layerIntervals.length; intervalIndex++) {
+            const interval = layerIntervals[intervalIndex];
             const startR = Math.max(rEntry, interval.a);
             const endR = Math.max(startR, interval.b);
-            /* در صفحه امن به شعاع شروع می‌رویم، در همان شعاع تا عمق پاس وارد
-               می‌شویم و سپس برش اصلی را عمودی تا انتهای بازه انجام می‌دهیم. */
-            /* شروع هر ناحیه از کریدور امن دهانه انجام می‌شود. */
-            rawRapid(0, mouthX);
-            rawRapid(2 * startR, mouthX);
+            const nextInterval = layerIntervals[intervalIndex + 1];
+
+            /* فقط ناحیهٔ اول هر لایه از محور و دهانه شروع می‌شود. بعد از هر قله،
+               ابزار در همان شعاع جلوتر قرار گرفته و مستقیماً در −X وارد می‌شود. */
+            if (intervalIndex === 0) {
+              rawRapid(0, mouthX);
+              rawRapid(2 * startR, mouthX);
+            }
             mv(1, 2 * startR, layerZ, p.feedRough * 0.7, "bore");
             if (endR > startR + 0.05) mv(1, 2 * endR, layerZ, p.feedRough, "bore");
 
-            /* برگشت مانند کف‌تراشی است، اما برای Overhang ابتدا قله‌های واقع در
-               مسیر شعاعی تا محور بررسی می‌شوند. ابزار اول در +X حداقل ۰٫۵mm
-               از راست‌ترین مانع عبور می‌کند و فقط بعد از آن به محور R=0 برمی‌گردد. */
-            const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
-            const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-            const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
-            rawRapid(2 * endR, safeReturnZ); // ابتدا جمع‌کردن در +X پشت قله
-            rawRapid(0, safeReturnZ);        // سپس بازگشت شعاعی تا محور دوران
+            if (nextInterval) {
+              const nextStartR = Math.max(endR, nextInterval.a);
+              /* اگر در ادامهٔ +Y باربرداری دیگری وجود دارد، بازگشت به محور ممنوع
+                 است: ابتدا پشت راست‌ترین نقطهٔ قله ۰٫۵mm در +X فاصله می‌گیریم،
+                 سپس در +Y از روی قله عبور می‌کنیم و از همان‌جا در −X وارد می‌شویم. */
+              const peakPoints = mergedWall.filter((point) =>
+                point.r >= endR - 1e-7 && point.r <= nextStartR + 1e-7
+              );
+              const peakZ = peakPoints.length ? Math.max(...peakPoints.map((point) => point.z)) : layerZ;
+              const safePeakZ = Math.max(layerZ + 0.5, peakZ + 0.5);
+              rawRapid(2 * endR, safePeakZ);       // +X تا پشت قله
+              rawRapid(2 * nextStartR, safePeakZ); // +Y با حفظ فاصله امن
+              /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
+            } else {
+              /* فقط پس از آخرین قله/بازهٔ این لایه به محور دوران برمی‌گردیم. */
+              const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
+              const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
+              const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
+              rawRapid(2 * endR, safeReturnZ);
+              rawRapid(0, safeReturnZ);
+            }
           }
         }
         innerCleared = true;
