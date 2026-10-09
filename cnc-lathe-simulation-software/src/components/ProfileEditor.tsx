@@ -3729,21 +3729,6 @@ export default function ProfileEditor({
             />
           )}
 
-          {/* نقطهٔ فعال با Dot کوچک داخلی مشخص می‌شود؛ اندازه، حاشیه و رنگ
-              اصلی Handle تغییر نمی‌کند و دیگر هاله‌ای دور آن ساخته نمی‌شود. */}
-          {selPoints.map((ps, i) => {
-            const s = segs.find((x) => x.id === ps.segId);
-            const pt = s ? s[ps.part] : null;
-            if (!s || !pt) return null;
-            const [x, y] = P(pt.z, pt.r);
-            const pointColor = ps.part === "c1" || ps.part === "c2"
-              ? "#6ab0d8"
-              : ps.part === "via"
-                ? "#b48ee0"
-                : "#45b394";
-            return <circle key={`selpt-${i}`} cx={x} cy={y} r={2.1} fill={pointColor} pointerEvents="none" />;
-          })}
-
           {/* دسته‌ها و نقاط المان‌های انتخاب‌شده یا دارای نقطهٔ مستقلِ انتخاب‌شده */}
           {handleSegs.map((s) => {
             const [ax, ay] = P(s.a.z, s.a.r);
@@ -3767,6 +3752,12 @@ export default function ProfileEditor({
                 )}
                 <circle className="pt-hover" cx={ax} cy={ay} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
                 <circle className="pt-hover" cx={bx} cy={by} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
+                {/* نقطه فعال داخل Handle و روی همه لایه‌های پایه رسم می‌شود. */}
+                {s.c1 && selPoints.some((point) => point.segId === s.id && point.part === "c1") && <circle cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
+                {s.c2 && selPoints.some((point) => point.segId === s.id && point.part === "c2") && <circle cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
+                {s.via && selPoints.some((point) => point.segId === s.id && point.part === "via") && <circle cx={P(s.via.z, s.via.r)[0]} cy={P(s.via.z, s.via.r)[1]} r={2.1} fill="#b48ee0" pointerEvents="none" />}
+                {selPoints.some((point) => point.segId === s.id && point.part === "a") && <circle cx={ax} cy={ay} r={2.1} fill="#45b394" pointerEvents="none" />}
+                {selPoints.some((point) => point.segId === s.id && point.part === "b") && <circle cx={bx} cy={by} r={2.1} fill="#45b394" pointerEvents="none" />}
               </g>
             );
           })}
