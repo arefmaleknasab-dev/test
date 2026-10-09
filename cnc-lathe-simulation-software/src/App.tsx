@@ -45,6 +45,8 @@ interface HistEntry {
   sketch: SketchSeg[];
   gcodeOvr: GcodeOvrMap;
   editBuf: EditBuf | null;
+  /** باز یا بسته‌بودن پنجره مستقل از وجود پیش‌نویس ذخیره می‌شود. */
+  editOpen: boolean;
   /** همه پارامترهای مولد، به‌ویژه لیست عملیات استراتژی، باید همراه بافر
       ویرایش بازیابی شوند؛ وگرنه بافر قدیمی روی عملیات جدید تأیید می‌شود. */
   params: Params;
@@ -175,8 +177,8 @@ export default function App() {
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);
-  const stateRef = useRef({ sketch, gcodeOvr, editBuf, params });
-  stateRef.current = { sketch, gcodeOvr, editBuf, params };
+  const stateRef = useRef({ sketch, gcodeOvr, editBuf, editOpen, params });
+  stateRef.current = { sketch, gcodeOvr, editBuf, editOpen, params };
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -359,9 +361,9 @@ export default function App() {
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
     setParams(e.params);
-    /* Undo/Redo نباید پیش‌نویس را در پشت‌صحنه تغییر دهد: هر وضعیت تاریخی که
-       EditBuf دارد، هم‌زمان خودِ حالت ویرایش مسیر را نیز دوباره باز می‌کند. */
-    setEditOpen(!!e.editBuf);
+    /* وجود پیش‌نویس به معنی بازبودن UI نیست. اگر کاربر پیش از تغییر استراتژی
+       از ویرایش مسیر خارج شده بود، Undo نیز همان حالت بسته را بازیابی می‌کند. */
+    setEditOpen(e.editOpen);
     setHistVer((v) => v + 1);
   };
   const undo = () => {
@@ -559,11 +561,11 @@ export default function App() {
       return;
     }
     if (commit) {
-      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, params });
+      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, editOpen: false, params });
       commitRef.current = null;
       setActivePreset(null);
     } else if (!commitRef.current) {
-      commitRef.current = { sketch, gcodeOvr, editBuf: null, params }; // وضعیت پیش از شروع کشیدن
+      commitRef.current = { sketch, gcodeOvr, editBuf: null, editOpen: false, params }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
     if (commit || !allProfileLayersHidden) setGenerationSketch(next);
