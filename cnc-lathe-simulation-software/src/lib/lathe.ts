@@ -1574,7 +1574,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             const prevIn = prev.z + roughOffsetClearance <= layerZ + 1e-7;
             const curIn = curPoint.z + roughOffsetClearance <= layerZ + 1e-7;
             if (prevIn === curIn) continue;
-            const t = (layerZ - roughOffsetClearance - prev.z) / Math.max(1e-12, curPoint.z - prev.z);
+            /* علامت مخرج باید حفظ شود. Math.max قبلی شیب‌های نزولی را به عدد
+               مثبت بسیار کوچک تبدیل می‌کرد و محل تقاطع را به سر اشتباه پاره‌خط
+               می‌برد؛ در نتیجه خشن‌کاری از خط آفست عبور می‌کرد. */
+            const dz = curPoint.z - prev.z;
+            const t = Math.abs(dz) > 1e-12
+              ? (layerZ - roughOffsetClearance - prev.z) / dz
+              : 0;
             const crossR = prev.r + (curPoint.r - prev.r) * Math.max(0, Math.min(1, t));
             if (curIn) open = crossR;
             else if (open != null) { intervals.push({ a: open, b: crossR }); open = null; }
@@ -1671,8 +1677,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zRimF + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX);
-        if (innerCleared) rawRapid(2 * rEntry, zBot);
-        else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "boreoff");
+        if (innerCleared) {
+          /* ورود سریع مستقیماً به ابتدای هندسی آفست؛ خط اتصال از محور نباید
+             با رنگ بنفش جزئی از Offset دیده شود یا در نوک آن بیرون‌زدگی بسازد. */
+          rawRapid(2 * innerOff[0].r, zBot);
+        } else {
+          mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "bore");
+          mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
+        }
+        /* خط بنفش فقط خود مسیر آفست دقیق است. */
         mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
         for (let i = 1; i < innerOff.length; i++) {
           mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
@@ -1682,11 +1695,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             rawRapid(2 * rEntry, zRimF);
             rawRapid(2 * rEntry, mouthX);
           } else {
+            /* برگشت روی مسیر تراش‌خورده سریع است و جزء هندسهٔ بنفش آفست نیست. */
             for (let i = innerOff.length - 2; i >= 0; i--) {
-              mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
+              rawRapid(2 * innerOff[i].r, innerOff[i].z);
             }
-            mv(1, 2 * rEntry, zBot, p.feedFinish, "boreoff");
-            mv(1, 2 * rEntry, mouthX, p.feedRough * 0.6, "boreoff");
+            rawRapid(2 * rEntry, zBot);
+            rawRapid(2 * rEntry, mouthX);
           }
           mv(0, retractX, mouthX, 0, "rapid");
         }
