@@ -3668,7 +3668,7 @@ export default function ProfileEditor({
               return (
                 <g key={`bv${vid}`} opacity={pickerHover ? 0.1 : 1}>
                   <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={shared ? "#0f2a22" : "#120e09"} stroke="#45b394" strokeWidth={2.4} />
-                  {on && <circle cx={x} cy={y} r={2.1} fill="#ffd27a" pointerEvents="none" />}
+                  {on && <circle cx={x} cy={y} r={2.1} fill="#45b394" pointerEvents="none" />}
                 </g>
               );
             })}
@@ -3736,7 +3736,12 @@ export default function ProfileEditor({
             const pt = s ? s[ps.part] : null;
             if (!s || !pt) return null;
             const [x, y] = P(pt.z, pt.r);
-            return <circle key={`selpt-${i}`} cx={x} cy={y} r={2.1} fill="#ffd27a" pointerEvents="none" />;
+            const pointColor = ps.part === "c1" || ps.part === "c2"
+              ? "#6ab0d8"
+              : ps.part === "via"
+                ? "#b48ee0"
+                : "#45b394";
+            return <circle key={`selpt-${i}`} cx={x} cy={y} r={2.1} fill={pointColor} pointerEvents="none" />;
           })}
 
           {/* دسته‌ها و نقاط المان‌های انتخاب‌شده یا دارای نقطهٔ مستقلِ انتخاب‌شده */}
