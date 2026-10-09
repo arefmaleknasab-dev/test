@@ -1565,10 +1565,20 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             const endR = Math.max(startR, interval.b);
             /* در صفحه امن به شعاع شروع می‌رویم، در همان شعاع تا عمق پاس وارد
                می‌شویم و سپس برش اصلی را عمودی تا انتهای بازه انجام می‌دهیم. */
+            /* شروع هر ناحیه از کریدور امن دهانه انجام می‌شود. */
+            rawRapid(0, mouthX);
             rawRapid(2 * startR, mouthX);
             mv(1, 2 * startR, layerZ, p.feedRough * 0.7, "bore");
             if (endR > startR + 0.05) mv(1, 2 * endR, layerZ, p.feedRough, "bore");
-            rawRapid(2 * endR, mouthX);
+
+            /* برگشت مانند کف‌تراشی است، اما برای Overhang ابتدا قله‌های واقع در
+               مسیر شعاعی تا محور بررسی می‌شوند. ابزار اول در +X حداقل ۰٫۵mm
+               از راست‌ترین مانع عبور می‌کند و فقط بعد از آن به محور R=0 برمی‌گردد. */
+            const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
+            const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
+            const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
+            rawRapid(2 * endR, safeReturnZ); // ابتدا جمع‌کردن در +X پشت قله
+            rawRapid(0, safeReturnZ);        // سپس بازگشت شعاعی تا محور دوران
           }
         }
         innerCleared = true;
