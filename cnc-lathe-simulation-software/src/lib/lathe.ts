@@ -505,7 +505,10 @@ function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sam
       ? joined
       : { z: (prev.a.z + next.a.z) / 2, r: (prev.a.r + next.a.r) / 2 };
   }
-  return trimOffsetLoops(out);
+  /* ترتیب Miterها خودِ زنجیرهٔ پیوسته است. trimOffsetLoops در گوشه‌های مقعر
+     تیز می‌توانست بخشی از دو ضلع معتبر را با یک رفت‌وبرگشت کوتاه جایگزین کند
+     و در نوک آفست یک زائده بسازد، بنابراین روی این آفست دقیق اجرا نمی‌شود. */
+  return out;
 }
 
 /* تقاطع واقعی (داخلی-داخلی، نه سرهای مشترک) دو پاره‌خط */
@@ -1589,6 +1592,26 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
           return intervals.filter((interval) => interval.b - interval.a > 0.05);
         };
 
+        const wallZAtR = (r: number): number => {
+          if (r <= mergedWall[0].r) return mergedWall[0].z;
+          for (let i = 1; i < mergedWall.length; i++) {
+            if (r <= mergedWall[i].r) {
+              const a = mergedWall[i - 1], b = mergedWall[i];
+              const t = (r - a.r) / Math.max(1e-12, b.r - a.r);
+              return a.z + (b.z - a.z) * t;
+            }
+          }
+          return mergedWall[mergedWall.length - 1].z;
+        };
+        const maxWallZBetween = (a: number, b: number): number => {
+          const lo = Math.min(a, b), hi = Math.max(a, b);
+          let maximum = Math.max(wallZAtR(lo), wallZAtR(hi));
+          for (const point of mergedWall) {
+            if (point.r >= lo - 1e-7 && point.r <= hi + 1e-7) maximum = Math.max(maximum, point.z);
+          }
+          return maximum;
+        };
+
         note(`INNER VERTICAL LAYERS ${layers.length} x ${f2(step)} MM`);
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zOuter + p.innerStartClearance;
@@ -1601,6 +1624,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             const interval = layerIntervals[intervalIndex];
             const startR = Math.max(rEntry, interval.a);
             const endR = Math.max(startR, interval.b);
+            /* تضمین نهایی مستقل از تشخیص بازه: کل خط برش عمودی باید در سمت
+               حفرهٔ آفست بماند، پس X پاس از راست‌ترین نقطه آفست در همان بازه
+               کمتر نمی‌شود. */
+            const cutZ = Math.max(layerZ, maxWallZBetween(startR, endR) + roughOffsetClearance);
             const nextInterval = layerIntervals[intervalIndex + 1];
 
             /* فقط ناحیهٔ اول هر لایه از محور و دهانه شروع می‌شود. بعد از هر قله،
@@ -1612,8 +1639,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               }
               preparedForNextLayer = false;
             }
-            mv(1, 2 * startR, layerZ, p.feedRough * 0.7, "bore");
-            if (endR > startR + 0.05) mv(1, 2 * endR, layerZ, p.feedRough, "bore");
+            mv(1, 2 * startR, cutZ, p.feedRough * 0.7, "bore");
+            if (endR > startR + 0.05) mv(1, 2 * endR, cutZ, p.feedRough, "bore");
 
             if (nextInterval) {
               const nextStartR = Math.max(endR, nextInterval.a);
@@ -1624,7 +1651,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
                 point.r >= endR - 1e-7 && point.r <= nextStartR + 1e-7
               );
               const peakZ = peakPoints.length ? Math.max(...peakPoints.map((point) => point.z)) : layerZ;
-              const safePeakZ = Math.max(layerZ + 0.5, peakZ + 0.5);
+              const safePeakZ = Math.max(cutZ + 0.5, peakZ + 0.5);
               rawRapid(2 * endR, safePeakZ);       // +X تا پشت قله
               rawRapid(2 * nextStartR, safePeakZ); // +Y با حفظ فاصله امن
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
@@ -1641,7 +1668,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
                   point.r >= loR - 1e-7 && point.r <= hiR + 1e-7
                 );
                 const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-                const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
+                const safeReturnZ = Math.max(cutZ + 0.5, blockingZ + 0.5);
                 rawRapid(2 * endR, safeReturnZ);
                 rawRapid(2 * nextLayerStartR, safeReturnZ); // −Y فقط تا سر شروع پاس بعدی
                 preparedForNextLayer = true;
@@ -1650,7 +1677,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
                    بازگشت کامل به محور دوران انجام می‌گیرد. */
                 const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
                 const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-                const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
+                const safeReturnZ = Math.max(cutZ + 0.5, blockingZ + 0.5);
                 rawRapid(2 * endR, safeReturnZ);
                 rawRapid(0, safeReturnZ);
               }
