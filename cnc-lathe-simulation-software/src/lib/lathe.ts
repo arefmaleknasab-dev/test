@@ -1559,8 +1559,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zOuter + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX);
-        for (const layerZ of layers) {
-          const layerIntervals = intervalsAt(layerZ);
+        const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
+        let preparedForNextLayer = false;
+        for (let layerIndex = 0; layerIndex < layerPlans.length; layerIndex++) {
+          const { layerZ, intervals: layerIntervals } = layerPlans[layerIndex];
           for (let intervalIndex = 0; intervalIndex < layerIntervals.length; intervalIndex++) {
             const interval = layerIntervals[intervalIndex];
             const startR = Math.max(rEntry, interval.a);
@@ -1570,8 +1572,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             /* فقط ناحیهٔ اول هر لایه از محور و دهانه شروع می‌شود. بعد از هر قله،
                ابزار در همان شعاع جلوتر قرار گرفته و مستقیماً در −X وارد می‌شود. */
             if (intervalIndex === 0) {
-              rawRapid(0, mouthX);
-              rawRapid(2 * startR, mouthX);
+              if (!preparedForNextLayer) {
+                rawRapid(0, mouthX);
+                rawRapid(2 * startR, mouthX);
+              }
+              preparedForNextLayer = false;
             }
             mv(1, 2 * startR, layerZ, p.feedRough * 0.7, "bore");
             if (endR > startR + 0.05) mv(1, 2 * endR, layerZ, p.feedRough, "bore");
@@ -1590,12 +1595,31 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
               rawRapid(2 * nextStartR, safePeakZ); // +Y با حفظ فاصله امن
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
-              /* فقط پس از آخرین قله/بازهٔ این لایه به محور دوران برمی‌گردیم. */
-              const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
-              const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-              const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
-              rawRapid(2 * endR, safeReturnZ);
-              rawRapid(0, safeReturnZ);
+              const nextLayerFirst = layerPlans[layerIndex + 1]?.intervals[0];
+              const nextLayerStartR = nextLayerFirst ? Math.max(rEntry, nextLayerFirst.a) : 0;
+              if (nextLayerFirst && nextLayerStartR > 1e-7) {
+                /* اگر پاس بعدی از محور فاصله دارد، برگشت کامل تا R=0 حذف می‌شود.
+                   ابزار پشت موانع در +X امن می‌شود، فقط در −Y تا شعاع شروع پاس
+                   بعدی می‌آید و از همان نقطه مستقیماً در −X باربرداری می‌کند. */
+                const loR = Math.min(endR, nextLayerStartR);
+                const hiR = Math.max(endR, nextLayerStartR);
+                const blockers = mergedWall.filter((point) =>
+                  point.r >= loR - 1e-7 && point.r <= hiR + 1e-7
+                );
+                const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
+                const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
+                rawRapid(2 * endR, safeReturnZ);
+                rawRapid(2 * nextLayerStartR, safeReturnZ); // −Y فقط تا سر شروع پاس بعدی
+                preparedForNextLayer = true;
+              } else {
+                /* فقط وقتی پاس بعدی از محور شروع می‌شود (یا پاس دیگری نیست)،
+                   بازگشت کامل به محور دوران انجام می‌گیرد. */
+                const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
+                const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
+                const safeReturnZ = Math.max(layerZ + 0.5, blockingZ + 0.5);
+                rawRapid(2 * endR, safeReturnZ);
+                rawRapid(0, safeReturnZ);
+              }
             }
           }
         }
