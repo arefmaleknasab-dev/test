@@ -2143,7 +2143,10 @@ export default function ProfileEditor({
 
     /* هنگام Drag رأس در Edit Path، دکمه وسط یا راست فقط یک Pan موقت آغاز
        می‌کند و خود ژست جابه‌جایی رأس در drag.current حفظ می‌شود. */
-    if (editOpen && drag.current?.mode === "evert" && (e.button === 1 || e.button === 2)) {
+    const activeDragMode = drag.current?.mode;
+    const canPanDuringDrag = activeDragMode === "handle" || activeDragMode === "move" ||
+      activeDragMode === "evert" || activeDragMode === "eline" || activeDragMode === "eoff" || activeDragMode === "eoffh";
+    if (canPanDuringDrag && (e.button === 1 || e.button === 2)) {
       e.preventDefault();
       editVertexPan.current = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, cam0: camRef.current };
       e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -2349,14 +2352,28 @@ export default function ProfileEditor({
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    const temporaryPan = editVertexPan.current;
-    if (temporaryPan && temporaryPan.pointerId === e.pointerId) {
+    const activeMode = drag.current?.mode;
+    const canPanDuringDrag = activeMode === "handle" || activeMode === "move" ||
+      activeMode === "evert" || activeMode === "eline" || activeMode === "eoff" || activeMode === "eoffh";
+    const auxiliaryButtonHeld = (e.buttons & 2) !== 0 || (e.buttons & 4) !== 0;
+    let temporaryPan = editVertexPan.current;
+    /* بعضی مرورگرها هنگام نگه‌داشتن دکمه چپ، PointerDown دکمه دوم را ارسال
+       نمی‌کنند؛ buttons در PointerMove منبع قطعی است و Pan را همان‌جا آغاز می‌کند. */
+    if (canPanDuringDrag && auxiliaryButtonHeld && !temporaryPan && camRef.current) {
+      temporaryPan = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, cam0: camRef.current };
+      editVertexPan.current = temporaryPan;
+    }
+    if (temporaryPan && temporaryPan.pointerId === e.pointerId && auxiliaryButtonHeld) {
       setCam({
         s: temporaryPan.cam0.s,
         ox: temporaryPan.cam0.ox + e.clientX - temporaryPan.sx,
         oy: temporaryPan.cam0.oy + e.clientY - temporaryPan.sy,
       });
       return;
+    }
+    if (temporaryPan && !auxiliaryButtonHeld) {
+      editVertexPan.current = null;
+      return; // یک فریم برای تثبیت دوربین؛ از جهش نقطه پس از Pan جلوگیری می‌کند
     }
     const raw = toWorld(e.clientX, e.clientY);
     if (tool === "fillet" && e.button === 0 && !editOpen) {
