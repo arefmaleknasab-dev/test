@@ -2851,6 +2851,10 @@ export default function ProfileEditor({
         const pkey = (p: { segId: number; part: string }) => `${p.segId}:${p.part}`;
         const exists = selPoints.some((p) => pkey(p) === pkey(ref));
         if (d.moved) {
+          /* نشانگر ابزار رسم هنوز مختصات لحظه شروع Drag را نگه می‌دارد. پیش از
+             render ثبت تاریخچه آن را پاک می‌کنیم تا پس از MouseUp حتی یک فریم
+             در محل قدیمی چشمک نزند؛ حرکت بعدی موس دوباره نشانگر را می‌سازد. */
+          setCursor(null);
           onSegs(segs, true); // ثبت در تاریخچه
           if (!e.shiftKey && !exists) setSelPoints([ref]); // نقطهٔ درگ‌شده انتخاب بماند
           return;
