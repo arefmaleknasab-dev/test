@@ -1921,10 +1921,17 @@ export default function ProfileEditor({
     else applySelectedSpeed(1, value);
   };
   const openSpeedMenu = (clientX: number, clientY: number) => {
-    if (!editOpen || !selL.length) return;
+    if (!editOpen) return;
     const loc = toLocal(clientX, clientY);
-    const hit = hitBufLines(loc.x, loc.y).find((id) => selectedLineIds.has(id));
+    const hit = hitBufLine(loc.x, loc.y);
     if (hit == null) return;
+    /* راست‌کلیک روی خط انتخاب‌نشده همان خط را همان لحظه فعال می‌کند؛ بنابراین
+       برای بازکردن منوی سرعت نیازی به کلیک چپ اولیه نیست. انتخاب چندتایی موجود
+       فقط وقتی حفظ می‌شود که راست‌کلیک روی یکی از همان خطوط انجام شده باشد. */
+    if (!selectedLineIds.has(hit)) {
+      selectEditLines([hit], hit, true);
+      setSelV([]);
+    }
     const rect = wrapRef.current!.getBoundingClientRect();
     setManualSpeed("");
     setSpeedError("");
@@ -3171,6 +3178,7 @@ export default function ProfileEditor({
      Gaussian blur. این کار تعداد nodeها و هزینهٔ GPU را هنگام pan ثابت نگه می‌دارد. */
   let selectedLinesPath = "";
   let activeLinePath = "";
+  let activeLineStrokeWidth = 1.5;
   const selectedSpeedPaths = new Map<string, string>();
   if (editOpen && toolpathLayersVisible && selectedLineIds.size) {
     for (const line of lines) {
@@ -3178,6 +3186,7 @@ export default function ProfileEditor({
       const d = `${lineD(line)} `;
       if (line.id === activeLine) {
         activeLinePath += d;
+        activeLineStrokeWidth = line.motion === 0 ? 1.1 : line.kind === "finish" ? 1.8 : 1.5;
       } else {
         selectedLinesPath += d;
         const color = speedStroke(line.motion, line.feed);
@@ -3492,7 +3501,7 @@ export default function ProfileEditor({
             const baseOpacity = isRapid ? 0.28 : run.kind === "offset" || run.kind === "boreoff" ? 0.9 : 0.8;
             return (
               <g key={i} style={{ opacity: (dim ? 0.06 : 1) * layerOpacity, ...fadeStyle }}>
-                <path d={run.d} fill="none" stroke={color} strokeOpacity={matchIso ? 1 : baseOpacity} strokeWidth={(isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) + (matchIso ? 0.7 : 0)} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" filter={matchIso ? "url(#curveGlow)" : undefined} />
+                <path d={run.d} fill="none" stroke={color} strokeOpacity={baseOpacity} strokeWidth={isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" />
                 {run.arrows && !dim && <path d={run.arrows} fill={color} fillOpacity={0.95} />}
               </g>
             );
@@ -3513,12 +3522,11 @@ export default function ProfileEditor({
                   d={run.d}
                   fill="none"
                   stroke={showPathBySpeed ? speedStroke(run.motion, run.feed) : SEG_COLOR[run.kind]}
-                  strokeOpacity={(pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9) * layerOpacity}
-                  strokeWidth={(isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5) + (matchIso ? 0.7 : 0)}
+                  strokeOpacity={(pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : isRapid ? 0.4 : 0.9) * layerOpacity}
+                  strokeWidth={isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5}
                   strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined}
                   strokeLinejoin="round"
                   strokeLinecap="round"
-                  filter={matchIso ? "url(#curveGlow)" : undefined}
                 />
               );
             })}
@@ -3634,7 +3642,7 @@ export default function ProfileEditor({
             })}
             {/* هایلایت انتخاب با pathهای مرکب و glow سبکِ مبتنی بر stroke؛
                 از Gaussian blur پرهزینه برای تک‌تک Segmentها استفاده نمی‌شود. */}
-            {selectedLinesPath && (
+            {!iso && selectedLinesPath && (
               <>
                 <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />
                 {showPathBySpeed ? [...selectedSpeedPaths].map(([color, d]) => (
@@ -3645,8 +3653,8 @@ export default function ProfileEditor({
               </>
             )}
             {/* خط Active فقط با رنگ آبی روشن مشخص می‌شود؛ بدون Glow یا تغییر ضخامت. */}
-            {activeLinePath && (
-              <path d={activeLinePath} fill="none" stroke="#7bb8ff" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3.2} strokeLinecap="round" pointerEvents="none" />
+            {!iso && activeLinePath && (
+              <path d={activeLinePath} fill="none" stroke="#7bb8ff" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={activeLineStrokeWidth} strokeLinecap="round" pointerEvents="none" />
             )}
             {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
             {rangePreviewPath && (
@@ -3694,9 +3702,9 @@ export default function ProfileEditor({
             <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke="#e3a94e" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
           ))}
           {segs.map((s) => {
-            const sel = selected.includes(s.id);
-            const hov = hoverId === s.id;
-            const hasSelPt = selPointSegIds.includes(s.id);
+            const sel = !iso && selected.includes(s.id);
+            const hov = !iso && hoverId === s.id;
+            const hasSelPt = !iso && selPointSegIds.includes(s.id);
             const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : "#f3c26b";
             return (
               <path
