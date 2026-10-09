@@ -3642,18 +3642,18 @@ export default function ProfileEditor({
             })}
             {/* هایلایت انتخاب با pathهای مرکب و glow سبکِ مبتنی بر stroke؛
                 از Gaussian blur پرهزینه برای تک‌تک Segmentها استفاده نمی‌شود. */}
-            {!iso && selectedLinesPath && (
+            {selectedLinesPath && (
               <>
-                <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />
+                {!iso && <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
                 {showPathBySpeed ? [...selectedSpeedPaths].map(([color, d]) => (
-                  <path key={color} d={d} fill="none" stroke={color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3.2} strokeLinecap="round" pointerEvents="none" />
+                  <path key={color} d={d} fill="none" stroke={color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3.2} strokeLinecap="round" pointerEvents="none" />
                 )) : (
-                  <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3} strokeLinecap="round" pointerEvents="none" />
+                  <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3} strokeLinecap="round" pointerEvents="none" />
                 )}
               </>
             )}
             {/* خط Active فقط با رنگ آبی روشن مشخص می‌شود؛ بدون Glow یا تغییر ضخامت. */}
-            {!iso && activeLinePath && (
+            {activeLinePath && (
               <path d={activeLinePath} fill="none" stroke="#7bb8ff" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={activeLineStrokeWidth} strokeLinecap="round" pointerEvents="none" />
             )}
             {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
@@ -3702,9 +3702,9 @@ export default function ProfileEditor({
             <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke="#e3a94e" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
           ))}
           {segs.map((s) => {
-            const sel = !iso && selected.includes(s.id);
-            const hov = !iso && hoverId === s.id;
-            const hasSelPt = !iso && selPointSegIds.includes(s.id);
+            const sel = selected.includes(s.id);
+            const hov = hoverId === s.id;
+            const hasSelPt = selPointSegIds.includes(s.id);
             const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : "#f3c26b";
             return (
               <path
@@ -3712,9 +3712,9 @@ export default function ProfileEditor({
                 d={segPath(s, cam)}
                 fill="none"
                 stroke={sel ? "#45b394" : hasSelPt ? "#ffd27a" : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
-                strokeWidth={sel ? 3.2 : hasSelPt ? 3.4 : hov ? 3 : 2.4}
+                strokeWidth={iso ? 2.4 : sel ? 3.2 : hasSelPt ? 3.4 : hov ? 3 : 2.4}
                 strokeLinecap="round"
-                filter={sel || hasSelPt ? "url(#curveGlow)" : undefined}
+                filter={!iso && (sel || hasSelPt) ? "url(#curveGlow)" : undefined}
               />
             );
           })}
