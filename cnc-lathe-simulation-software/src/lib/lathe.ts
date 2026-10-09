@@ -1104,8 +1104,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
     endedAtInnerEndpoint = true;
     return true;
   };
-  /* خط آفست یکنواخت: آفست نرمال واقعی (نه r+OD شعاعی) + سقف قطر خام */
-  const offSamples: Sample[] = normalOffset(samples, OD, true).map((s) => ({ z: s.z, r: Math.min(R, s.r) }));
+  /* خط آفست یکنواخت: آفست نرمال واقعی (نه r+OD شعاعی).
+     آفست یک مسیر ابزار است و مجاز است بیرون قطر خام/محدوده طراحی قرار بگیرد؛
+     Clamp کردن آن به R در قله‌ها بخش منحنی را به خط صاف تبدیل می‌کرد. */
+  const offSamples: Sample[] = normalOffset(samples, OD, true);
   /* خشن شعاعی باید کل طول خام را پوشش دهد. اگر پروفیل کاربر از X=0 یا
      X=طول خام شروع/تمام نشده باشد، شعاع انتهایی آن تا مرز خام امتداد می‌یابد؛
      این امتداد شکل را حفظ می‌کند و برخلاف یک خط ثابت، پروفیل را بیش‌تراشی نمی‌کند. */
