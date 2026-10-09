@@ -498,7 +498,9 @@ function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sam
       const miter = Math.hypot(candidate.z - clean[i].z, candidate.r - clean[i].r);
       /* در زاویه‌های بسته Miter به‌سرعت بلند و وارونه می‌شود. محدودیت استاندارد
          ۶×Offset جلوی اسپایک/تقاطع را می‌گیرد؛ آن گوشه با Bevel دقیق بسته می‌شود. */
-      if (Number.isFinite(miter) && miter <= Math.max(0.05, Math.abs(dist) * 6)) joined = candidate;
+      /* نسبت ۲٫۵ عمداً زاویه‌های داخلی کمتر از حدود ۴۵ درجه را Bevel می‌کند؛
+         در این زوایا Miter حتی اگر محدود باشد مستعد برگشت و تقاطع است. */
+      if (Number.isFinite(miter) && miter <= Math.max(0.05, Math.abs(dist) * 2.5)) joined = candidate;
     }
     if (joined) out.push(joined);
     else {
@@ -526,7 +528,25 @@ function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sam
     }
     break;
   }
-  return clipped.length >= 2 ? clipped : out.map((point) => ({ z: point.z, r: Math.max(0, point.r) }));
+  let result = clipped.length >= 2 ? clipped : out.map((point) => ({ z: point.z, r: Math.max(0, point.r) }));
+  /* Bevel جلوی اسپایک محلی را می‌گیرد و این مرحله هر خودتقاطع باقی‌مانده میان
+     اضلاع غیرمجاور (در زیگزاگ‌های بسیار نزدیک) را حذف می‌کند. */
+  result = trimOffsetLoops(result);
+
+  /* حتی اگر آفست هندسی پیش از محور تمام شود، انتهای مسیر باید دقیقاً به R=0
+     بچسبد. امتداد در جهت ضلع آخر انجام می‌شود؛ اگر ضلع از محور دور شود، اتصال
+     کوتاه شعاعی در همان X ساخته می‌شود. */
+  const last = result[result.length - 1];
+  if (last && last.r > 1e-9) {
+    const prev = result[result.length - 2];
+    if (prev && last.r < prev.r - 1e-9) {
+      const t = last.r / (prev.r - last.r);
+      result.push({ z: last.z + (last.z - prev.z) * t, r: 0 });
+    } else {
+      result.push({ z: last.z, r: 0 });
+    }
+  } else if (last) last.r = 0;
+  return result;
 }
 
 /* تقاطع واقعی (داخلی-داخلی، نه سرهای مشترک) دو پاره‌خط */
