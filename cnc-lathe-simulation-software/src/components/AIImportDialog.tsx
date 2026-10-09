@@ -94,14 +94,15 @@ export default function AIImportDialog({ onClose, onImport }: { onClose: () => v
                 viewBox={`${-canvasWidth * .08} ${-canvasHeight * .08} ${canvasWidth * 1.16 || 1} ${canvasHeight * 1.16 || 1}`}
               >
                 <rect width={canvasWidth} height={canvasHeight} fill="#111923" stroke="#334155" strokeWidth={Math.max(canvasWidth, canvasHeight) / 500} />
-                {/* خط‌کش افقی عرض و خط‌کش عمودی ارتفاع؛ دو سر ضخیم، محدوده واقعی Bounding Box هستند. */}
+                {/* خط‌کش‌ها همیشه به Bounding Box خود طرح قفل‌اند؛ حاشیه و قاب صفحه
+                    فقط فضای اطراف را تغییر می‌دهند و روی اندازه‌گیری اثر ندارند. */}
                 <defs>
                   <marker id="ai-ruler-arrow-x" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0 8 4 0 8z" fill="#9aa7b4" /></marker>
                   <marker id="ai-ruler-arrow-y" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto-start-reverse" markerUnits="strokeWidth"><path d="M0 0 8 4 0 8z" fill="#9aa7b4" /></marker>
                 </defs>
                 <g pointerEvents="none">
-                  <line x1={0} y1={-canvasHeight * .045} x2={canvasWidth} y2={-canvasHeight * .045} stroke="#9aa7b4" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-x)" markerEnd="url(#ai-ruler-arrow-x)" vectorEffect="non-scaling-stroke" />
-                  <line x1={canvasWidth * 1.045} y1={0} x2={canvasWidth * 1.045} y2={canvasHeight} stroke="#9aa7b4" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-y)" markerEnd="url(#ai-ruler-arrow-y)" vectorEffect="non-scaling-stroke" />
+                  <line x1={designX} y1={designY - height * .045} x2={designX + width} y2={designY - height * .045} stroke="#9aa7b4" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-x)" markerEnd="url(#ai-ruler-arrow-x)" vectorEffect="non-scaling-stroke" />
+                  <line x1={designX + width * 1.045} y1={designY} x2={designX + width * 1.045} y2={designY + height} stroke="#9aa7b4" strokeWidth={1.2} markerStart="url(#ai-ruler-arrow-y)" markerEnd="url(#ai-ruler-arrow-y)" vectorEffect="non-scaling-stroke" />
                 </g>
                 <g fill="none" stroke="#46d7ba" strokeWidth={Math.max(canvasWidth, canvasHeight) / 350} vectorEffect="non-scaling-stroke">{preview.map((segment) => <path key={segment.id} d={pathOf({ ...segment, a: { z: designX + segment.a.z, r: designY + height - segment.a.r }, b: { z: designX + segment.b.z, r: designY + height - segment.b.r }, c1: segment.c1 ? { z: designX + segment.c1.z, r: designY + height - segment.c1.r } : undefined, c2: segment.c2 ? { z: designX + segment.c2.z, r: designY + height - segment.c2.r } : undefined })} />)}</g>
                 <g transform={`translate(${designX + anchor.x * width} ${designY + anchor.y * height})`}><circle r={Math.max(canvasWidth, canvasHeight) / 90} fill="#ffcf66" stroke="#111" strokeWidth={2} vectorEffect="non-scaling-stroke" /><path d={`M${-Math.max(canvasWidth,canvasHeight)/50} 0H${Math.max(canvasWidth,canvasHeight)/50}M0 ${-Math.max(canvasWidth,canvasHeight)/50}V${Math.max(canvasWidth,canvasHeight)/50}`} stroke="#ffcf66" strokeWidth={1.25} vectorEffect="non-scaling-stroke" /></g>
