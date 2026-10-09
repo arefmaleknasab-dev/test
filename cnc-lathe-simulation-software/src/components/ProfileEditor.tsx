@@ -3073,9 +3073,24 @@ export default function ProfileEditor({
         for (let i = 1; i < pts.length; i++) d += ` L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
         let arrows = "";
         if (curMotion !== 0) {
-          const step = Math.max(1, Math.ceil((pts.length - 1) / 6));
-          for (let i = step; i < pts.length - 1; i += step) {
-            arrows += arrowHead(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+          if (curKind === "finish" || curKind === "offset") {
+            /* روی پروفایل و آفست فقط ابتدا و انتهای مسیر علامت‌گذاری می‌شود.
+               برای فلش ابتدا یک پاره‌خط مجازی هم‌جهت می‌سازیم تا نوک فلش دقیقاً
+               روی نقطه شروع باشد؛ فلش انتها از آخرین پاره‌خط واقعی استفاده می‌کند. */
+            const first = pts[0];
+            const n = pts.length;
+            let firstDir = 1;
+            while (firstDir < n - 1 && Math.hypot(pts[firstDir][0] - first[0], pts[firstDir][1] - first[1]) < 7) firstDir++;
+            const second = pts[firstDir];
+            let lastDir = n - 2;
+            while (lastDir > 0 && Math.hypot(pts[n - 1][0] - pts[lastDir][0], pts[n - 1][1] - pts[lastDir][1]) < 7) lastDir--;
+            arrows += arrowHead(2 * first[0] - second[0], 2 * first[1] - second[1], first[0], first[1]);
+            arrows += arrowHead(pts[lastDir][0], pts[lastDir][1], pts[n - 1][0], pts[n - 1][1]);
+          } else {
+            const step = Math.max(1, Math.ceil((pts.length - 1) / 6));
+            for (let i = step; i < pts.length - 1; i += step) {
+              arrows += arrowHead(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+            }
           }
         } else if ((curFan > 0 || curFanU !== 0) && pts.length >= 2) {
           /* حرکت سریعِ گسترده‌شده در جی‌کد: پیکان جهت در انتها */
