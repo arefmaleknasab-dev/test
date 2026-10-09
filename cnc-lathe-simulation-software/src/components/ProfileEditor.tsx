@@ -3733,6 +3733,9 @@ export default function ProfileEditor({
           {handleSegs.map((s) => {
             const [ax, ay] = P(s.a.z, s.a.r);
             const [bx, by] = P(s.b.z, s.b.r);
+            const pointIsActive = (part: HandleRef["part"]) =>
+              selPoints.some((point) => point.segId === s.id && point.part === part) ||
+              (drag.current?.mode === "handle" && drag.current.ref.segId === s.id && drag.current.ref.part === part);
             return (
               <g key={`h${s.id}`}>
                 {s.c1 && (
@@ -3753,11 +3756,11 @@ export default function ProfileEditor({
                 <circle className="pt-hover" cx={ax} cy={ay} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
                 <circle className="pt-hover" cx={bx} cy={by} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
                 {/* نقطه فعال داخل Handle و روی همه لایه‌های پایه رسم می‌شود. */}
-                {s.c1 && selPoints.some((point) => point.segId === s.id && point.part === "c1") && <circle cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
-                {s.c2 && selPoints.some((point) => point.segId === s.id && point.part === "c2") && <circle cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
-                {s.via && selPoints.some((point) => point.segId === s.id && point.part === "via") && <circle cx={P(s.via.z, s.via.r)[0]} cy={P(s.via.z, s.via.r)[1]} r={2.1} fill="#b48ee0" pointerEvents="none" />}
-                {selPoints.some((point) => point.segId === s.id && point.part === "a") && <circle cx={ax} cy={ay} r={2.1} fill="#45b394" pointerEvents="none" />}
-                {selPoints.some((point) => point.segId === s.id && point.part === "b") && <circle cx={bx} cy={by} r={2.1} fill="#45b394" pointerEvents="none" />}
+                {s.c1 && pointIsActive("c1") && <circle cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
+                {s.c2 && pointIsActive("c2") && <circle cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
+                {s.via && pointIsActive("via") && <circle cx={P(s.via.z, s.via.r)[0]} cy={P(s.via.z, s.via.r)[1]} r={2.1} fill="#b48ee0" pointerEvents="none" />}
+                {pointIsActive("a") && <circle cx={ax} cy={ay} r={2.1} fill="#45b394" pointerEvents="none" />}
+                {pointIsActive("b") && <circle cx={bx} cy={by} r={2.1} fill="#45b394" pointerEvents="none" />}
               </g>
             );
           })}
