@@ -570,6 +570,21 @@ const constrainSegPointToStock = (
   };
 };
 
+/* پس از حذف در Edit Path نزدیک‌ترین خط باقی‌مانده به محل حذف انتخاب می‌شود. */
+function replacementEditLine(original: ELine[], remaining: ELine[], affected: Set<number>): number | null {
+  if (!remaining.length) return null;
+  const remainingIds = new Set(remaining.map((line) => line.id));
+  const indices = original.map((line, index) => affected.has(line.id) ? index : -1).filter((index) => index >= 0);
+  const pivot = indices.length ? Math.min(...indices) : 0;
+  for (let distance = 0; distance < original.length; distance++) {
+    const after = pivot + distance;
+    if (after < original.length && remainingIds.has(original[after].id)) return original[after].id;
+    const before = pivot - 1 - distance;
+    if (before >= 0 && remainingIds.has(original[before].id)) return original[before].id;
+  }
+  return remaining[0].id;
+}
+
 type FilletPick = { id: number; click: SPoint };
 type FilletResult = { first: SketchSeg; second: SketchSeg; arc: SketchSeg };
 
@@ -1037,16 +1052,20 @@ export default function ProfileEditor({
       if (editOpen && (e.key === "Delete" || e.key === "Backspace") && edit) {
         if (selV.length) {
           e.preventDefault();
+          const affected = new Set(edit.lines.filter((line) => selV.includes(line.va) || selV.includes(line.vb)).map((line) => line.id));
           const fin = deleteEditVertices(edit.verts, edit.lines, selV);
-          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: [], activeLine: null }, true);
-          setSelV([]); setSelL([]); setActiveLine(null);
+          const replacement = replacementEditLine(edit.lines, fin.lines, affected);
+          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: replacement == null ? [] : [replacement], activeLine: replacement }, true);
+          setSelV([]); setSelL(replacement == null ? [] : [replacement]); setActiveLine(replacement);
           return;
         }
         if (selL.length) {
           e.preventDefault();
+          const removed = new Set(selL);
           const fin = deleteEditLines(edit.verts, edit.lines, selL);
-          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: [], activeLine: null }, true);
-          setSelL([]); setActiveLine(null); setSelV([]);
+          const replacement = replacementEditLine(edit.lines, fin.lines, removed);
+          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: replacement == null ? [] : [replacement], activeLine: replacement }, true);
+          setSelL(replacement == null ? [] : [replacement]); setActiveLine(replacement); setSelV([]);
           return;
         }
       }
@@ -2031,6 +2050,8 @@ export default function ProfileEditor({
     | { mode: "eoffh"; id: number; part: "a" | "b" | "c1" | "c2" | "via"; sx: number; sy: number; moved: boolean }
     | null
   >(null);
+  /* Pan موقت با دکمه وسط/راست، بدون از دست‌دادن Drag فعالِ رأس Edit Path. */
+  const editVertexPan = useRef<{ pointerId: number; sx: number; sy: number; cam0: Cam } | null>(null);
 
   const toLocal = (clientX: number, clientY: number): { x: number; y: number } => {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -2117,6 +2138,15 @@ export default function ProfileEditor({
       setMoveSession({ ids, base: segs.map((segment) => ({ ...segment })), editBase, editVertexIds, origin: raw, pointer: raw, clientX: e.clientX, clientY: e.clientY, axis: "free", mode: "relative", dirX: 1, dirY: 1, lastClientX: e.clientX, lastClientY: e.clientY });
       setMoveBox({ x: Math.min(rect.width - 58, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
       drag.current = null;
+      return;
+    }
+
+    /* هنگام Drag رأس در Edit Path، دکمه وسط یا راست فقط یک Pan موقت آغاز
+       می‌کند و خود ژست جابه‌جایی رأس در drag.current حفظ می‌شود. */
+    if (editOpen && drag.current?.mode === "evert" && (e.button === 1 || e.button === 2)) {
+      e.preventDefault();
+      editVertexPan.current = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, cam0: camRef.current };
+      e.currentTarget.setPointerCapture?.(e.pointerId);
       return;
     }
 
@@ -2319,6 +2349,15 @@ export default function ProfileEditor({
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const temporaryPan = editVertexPan.current;
+    if (temporaryPan && temporaryPan.pointerId === e.pointerId) {
+      setCam({
+        s: temporaryPan.cam0.s,
+        ox: temporaryPan.cam0.ox + e.clientX - temporaryPan.sx,
+        oy: temporaryPan.cam0.oy + e.clientY - temporaryPan.sy,
+      });
+      return;
+    }
     const raw = toWorld(e.clientX, e.clientY);
     if (tool === "fillet" && e.button === 0 && !editOpen) {
       const hit = hitSeg(raw);
@@ -2726,6 +2765,12 @@ export default function ProfileEditor({
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (editVertexPan.current?.pointerId === e.pointerId && (e.button === 1 || e.button === 2)) {
+      editVertexPan.current = null;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      /* drag.current عمداً باقی می‌ماند تا Drag نقطه با دکمه چپ ادامه یابد. */
+      return;
+    }
     const d = drag.current;
     drag.current = null;
     setSnapHit(null);
