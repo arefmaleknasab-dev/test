@@ -3737,7 +3737,9 @@ export default function ProfileEditor({
             )}
           </g>
         )}
-        {tool !== "select" && tool !== "move" && cursor && (
+        {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
+            صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
+        {tool !== "select" && tool !== "move" && cursor && drag.current?.mode !== "handle" && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
