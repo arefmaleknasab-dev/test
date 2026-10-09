@@ -9,7 +9,7 @@ import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset, SplitState } from "./lib/lathe";
+import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPathPoints, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, segMid, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
@@ -45,10 +45,9 @@ interface HistEntry {
   sketch: SketchSeg[];
   gcodeOvr: GcodeOvrMap;
   editBuf: EditBuf | null;
-  /** آفست تأییدشدهٔ H2 نیز همراه ویرایش مسیر Undo/Redo می‌شود. */
-  holder2: Holder2State;
-  /** وضعیت Split بخشی از تاریخچه است تا حذف/ایجاد آن با Ctrl+Z برگردد. */
-  split: SplitState;
+  /** همه پارامترهای مولد، به‌ویژه لیست عملیات استراتژی، باید همراه بافر
+      ویرایش بازیابی شوند؛ وگرنه بافر قدیمی روی عملیات جدید تأیید می‌شود. */
+  params: Params;
 }
 
 /* بازخوانی ایمنِ اوررایدها از حافظهٔ محلی (سنجش نوع پس از پارس) */
@@ -176,8 +175,8 @@ export default function App() {
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);
-  const stateRef = useRef({ sketch, gcodeOvr, editBuf, holder2: params.holder2, split: params.split });
-  stateRef.current = { sketch, gcodeOvr, editBuf, holder2: params.holder2, split: params.split };
+  const stateRef = useRef({ sketch, gcodeOvr, editBuf, params });
+  stateRef.current = { sketch, gcodeOvr, editBuf, params };
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -351,16 +350,15 @@ export default function App() {
   /* واگرد / بازانجام روی اسکچ */
   const commitRef = useRef<HistEntry | null>(null);
   const restore = (e: HistEntry) => {
+    /* هر rebase معلق متعلق به وضعیت جدیدتر است و نباید پس از Undo روی Snapshot
+       بازیابی‌شده اجرا شود؛ این همان مسیری بود که خطوط و جی‌کد را خالی می‌کرد. */
+    pendingParamRebaseRef.current = null;
+    presetReseedRef.current = false;
     setSketch(e.sketch);
     setGenerationSketch(e.sketch);
     setGcodeOvr(e.gcodeOvr);
     setEditBuf(e.editBuf);
-    setParams((p) => {
-      const sameHolder = p.holder2.xOff === e.holder2.xOff && p.holder2.yOff === e.holder2.yOff;
-      const sameSplit = p.split.enabled === e.split.enabled && p.split.z === e.split.z && p.split.r === e.split.r;
-      if (sameHolder && sameSplit) return p;
-      return { ...p, holder2: { ...e.holder2 }, split: { ...e.split } };
-    });
+    setParams(e.params);
     /* Undo/Redo نباید پیش‌نویس را در پشت‌صحنه تغییر دهد: هر وضعیت تاریخی که
        EditBuf دارد، هم‌زمان خودِ حالت ویرایش مسیر را نیز دوباره باز می‌کند. */
     setEditOpen(!!e.editBuf);
@@ -468,14 +466,20 @@ export default function App() {
 
   /* کال‌بک‌های پایدار: هویت ثابت تا فرزندهای memo هنگام تیک شبیه‌سازی بازرندر نشوند */
   const onParamsCb = useCallback((patch: Partial<Params>) => {
+    let historicalChange = false;
     if (patch.split) {
-      const before = stateRef.current.split;
-      const changed = before.enabled !== patch.split.enabled || before.z !== patch.split.z || before.r !== patch.split.r;
-      if (changed) {
-        /* ایجاد، جابه‌جایی و به‌ویژه حذف Split یک گام مستقل تاریخچه است. */
-        pushPast(snap());
-        setHistVer((v) => v + 1);
-      }
+      const before = stateRef.current.params.split;
+      historicalChange = before.enabled !== patch.split.enabled || before.z !== patch.split.z ||
+        before.r !== patch.split.r || before.swapped !== patch.split.swapped;
+    }
+    if (patch.ops) {
+      historicalChange = historicalChange || JSON.stringify(stateRef.current.params.ops) !== JSON.stringify(patch.ops);
+    }
+    if (historicalChange) {
+      /* تغییر استراتژی نیز باید اتمیک باشد: Params و EditBuf پیش از rebase با هم
+         ذخیره می‌شوند تا Undo هر دو را به یک نسل از جی‌کد برگرداند. */
+      pushPast(snap());
+      setHistVer((v) => v + 1);
     }
     if (editBufRef.current && !pendingParamRebaseRef.current) {
       pendingParamRebaseRef.current = { genBase, params, gcodeOvr };
@@ -502,7 +506,7 @@ export default function App() {
     };
     const eb = editBufRef.current;
     if (editOpenRef.current && eb) {
-      const prev = eb.holder2 ?? stateRef.current.holder2;
+      const prev = eb.holder2 ?? stateRef.current.params.holder2;
       const verts = translateHolder2Edit(
         eb.verts,
         eb.lines,
@@ -555,11 +559,11 @@ export default function App() {
       return;
     }
     if (commit) {
-      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 }, split: { ...params.split } });
+      pushPast(commitRef.current ?? { sketch, gcodeOvr, editBuf: null, params });
       commitRef.current = null;
       setActivePreset(null);
     } else if (!commitRef.current) {
-      commitRef.current = { sketch, gcodeOvr, editBuf: null, holder2: { ...params.holder2 }, split: { ...params.split } }; // وضعیت پیش از شروع کشیدن
+      commitRef.current = { sketch, gcodeOvr, editBuf: null, params }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
     if (commit || !allProfileLayersHidden) setGenerationSketch(next);
