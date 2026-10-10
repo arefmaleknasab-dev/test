@@ -780,9 +780,11 @@ export default function ProfileEditor({
   /* در منحنی کنترلی، پس از کلیک دوم ابتدا دستهٔ متصل به نقطهٔ پایان (c2) و سپس  */
   /* دستهٔ متصل به نقطهٔ شروع (c1) تنظیم می‌شود — مانند ابزار Pen.                */
   const draftSecondSet = useRef(false); // آیا دستهٔ دوم (c2) ثبت شده است؟
+  const [lineLengthText, setLineLengthText] = useState("");
   const cancelDraft = () => {
     draftSecondSet.current = false;
     setDraft([]);
+    setLineLengthText("");
   };
   const [cursor, setCursor] = useState<SPoint | null>(null);
   const [snapHit, setSnapHit] = useState<SnapPoint | null>(null);
@@ -1020,6 +1022,37 @@ export default function ProfileEditor({
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
 
+      /* ورود طول مستقیم هنگام رسم Line؛ جهت همچنان از موقعیت ماوس (و Shift)
+         گرفته می‌شود و Enter همان بخش اندازه‌گذاری‌شده را ثبت می‌کند. */
+      if (!editOpen && tool === "line" && draft.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (/^\d$/.test(e.key)) {
+          e.preventDefault();
+          setLineLengthText((value) => value === "0" ? e.key : value + e.key);
+          return;
+        }
+        if ((e.key === "." || e.key === ",") && !/[.,]/.test(lineLengthText)) {
+          e.preventDefault();
+          setLineLengthText((value) => value ? `${value}.` : "0.");
+          return;
+        }
+        if (e.key === "Backspace" && lineLengthText) {
+          e.preventDefault();
+          setLineLengthText((value) => value.slice(0, -1));
+          return;
+        }
+        if (e.key === "Enter" && measuredLineEnd) {
+          e.preventDefault();
+          const seg = makeSeg("line", [draft[0], measuredLineEnd]);
+          if (seg) {
+            commit([...segs, seg]);
+            onSelected([seg.id]);
+          }
+          setDraft([]);
+          setLineLengthText("");
+          return;
+        }
+      }
+
       /* ---------- حالت ویرایش مسیر: Esc اول انتخاب، بعد خروج ---------- */
       if (editOpen && e.key === "Escape") {
         if (selL.length || selV.length || selOff.length) {
@@ -1170,7 +1203,7 @@ export default function ProfileEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu, lastMove]);
+  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu, lastMove, lineLengthText, cursor, shiftDown]);
 
   /* وضعیت فیزیکی Shift برای پیش‌نمایش بازه؛ مستقل از زبان صفحه‌کلید. */
   useEffect(() => {
@@ -1255,6 +1288,16 @@ export default function ProfileEditor({
 
   /** نقطهٔ نشانگرِ مرحلهٔ فعلی ترسیم؛ دسته‌های بزیه به خود خام clamp نمی‌شوند. */
   const constrainDraftPoint = (p: SPoint): SPoint => {
+    /* Shift در ابزار Line جهت را با محور غالب حرکت ماوس تعیین می‌کند. این قفل
+       هم در preview و هم در نقطه‌ای که با کلیک ثبت می‌شود اعمال می‌گردد. */
+    if (tool === "line" && draft.length === 1 && shiftRef.current) {
+      const start = draft[0];
+      const dz = p.z - start.z;
+      const dr = p.r - start.r;
+      return clampPt(Math.abs(dz) >= Math.abs(dr)
+        ? { z: p.z, r: start.r }
+        : { z: start.z, r: p.r });
+    }
     if (tool === "quad" && draft.length === 2) {
       const base: SketchSeg = {
         id: -1,
@@ -2963,7 +3006,17 @@ export default function ProfileEditor({
       }
       /* افزودن نقطهٔ جدید به ترسیم در حال انجام */
       const { p } = applySnap(toWorld(e.clientX, e.clientY));
-      const pt = constrainDraftPoint(p);
+      let pt = constrainDraftPoint(p);
+      if (tool === "line" && draft.length === 1 && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)) {
+        const requested = Number(lineLengthText.replace(",", "."));
+        const dz = pt.z - draft[0].z;
+        const dr = pt.r - draft[0].r;
+        const length = Math.hypot(dz, dr);
+        if (requested > 0) pt = clampPt({
+          z: draft[0].z + (length > 1e-9 ? dz / length : 1) * requested,
+          r: draft[0].r + (length > 1e-9 ? dr / length : 0) * requested,
+        });
+      }
       const need = NEED_PTS[tool];
 
       if (tool === "cubic") {
@@ -3005,8 +3058,10 @@ export default function ProfileEditor({
           onSelected([seg.id]);
         }
         setDraft([]);
+        if (tool === "line") setLineLengthText("");
       } else {
         setDraft(pts);
+        if (tool === "line") setLineLengthText("");
       }
     }
   };
@@ -3279,9 +3334,27 @@ export default function ProfileEditor({
   const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id));
 
   /* پیش‌نمایش ترسیم */
+  const lineCursor = tool === "line" && draft.length === 1 && cursor
+    ? constrainDraftPoint(cursor)
+    : cursor;
+  const typedLineLength = lineLengthText !== "" && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)
+    ? Number(lineLengthText.replace(",", "."))
+    : null;
+  const measuredLineEnd = tool === "line" && draft.length === 1 && lineCursor && typedLineLength != null && typedLineLength > 0
+    ? (() => {
+        const start = draft[0];
+        const dz = lineCursor.z - start.z;
+        const dr = lineCursor.r - start.r;
+        const length = Math.hypot(dz, dr);
+        const uz = length > 1e-9 ? dz / length : 1;
+        const ur = length > 1e-9 ? dr / length : 0;
+        return clampPt({ z: start.z + uz * typedLineLength, r: start.r + ur * typedLineLength });
+      })()
+    : null;
   let previewSeg: SketchSeg | null = null;
   if (tool !== "select" && draft.length > 0 && cursor) {
     const pts = [...draft];
+    const previewCursor = measuredLineEnd ?? lineCursor ?? cursor;
     if (tool === "cubic" && pts.length === 4) {
       /* اگر دستهٔ دوم هنوز ثبت نشده (draftSecondSet=false)، نشانگر دستهٔ متصل به  */
       /* پایان (c2) را جابه‌جا می‌کند؛ وگرنه دستهٔ متصل به شروع (c1) را.            */
@@ -3291,8 +3364,8 @@ export default function ProfileEditor({
     } else if (tool === "cubic" && pts.length === 3) {
       previewSeg = makeSeg("cubic", [...pts, cursor]);
     } else {
-      previewSeg = makeSeg(tool as SketchKind, [...pts, cursor]);
-      if (!previewSeg && pts.length === 1) previewSeg = makeSeg("line", [pts[0], cursor]);
+      previewSeg = makeSeg(tool as SketchKind, [...pts, previewCursor]);
+      if (!previewSeg && pts.length === 1) previewSeg = makeSeg("line", [pts[0], previewCursor]);
     }
   }
   /* ایندکس مرحلهٔ فعلی — برای منحنی کنترلی بر اساس وضعیت دسته‌ها */
@@ -3790,7 +3863,24 @@ export default function ProfileEditor({
         {/* پیش‌نمایش ترسیم */}
         {previewSeg && (
           <g>
-            <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeDasharray="6 4" strokeLinecap="round" opacity={0.95} />
+            {tool === "line" && measuredLineEnd && lineCursor ? (
+              <>
+                <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeLinecap="round" opacity={0.95} />
+                <line
+                  x1={P(measuredLineEnd.z, measuredLineEnd.r)[0]}
+                  y1={P(measuredLineEnd.z, measuredLineEnd.r)[1]}
+                  x2={P(lineCursor.z, lineCursor.r)[0]}
+                  y2={P(lineCursor.z, lineCursor.r)[1]}
+                  stroke="#6ab0d8"
+                  strokeWidth={1.5}
+                  strokeDasharray="5 4"
+                  strokeLinecap="round"
+                  pointerEvents="none"
+                />
+              </>
+            ) : (
+              <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeDasharray="6 4" strokeLinecap="round" opacity={0.95} />
+            )}
             {previewSeg.kind === "cubic" && previewSeg.c1 && previewSeg.c2 ? (
               <>
                 {/* خطوط اتصال دسته‌ها به نقاط انتهایی */}
@@ -3815,6 +3905,17 @@ export default function ProfileEditor({
         {tool !== "select" && tool !== "move" && cursor && drag.current?.mode !== "handle" && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
+
+        {/* خوانش طول تایپی با فاصله از انتهای خط؛ خود انتهای خط‌چین بدون Marker می‌ماند. */}
+        {tool === "line" && draft.length === 1 && lineLengthText && lineCursor && (() => {
+          const [x, y] = P(lineCursor.z, lineCursor.r);
+          return (
+            <g transform={`translate(${x + 12} ${y - 28})`} pointerEvents="none">
+              <rect x={0} y={0} width={Math.max(58, lineLengthText.length * 8 + 34)} height={23} rx={5} fill="#151b22" stroke="#45b394" strokeWidth={1} />
+              <text x={8} y={15.5} fill="#dffbf2" fontSize={11} fontFamily="JetBrains Mono, monospace">{lineLengthText} mm</text>
+            </g>
+          );
+        })()}
 
         {/* نشانگر اسنپ */}
         {snapHit && (
