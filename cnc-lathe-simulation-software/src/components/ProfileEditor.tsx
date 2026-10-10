@@ -3866,6 +3866,16 @@ export default function ProfileEditor({
             {tool === "line" && measuredLineEnd && lineCursor ? (
               <>
                 <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeLinecap="round" opacity={0.95} />
+                {/* نقطه دوم روی انتهای واقعیِ طول عددی قرار می‌گیرد. */}
+                <circle
+                  cx={P(measuredLineEnd.z, measuredLineEnd.r)[0]}
+                  cy={P(measuredLineEnd.z, measuredLineEnd.r)[1]}
+                  r={4.5}
+                  fill="#0f2a22"
+                  stroke="#45b394"
+                  strokeWidth={2}
+                  pointerEvents="none"
+                />
                 <line
                   x1={P(measuredLineEnd.z, measuredLineEnd.r)[0]}
                   y1={P(measuredLineEnd.z, measuredLineEnd.r)[1]}
@@ -3902,7 +3912,8 @@ export default function ProfileEditor({
         )}
         {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
             صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
-        {tool !== "select" && tool !== "move" && cursor && drag.current?.mode !== "handle" && (
+        {tool !== "select" && tool !== "move" && cursor && drag.current?.mode !== "handle" &&
+          !(tool === "line" && measuredLineEnd) && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
@@ -3918,7 +3929,7 @@ export default function ProfileEditor({
         })()}
 
         {/* نشانگر اسنپ */}
-        {snapHit && (
+        {snapHit && !(tool === "line" && measuredLineEnd) && (
           <g>
             <rect
               x={P(snapHit.p.z, snapHit.p.r)[0] - 6}
