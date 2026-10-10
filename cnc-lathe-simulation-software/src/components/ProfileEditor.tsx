@@ -3073,9 +3073,10 @@ export default function ProfileEditor({
         for (let i = 1; i < pts.length; i++) d += ` L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
         let arrows = "";
         if (curMotion !== 0) {
-          if (curKind === "finish" || curKind === "offset") {
-            /* روی پروفایل و آفست فقط ابتدا و انتهای مسیر علامت‌گذاری می‌شود.
-               برای فلش ابتدا یک پاره‌خط مجازی هم‌جهت می‌سازیم تا نوک فلش دقیقاً
+          if (curKind === "finish" || curKind === "offset" || curKind === "borefin" || curKind === "boreoff") {
+            /* روی پروفایل و آفست بیرونی و داخلی فقط ابتدا و انتهای مسیر
+               علامت‌گذاری می‌شود. برای فلش ابتدا یک پاره‌خط مجازی هم‌جهت
+               می‌سازیم تا نوک فلش دقیقاً
                روی نقطه شروع باشد؛ فلش انتها از آخرین پاره‌خط واقعی استفاده می‌کند. */
             const first = pts[0];
             const n = pts.length;
