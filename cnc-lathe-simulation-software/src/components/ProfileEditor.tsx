@@ -1087,7 +1087,7 @@ export default function ProfileEditor({
       /* در Polyline، Backspace و Ctrl+Z فقط یک رأس تأییدشده از Draft کم می‌کنند؛
          تا پیش از Enter هیچ History سراسری ساخته نشده است. */
       if (!editOpen && tool === "polyline" && draft.length &&
-          ((e.key === "Backspace" && !lineLengthText) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"))) {
+          ((e.key === "Backspace" && !lineLengthText) || ((e.ctrlKey || e.metaKey) && (e.code === "KeyZ" || e.key.toLowerCase() === "z")))) {
         e.preventDefault();
         setDraft((points) => points.slice(0, -1));
         setLineLengthText("");
@@ -1779,8 +1779,17 @@ export default function ProfileEditor({
 
   /* جداسازی نقطه: دیگر با نقاط هم‌مکان خود جابه‌جا نمی‌شود */
   const doUnjoin = (segId: number, part: "a" | "b") => {
-    setSeparated((prev) => new Set(prev).add(handleKey(segId, part)));
     const target = segs.find((segment) => segment.id === segId);
+    const origin = target?.[part];
+    setSeparated((prev) => {
+      const next = new Set(prev);
+      next.add(handleKey(segId, part));
+      /* هر دو سوی اتصال علامت می‌خورند تا حرکت هر سمت بتواند Marker را پاک کند. */
+      if (origin) for (const segment of segs) for (const endpoint of ["a", "b"] as const) {
+        if (Math.hypot(segment[endpoint].z - origin.z, segment[endpoint].r - origin.r) < 1e-8) next.add(handleKey(segment.id, endpoint));
+      }
+      return next;
+    });
     if (target?.polylineId != null) {
       const members = segs.filter((segment) => segment.polylineId === target.polylineId);
       const index = members.findIndex((segment) => segment.id === segId);
@@ -1795,7 +1804,8 @@ export default function ProfileEditor({
         if (right.has(segment.id)) return { ...segment, polylineId: rightGroup };
         return segment;
       }), true);
-      onSelected([segId]);
+      /* سمتی که نقطهٔ انتخاب‌شده به آن تعلق دارد، به‌طور کامل Select می‌شود. */
+      onSelected([...(part === "a" ? right : left)]);
     }
     setCtxMenu(null);
   };
@@ -2288,6 +2298,8 @@ export default function ProfileEditor({
         ? clusterOf(drawingHandle.segId, drawingHandle.part)
         : [drawingHandle];
       drag.current = { mode: "handle", ref: drawingHandle, cluster, moved: false };
+      /* با شروع Drag عادی، Dot انتخاب قبلی همان لحظه حذف و نقطه جدید فعال می‌شود. */
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) setSelPoints([drawingHandle]);
       return;
     }
 
@@ -2704,11 +2716,9 @@ export default function ProfileEditor({
     }
 
     if (d.mode === "draw") {
-      /* تا وقتی کاربر واقعاً نکشیده، فقط پیش‌نمایش به‌روز می‌شود */
-      if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4) {
-        d.moved = true;
-        setCam({ s: d.cam0.s, ox: d.cam0.ox + (e.clientX - d.sx), oy: d.cam0.oy + (e.clientY - d.sy) });
-      } else if (tool === "split") {
+      /* نگه‌داشتن دکمه چپ در ابزارهای ترسیم فقط Preview را حرکت می‌دهد؛ Pan
+         منحصراً با دکمه راست یا وسط انجام می‌شود. */
+      if (tool === "split") {
         setCursor(nearestOnSketch(raw));
         setSnapHit(null);
       } else {
@@ -2721,6 +2731,7 @@ export default function ProfileEditor({
 
     if (d.mode === "handle") {
       d.moved = true;
+      if ([...separated].some((key) => Number(key.split(":")[0]) === d.ref.segId)) setSeparated(new Set());
       /* اگر نقطهٔ درگ‌شده جزو چند نقطهٔ مستقلِ انتخاب‌شده است، همه با هم جابه‌جا می‌شوند */
       const inMulti =
         selPoints.length > 1 &&
@@ -2798,6 +2809,7 @@ export default function ProfileEditor({
       if (!d.moved) {
         /* شروع درگ: انتخابِ در حال حرکت مشخص می‌شود */
         d.moved = true;
+        if ([...separated].some((key) => d.ids.includes(Number(key.split(":")[0])))) setSeparated(new Set());
         if (e.shiftKey) {
           if (!d.ids.includes(d.clicked)) d.ids = [...d.ids, d.clicked];
         } else if (e.ctrlKey || e.metaKey) {
@@ -4044,17 +4056,6 @@ export default function ProfileEditor({
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
-        {/* خوانش طول تایپی با فاصله از انتهای خط؛ خود انتهای خط‌چین بدون Marker می‌ماند. */}
-        {straightDrawing && lineLengthText && lineCursor && (() => {
-          const [x, y] = P(lineCursor.z, lineCursor.r);
-          return (
-            <g transform={`translate(${x + 12} ${y - 28})`} pointerEvents="none">
-              <rect x={0} y={0} width={Math.max(58, lineLengthText.length * 8 + 34)} height={23} rx={5} fill="#151b22" stroke="#45b394" strokeWidth={1} />
-              <text x={8} y={15.5} fill="#dffbf2" fontSize={11} fontFamily="JetBrains Mono, monospace">{lineLengthText} mm</text>
-            </g>
-          );
-        })()}
-
         {/* نشانگر اسنپ */}
         {snapHit && !(straightDrawing && measuredLineEnd) && (
           <g>
@@ -4388,6 +4389,20 @@ export default function ProfileEditor({
           {!filletCalc?.error && <div className="mt-1 text-[8px] text-dim" dir="rtl">Enter برای ساخت قوس</div>}
         </div>
       )}
+
+      {straightDrawing && lineLengthText && lineCursor && (() => {
+        const [x, y] = P(lineCursor.z, lineCursor.r);
+        const width = Math.max(58, Math.min(150, 34 + lineLengthText.length * 8));
+        return (
+          <div
+            className="pointer-events-none absolute z-50 flex h-[30px] items-center justify-center rounded-[5px] border border-[#00a9c7] bg-[#071018]/95 px-2 py-1 font-mono text-xs text-[#d9f7f5] shadow-[0_8px_24px_rgba(0,0,0,.55)]"
+            style={{ left: x + 12, top: y - 34, width }}
+            dir="ltr"
+          >
+            <span className="text-center">{lineLengthText} mm</span>
+          </div>
+        );
+      })()}
 
       {moveBox && moveSession && (
         <div className="absolute z-50" style={{ left: moveBox.x, top: moveBox.y, width: `${Math.max(42, Math.min(150, 24 + moveBox.value.length * 8))}px` }} dir="ltr">
