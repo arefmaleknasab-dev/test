@@ -949,9 +949,17 @@ export function resolveZones(samples: Sample[], manualBounds: number[], z0: numb
 
 /* ---------------- تولید مسیر ابزار و جی‌کد ---------------- */
 
-export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResult {
+export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFinishPts?: PPoint[]): GenResult {
   const R = p.blankD / 2;
   const samples = sampleProfile(pts, R);
+  /* مسیر پرداخت بیرونی از زنجیرهٔ مرتب‌نشده می‌آید تا گوشه‌های قائم و نقاط
+     هم‌مختصات X حذف نشوند. پوشش samples همچنان مرجع عملیات خشن است. */
+  let outerFinishPath = outerFinishPts && outerFinishPts.length >= 2
+    ? sampleOrderedProfile(outerFinishPts, R)
+    : samples;
+  if (outerFinishPath.length >= 2 && outerFinishPath[outerFinishPath.length - 1].z < outerFinishPath[0].z) {
+    outerFinishPath = [...outerFinishPath].reverse();
+  }
   /* مسیر ترتیبی برای Offset/Finish و پوشش یکنواخت جدا برای پاس‌های خشن. */
   const innerPathSamples = p.split.enabled && innerPts && innerPts.length >= 2 ? sampleOrderedProfile(innerPts, R) : [];
   /* splitChain شاخه داخلی را از لبه به کف می‌دهد؛ ماشین‌کاری پرداخت از کف به لبه است. */
@@ -1183,8 +1191,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
   };
 
   const profilePath = (kind: SegKind, feed: number) => {
-    mv(1, 2 * r0, z0, feed, kind);
-    for (let i = 1; i < samples.length; i++) mv(1, 2 * samples[i].r, samples[i].z, feed, kind);
+    const path = kind === "finish" ? outerFinishPath : samples;
+    if (!path.length) return;
+    mv(1, 2 * path[0].r, path[0].z, feed, kind);
+    for (let i = 1; i < path.length; i++) mv(1, 2 * path[i].r, path[i].z, feed, kind);
   };
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */

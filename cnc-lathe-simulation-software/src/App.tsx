@@ -190,7 +190,7 @@ export default function App() {
   };
 
   /* پروفایل نقطه‌ای برای موتور تراش — حالت عادی تخت، حالت کاسه دوشاخه (Split) */
-  const { points, innerPoints, splitInfo } = useMemo(() => {
+  const { points, innerPoints, outerFinishPoints, splitInfo } = useMemo(() => {
     const blankR = params.blankD / 2;
     if (params.split.enabled) {
       const poly = chainPolyline(orderChain(generationSketch));
@@ -200,6 +200,9 @@ export default function App() {
         const innerBranch = params.split.swapped ? sp.outer : sp.inner;
         return {
           points: branchPoints(outerBranch, blankR, params.blankL, "max"),
+          /* پرداخت بیرونی نیز باید ترتیب توپولوژیک و گوشه‌های قائم شاخه را حفظ
+             کند؛ پوشش مرتب‌شدهٔ points فقط برای محاسبات خشن استفاده می‌شود. */
+          outerFinishPoints: branchPathPoints(outerBranch, blankR, params.blankL),
           /* ترتیب واقعی شاخه برای Offset/Finish حفظ می‌شود؛ موتور مسیر یک پوشش
              یکنواخت جداگانه برای پاس‌های خشن می‌سازد. */
           innerPoints: branchPathPoints(innerBranch, blankR, params.blankL),
@@ -212,14 +215,20 @@ export default function App() {
       }
     }
     const none: { outerDir: 1 | -1; innerDir: 1 | -1; at: { z: number; r: number } } | null = null;
-    return { points: flattenSketch(generationSketch, blankR, params.blankL), innerPoints: [] as PPoint[], splitInfo: none };
+    const orderedProfile = chainPolyline(orderChain(generationSketch));
+    return {
+      points: flattenSketch(generationSketch, blankR, params.blankL),
+      innerPoints: [] as PPoint[],
+      outerFinishPoints: branchPathPoints(orderedProfile, blankR, params.blankL),
+      splitInfo: none,
+    };
   }, [generationSketch, params.split, params.blankD, params.blankL]);
 
   useEffect(() => {
     if (!allProfileLayersHidden && generationSketch !== sketch) setGenerationSketch(sketch);
   }, [allProfileLayersHidden, generationSketch, sketch]);
 
-  const genBase = useMemo(() => generate(points, params, innerPoints), [points, params, innerPoints]);
+  const genBase = useMemo(() => generate(points, params, innerPoints, outerFinishPoints), [points, params, innerPoints, outerFinishPoints]);
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
 
@@ -421,7 +430,7 @@ export default function App() {
     /* آفست H2 روی هندسهٔ ورود امن مولد نیز اثر دارد (گوشهٔ افقی→عمودی).
        مقایسه با پایهٔ قدیمی آن گوشه را اشتباهاً override می‌کرد؛ پایهٔ پیش‌نویس
        دقیقاً با آفست زنده ساخته می‌شود تا جابه‌جایی خالص، override نسازد. */
-    const draftGenBase = holder2Changed ? generate(points, draftParams, innerPoints) : genBase;
+    const draftGenBase = holder2Changed ? generate(points, draftParams, innerPoints, outerFinishPoints) : genBase;
     const next = deriveGcodeOvr(eb.verts, eb.lines, draftGenBase.segs, gcodeOvr, draftParams);
     const sketchChanged = eb.sketch !== sketch;
     if (!sketchChanged && !holder2Changed && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
