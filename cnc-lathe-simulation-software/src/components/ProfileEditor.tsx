@@ -2163,7 +2163,7 @@ export default function ProfileEditor({
         /** Drag روی Segmentهای H2 یعنی تغییر سراسری آفست، نه اعوجاج یک خط. */
         holder2?: { base: Holder2State; next: Holder2State; latestVerts: EVert[] };
       }
-    | { mode: "evert"; vid: number; start: SPoint; base: EVert; sx: number; sy: number; moved: boolean }
+    | { mode: "evert"; vids: number[]; start: SPoint; base: Map<number, EVert>; sx: number; sy: number; moved: boolean }
     | { mode: "eoff"; id: number; last: SPoint; seed: SketchSeg; sx: number; sy: number; moved: boolean }
     | { mode: "eoffh"; id: number; part: "a" | "b" | "c1" | "c2" | "via"; sx: number; sy: number; moved: boolean }
     | null
@@ -2343,12 +2343,22 @@ export default function ProfileEditor({
       /* نشان‌های ابتدا/انتها بر Segment زیرین اولویت دارند تا با یک کلیک ساده
          انتخاب شوند و همان لحظه امکان drag آن‌ها وجود داشته باشد. */
       if (endpointCandidate != null) {
-        if (e.shiftKey) setSelV(selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate]);
-        else setSelV([endpointCandidate]);
+        const chosen = e.shiftKey
+          ? (selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate])
+          : (selV.includes(endpointCandidate) ? [...selV] : [endpointCandidate]);
+        setSelV(chosen);
         focusEditVertexInGCode(endpointCandidate);
         setHitPicker(null);
         setPickerHover(null);
-        drag.current = { mode: "evert", vid: endpointCandidate, start: raw, base: { ...vz(endpointCandidate) }, sx: ploc.x, sy: ploc.y, moved: false };
+        drag.current = {
+          mode: "evert",
+          vids: chosen,
+          start: raw,
+          base: new Map(chosen.map((id) => [id, { ...vz(id) }])),
+          sx: ploc.x,
+          sy: ploc.y,
+          moved: false,
+        };
         return;
       }
 
@@ -2394,10 +2404,20 @@ export default function ProfileEditor({
       setPickerHover(null);
       const bv = hitBufVx(ploc.x, ploc.y);
       if (bv != null) {
-        if (e.shiftKey) setSelV(selV.includes(bv) ? selV.filter((x) => x !== bv) : [...selV, bv]);
-        else if (!selV.includes(bv)) setSelV([bv]);
+        const chosen = e.shiftKey
+          ? (selV.includes(bv) ? selV.filter((id) => id !== bv) : [...selV, bv])
+          : (selV.includes(bv) ? [...selV] : [bv]);
+        setSelV(chosen);
         focusEditVertexInGCode(bv);
-        drag.current = { mode: "evert", vid: bv, start: raw, base: { ...vz(bv) }, sx: ploc.x, sy: ploc.y, moved: false };
+        drag.current = {
+          mode: "evert",
+          vids: chosen,
+          start: raw,
+          base: new Map(chosen.map((id) => [id, { ...vz(id) }])),
+          sx: ploc.x,
+          sy: ploc.y,
+          moved: false,
+        };
         return;
       }
       const oh = hitOffHandle(ploc.x, ploc.y);
@@ -2662,7 +2682,10 @@ export default function ProfileEditor({
     if (d.mode === "evert") {
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
       const { z: qz, r: qr } = quantStep(raw, d.start);
-      const nv = verts.map((v) => (v.id === d.vid ? { ...v, z: d.base.z + qz, x: d.base.x + 2 * qr } : v));
+      const nv = verts.map((v) => {
+        const origin = d.base.get(v.id);
+        return origin ? { ...v, z: origin.z + qz, x: origin.x + 2 * qr } : v;
+      });
       setBufGeom(nv, lines, false);
       return;
     }
@@ -4470,6 +4493,15 @@ export default function ProfileEditor({
             <button
               key={t.id}
               onClick={() => {
+                /* کلیک دوباره روی Move هر نشست نیمه‌تمام/گیرکرده را پاک می‌کند؛
+                   Preview ثبت‌نشده نیز به مبنای قبل از نشست برمی‌گردد. */
+                if (t.id === "move" && moveSession) {
+                  if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+                  else onSegs(moveSession.base, false);
+                  setMoveBox(null);
+                  setMoveSession(null);
+                  drag.current = null;
+                }
                 chooseTool(t.id);
                 cancelDraft();
               }}
