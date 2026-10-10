@@ -2298,8 +2298,13 @@ export default function ProfileEditor({
         ? clusterOf(drawingHandle.segId, drawingHandle.part)
         : [drawingHandle];
       drag.current = { mode: "handle", ref: drawingHandle, cluster, moved: false };
-      /* با شروع Drag عادی، Dot انتخاب قبلی همان لحظه حذف و نقطه جدید فعال می‌شود. */
-      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) setSelPoints([drawingHandle]);
+      /* اگر نقطه Dragشده از قبل جزو انتخاب است، انتخاب چندنقطه‌ای دست‌نخورده
+         می‌ماند. فقط Drag یک نقطه خارج از انتخاب، انتخاب قبلی را همان لحظه با
+         همان نقطه جایگزین می‌کند تا Dotهای قدیمی در طول Drag باقی نمانند. */
+      const drawingHandleSelected = cluster.some((member) => selPoints.some((point) =>
+        point.segId === member.segId && point.part === member.part
+      ));
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !drawingHandleSelected) setSelPoints([drawingHandle]);
       return;
     }
 
@@ -2733,9 +2738,9 @@ export default function ProfileEditor({
       d.moved = true;
       if ([...separated].some((key) => Number(key.split(":")[0]) === d.ref.segId)) setSeparated(new Set());
       /* اگر نقطهٔ درگ‌شده جزو چند نقطهٔ مستقلِ انتخاب‌شده است، همه با هم جابه‌جا می‌شوند */
-      const inMulti =
-        selPoints.length > 1 &&
-        selPoints.some((sp) => sp.segId === d.ref.segId && sp.part === d.ref.part);
+      const inMulti = selPoints.length > 1 && d.cluster.some((member) =>
+        selPoints.some((point) => point.segId === member.segId && point.part === member.part)
+      );
       const skipIds = inMulti
         ? [...new Set(selPoints.map((sp) => sp.segId))]
         : d.cluster.map((c) => c.segId);
@@ -3079,7 +3084,7 @@ export default function ProfileEditor({
       if (d.mode === "handle") {
         const ref = d.ref;
         const pkey = (p: { segId: number; part: string }) => `${p.segId}:${p.part}`;
-        const exists = selPoints.some((p) => pkey(p) === pkey(ref));
+        const exists = d.cluster.some((member) => selPoints.some((point) => pkey(point) === pkey(member)));
         if (d.moved) {
           /* نشانگر ابزار رسم هنوز مختصات لحظه شروع Drag را نگه می‌دارد. پیش از
              render ثبت تاریخچه آن را پاک می‌کنیم تا پس از MouseUp حتی یک فریم
