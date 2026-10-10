@@ -77,26 +77,28 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "fillet" | "line" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
+  { id: "polyline", name: "Polyline", key: "P", icon: <IconLine className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
   { id: "arc", name: "کمان", key: "A", icon: <IconArc3 className="h-4 w-4" />, hint: "کمان سه‌نقطه‌ای: شروع، پایان، نقطه‌ای روی کمان" },
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, fillet: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   move: [],
   fillet: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
+  polyline: ["نقطهٔ شروع Polyline", "نقطهٔ بعدی — Enter پایان، Esc لغو"],
   quad: ["نقطهٔ شروع", "نقطهٔ پایان", "نقطهٔ کنترل منحنی"],
   cubic: ["نقطهٔ شروع", "نقطهٔ پایان", "دستهٔ خروج از پایان", "دستهٔ ورود به شروع"],
   arc: ["نقطهٔ شروع کمان", "نقطهٔ پایان کمان", "نقطه‌ای روی کمان"],
@@ -1022,9 +1024,10 @@ export default function ProfileEditor({
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
 
-      /* ورود طول مستقیم هنگام رسم Line؛ جهت همچنان از موقعیت ماوس (و Shift)
-         گرفته می‌شود و Enter همان بخش اندازه‌گذاری‌شده را ثبت می‌کند. */
-      if (!editOpen && tool === "line" && draft.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      /* ورود طول مستقیم برای Line و هر بخش Polyline. */
+      const drawingStraight = !editOpen &&
+        ((tool === "line" && draft.length === 1) || (tool === "polyline" && draft.length >= 1));
+      if (drawingStraight && !e.ctrlKey && !e.metaKey && !e.altKey) {
         if (/^\d$/.test(e.key)) {
           e.preventDefault();
           setLineLengthText((value) => value === "0" ? e.key : value + e.key);
@@ -1042,10 +1045,27 @@ export default function ProfileEditor({
         }
         if (e.key === "Enter" && measuredLineEnd) {
           e.preventDefault();
-          const seg = makeSeg("line", [draft[0], measuredLineEnd]);
-          if (seg) {
-            commit([...segs, seg]);
-            onSelected([seg.id]);
+          if (tool === "polyline") {
+            setDraft([...draft, measuredLineEnd]);
+          } else {
+            const seg = makeSeg("line", [draft[0], measuredLineEnd]);
+            if (seg) {
+              commit([...segs, seg]);
+              onSelected([seg.id]);
+            }
+            setDraft([]);
+          }
+          setLineLengthText("");
+          return;
+        }
+        if (e.key === "Enter" && tool === "polyline" && draft.length >= 2) {
+          e.preventDefault();
+          const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
+          if (parts.length) {
+            const groupId = parts[0].id;
+            const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
+            commit([...segs, ...grouped]);
+            onSelected(grouped.map((part) => part.id));
           }
           setDraft([]);
           setLineLengthText("");
@@ -1290,8 +1310,8 @@ export default function ProfileEditor({
   const constrainDraftPoint = (p: SPoint): SPoint => {
     /* Shift در ابزار Line جهت را با محور غالب حرکت ماوس تعیین می‌کند. این قفل
        هم در preview و هم در نقطه‌ای که با کلیک ثبت می‌شود اعمال می‌گردد. */
-    if (tool === "line" && draft.length === 1 && shiftRef.current) {
-      const start = draft[0];
+    if ((tool === "line" || tool === "polyline") && draft.length >= 1 && shiftRef.current) {
+      const start = draft[draft.length - 1];
       const dz = p.z - start.z;
       const dr = p.r - start.r;
       return clampPt(Math.abs(dz) >= Math.abs(dr)
@@ -2116,6 +2136,13 @@ export default function ProfileEditor({
     return Math.hypot(px - x, py - y) <= 10;
   };
 
+  const sketchObjectIds = (id: number): number[] => {
+    const segment = segs.find((item) => item.id === id);
+    return segment?.polylineId == null
+      ? [id]
+      : segs.filter((item) => item.polylineId === segment.polylineId).map((item) => item.id);
+  };
+
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!camRef.current) return;
     setCtxMenu(null);
@@ -2381,16 +2408,17 @@ export default function ProfileEditor({
     }
     const s = editOpen ? null : hitSeg(raw);
     if (s) {
+      const objectIds = sketchObjectIds(s.id);
       /* المانِ متصل (از یک یا هر دو سر به المان خارج از گروه) قفل است و درگ نمی‌شود */
-      const allowed = selected.includes(s.id) ? [...selected] : [s.id];
+      const allowed = selected.includes(s.id) ? [...selected] : objectIds;
       if (allowed.some((id) => segLocked(id, allowed))) {
-        if (e.shiftKey) onSelected(selected.includes(s.id) ? selected.filter((x) => x !== s.id) : [...selected, s.id]);
-        else if (e.ctrlKey || e.metaKey) onSelected(selected.filter((x) => x !== s.id));
-        else if (!selected.includes(s.id)) onSelected([s.id]);
+        if (e.shiftKey) onSelected(selected.includes(s.id) ? selected.filter((x) => !objectIds.includes(x)) : [...selected, ...objectIds.filter((id) => !selected.includes(id))]);
+        else if (e.ctrlKey || e.metaKey) onSelected(selected.filter((x) => !objectIds.includes(x)));
+        else if (!selected.includes(s.id)) onSelected(objectIds);
         return;
       }
       /* تصمیم نهایی کلیک در pointerup گرفته می‌شود تا درگ گروهی ممکن باشد */
-      drag.current = { mode: "move", ids: [...selected], clicked: s.id, last: raw, sx: e.clientX, sy: e.clientY, moved: false };
+      drag.current = { mode: "move", ids: selected.includes(s.id) ? [...selected] : objectIds, clicked: s.id, last: raw, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     /* فضای خالی: شروع باکس انتخابگر (پاک‌سازی در pointerup اگر کلیک بود) */
@@ -2986,12 +3014,15 @@ export default function ProfileEditor({
         }
         /* کلیک بدون درگ روی المان */
         const id = d.clicked;
+        const objectIds = sketchObjectIds(id);
         if (e.shiftKey) {
-          onSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+          onSelected(selected.includes(id)
+            ? selected.filter((x) => !objectIds.includes(x))
+            : [...selected, ...objectIds.filter((item) => !selected.includes(item))]);
         } else if (e.ctrlKey || e.metaKey) {
-          onSelected(selected.filter((x) => x !== id));
+          onSelected(selected.filter((x) => !objectIds.includes(x)));
         } else {
-          onSelected([id]);
+          onSelected(objectIds);
         }
         return;
       }
@@ -3007,15 +3038,21 @@ export default function ProfileEditor({
       /* افزودن نقطهٔ جدید به ترسیم در حال انجام */
       const { p } = applySnap(toWorld(e.clientX, e.clientY));
       let pt = constrainDraftPoint(p);
-      if (tool === "line" && draft.length === 1 && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)) {
+      if ((tool === "line" || tool === "polyline") && draft.length >= 1 && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)) {
         const requested = Number(lineLengthText.replace(",", "."));
-        const dz = pt.z - draft[0].z;
-        const dr = pt.r - draft[0].r;
+        const start = draft[draft.length - 1];
+        const dz = pt.z - start.z;
+        const dr = pt.r - start.r;
         const length = Math.hypot(dz, dr);
         if (requested > 0) pt = clampPt({
-          z: draft[0].z + (length > 1e-9 ? dz / length : 1) * requested,
-          r: draft[0].r + (length > 1e-9 ? dr / length : 0) * requested,
+          z: start.z + (length > 1e-9 ? dz / length : 1) * requested,
+          r: start.r + (length > 1e-9 ? dr / length : 0) * requested,
         });
+      }
+      if (tool === "polyline") {
+        setDraft([...draft, pt]);
+        setLineLengthText("");
+        return;
       }
       const need = NEED_PTS[tool];
 
@@ -3334,15 +3371,14 @@ export default function ProfileEditor({
   const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id));
 
   /* پیش‌نمایش ترسیم */
-  const lineCursor = tool === "line" && draft.length === 1 && cursor
-    ? constrainDraftPoint(cursor)
-    : cursor;
+  const straightDrawing = (tool === "line" && draft.length === 1) || (tool === "polyline" && draft.length >= 1);
+  const lineCursor = straightDrawing && cursor ? constrainDraftPoint(cursor) : cursor;
   const typedLineLength = lineLengthText !== "" && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)
     ? Number(lineLengthText.replace(",", "."))
     : null;
-  const measuredLineEnd = tool === "line" && draft.length === 1 && lineCursor && typedLineLength != null && typedLineLength > 0
+  const measuredLineEnd = straightDrawing && lineCursor && typedLineLength != null && typedLineLength > 0
     ? (() => {
-        const start = draft[0];
+        const start = draft[draft.length - 1];
         const dz = lineCursor.z - start.z;
         const dr = lineCursor.r - start.r;
         const length = Math.hypot(dz, dr);
@@ -3355,7 +3391,9 @@ export default function ProfileEditor({
   if (tool !== "select" && draft.length > 0 && cursor) {
     const pts = [...draft];
     const previewCursor = measuredLineEnd ?? lineCursor ?? cursor;
-    if (tool === "cubic" && pts.length === 4) {
+    if (tool === "polyline") {
+      previewSeg = makeSeg("line", [pts[pts.length - 1], previewCursor]);
+    } else if (tool === "cubic" && pts.length === 4) {
       /* اگر دستهٔ دوم هنوز ثبت نشده (draftSecondSet=false)، نشانگر دستهٔ متصل به  */
       /* پایان (c2) را جابه‌جا می‌کند؛ وگرنه دستهٔ متصل به شروع (c1) را.            */
       if (!draftSecondSet.current) pts[3] = cursor;
@@ -3382,8 +3420,8 @@ export default function ProfileEditor({
   /* اندازهٔ زندهٔ خط در حال ترسیم */
   let liveInfo = "";
   if (tool !== "select" && tool !== "move" && draft.length >= 1 && cursor) {
-    const a = draft[0];
-    const b = draft.length === 1 ? cursor : draft[1];
+    const a = tool === "polyline" ? draft[draft.length - 1] : draft[0];
+    const b = tool === "polyline" || draft.length === 1 ? (lineCursor ?? cursor) : draft[1];
     liveInfo = `طول ${dist(a, b).toFixed(1)}  •  زاویه ${lineAngle(a, b).toFixed(1)}°`;
   }
 
@@ -3863,7 +3901,18 @@ export default function ProfileEditor({
         {/* پیش‌نمایش ترسیم */}
         {previewSeg && (
           <g>
-            {tool === "line" && measuredLineEnd && lineCursor ? (
+            {tool === "polyline" && draft.length > 1 && (
+              <path
+                d={draft.map((point, index) => `${index ? "L" : "M"}${P(point.z, point.r)[0]},${P(point.z, point.r)[1]}`).join(" ")}
+                fill="none"
+                stroke="#45b394"
+                strokeWidth={2.2}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                pointerEvents="none"
+              />
+            )}
+            {straightDrawing && measuredLineEnd && lineCursor ? (
               <>
                 <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeLinecap="round" opacity={0.95} />
                 {/* نقطه دوم روی انتهای واقعیِ طول عددی قرار می‌گیرد. */}
@@ -3913,12 +3962,12 @@ export default function ProfileEditor({
         {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
             صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
         {tool !== "select" && tool !== "move" && cursor && drag.current?.mode !== "handle" &&
-          !(tool === "line" && measuredLineEnd) && (
+          !(straightDrawing && measuredLineEnd) && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
         {/* خوانش طول تایپی با فاصله از انتهای خط؛ خود انتهای خط‌چین بدون Marker می‌ماند. */}
-        {tool === "line" && draft.length === 1 && lineLengthText && lineCursor && (() => {
+        {straightDrawing && lineLengthText && lineCursor && (() => {
           const [x, y] = P(lineCursor.z, lineCursor.r);
           return (
             <g transform={`translate(${x + 12} ${y - 28})`} pointerEvents="none">
@@ -3929,7 +3978,7 @@ export default function ProfileEditor({
         })()}
 
         {/* نشانگر اسنپ */}
-        {snapHit && !(tool === "line" && measuredLineEnd) && (
+        {snapHit && !(straightDrawing && measuredLineEnd) && (
           <g>
             <rect
               x={P(snapHit.p.z, snapHit.p.r)[0] - 6}

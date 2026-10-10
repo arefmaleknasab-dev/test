@@ -20,6 +20,8 @@ export interface SketchSeg {
   c1?: SPoint; // منحنی درجه۲: تنها نقطه کنترل | درجه۳: دستهٔ اول
   c2?: SPoint; // منحنی درجه۳: دستهٔ دوم
   via?: SPoint; // کمان: نقطهٔ روی کمان
+  /** شناسه مشترک بخش‌های یک Polyline؛ بخش‌ها از نظر هندسی Line می‌مانند. */
+  polylineId?: number;
   /** شناسهٔ دو خط سازنده؛ برای جایگزینی Fillet قبلی روی همان جفت خط */
   filletOf?: [number, number];
   /** تعداد پاره‌خط‌های نمایش/تبدیل کمان؛ در نبود آن مقدار خودکار استفاده می‌شود. */
@@ -659,6 +661,7 @@ export function normalizeSketch(raw: unknown): SketchSeg[] | null {
       c1: s.c1 ? { z: s.c1.z, r: s.c1.r } : undefined,
       c2: s.c2 ? { z: s.c2.z, r: s.c2.r } : undefined,
       via: s.via ? { z: s.via.z, r: s.via.r } : undefined,
+      polylineId: typeof s.polylineId === "number" && Number.isFinite(s.polylineId) ? s.polylineId : undefined,
       filletOf: Array.isArray(s.filletOf) && s.filletOf.length === 2 && s.filletOf.every(Number.isFinite)
         ? [s.filletOf[0], s.filletOf[1]]
         : undefined,
