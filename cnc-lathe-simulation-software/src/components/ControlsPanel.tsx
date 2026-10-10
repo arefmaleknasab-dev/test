@@ -743,7 +743,7 @@ function ControlsPanel({
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button
                 type="button"
-                className="btn btn-brass justify-center py-2 text-[12px] font-bold"
+                className="btn justify-center py-2 text-[12px] font-bold"
                 onClick={() => {
                   onStrategy(pendingStrategy.id, pendingStrategy.name, pendingStrategy.types);
                   setPendingStrategy(null);
@@ -751,7 +751,7 @@ function ControlsPanel({
               >بله</button>
               <button
                 type="button"
-                className="btn justify-center py-2 text-[12px] font-bold"
+                className="btn btn-brass justify-center py-2 text-[12px] font-bold"
                 onClick={() => setPendingStrategy(null)}
               >خیر</button>
             </div>
