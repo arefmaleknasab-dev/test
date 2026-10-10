@@ -75,6 +75,8 @@ export const IconCursor = (p: P) =>
   base(p, <><path d="m5 3 14 8-6.5 1.8L9.5 19z" /></>);
 export const IconLine = (p: P) =>
   base(p, <><path d="M5 19 19 5" /><circle cx="5" cy="19" r="2.2" /><circle cx="19" cy="5" r="2.2" /></>);
+export const IconPolyline = (p: P) =>
+  base(p, <><path d="M3 18 10 7l5 8 6-10" /><circle cx="3" cy="18" r="1.8" /><circle cx="10" cy="7" r="1.8" /><circle cx="15" cy="15" r="1.8" /><circle cx="21" cy="5" r="1.8" /></>);
 export const IconQuad = (p: P) =>
   base(p, <><path d="M4 19C4 9 14 5 20 5" /><circle cx="4" cy="19" r="2.2" /><circle cx="20" cy="5" r="2.2" /><path d="M4 19 4 7" strokeDasharray="2 2" /><circle cx="4" cy="6" r="1.6" /></>);
 export const IconCubic = (p: P) =>

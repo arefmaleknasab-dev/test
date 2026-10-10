@@ -47,6 +47,7 @@ import {
   IconMinus,
   IconMove,
   IconPlus,
+  IconPolyline,
   IconQuad,
   IconRedo,
   IconSplit,
@@ -84,7 +85,7 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
-  { id: "polyline", name: "Polyline", key: "P", icon: <IconLine className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
+  { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
   { id: "arc", name: "کمان", key: "A", icon: <IconArc3 className="h-4 w-4" />, hint: "کمان سه‌نقطه‌ای: شروع، پایان، نقطه‌ای روی کمان" },
@@ -1058,6 +1059,17 @@ export default function ProfileEditor({
           setLineLengthText("");
           return;
         }
+        if (e.key === "Enter" && tool === "line" && lineCursor) {
+          e.preventDefault();
+          const seg = makeSeg("line", [draft[0], lineCursor]);
+          if (seg) {
+            commit([...segs, seg]);
+            onSelected([seg.id]);
+          }
+          setDraft([]);
+          setLineLengthText("");
+          return;
+        }
         if (e.key === "Enter" && tool === "polyline" && draft.length >= 2) {
           e.preventDefault();
           const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
@@ -1071,6 +1083,15 @@ export default function ProfileEditor({
           setLineLengthText("");
           return;
         }
+      }
+      /* در Polyline، Backspace و Ctrl+Z فقط یک رأس تأییدشده از Draft کم می‌کنند؛
+         تا پیش از Enter هیچ History سراسری ساخته نشده است. */
+      if (!editOpen && tool === "polyline" && draft.length &&
+          ((e.key === "Backspace" && !lineLengthText) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z"))) {
+        e.preventDefault();
+        setDraft((points) => points.slice(0, -1));
+        setLineLengthText("");
+        return;
       }
 
       /* ---------- حالت ویرایش مسیر: Esc اول انتخاب، بعد خروج ---------- */
@@ -1759,6 +1780,23 @@ export default function ProfileEditor({
   /* جداسازی نقطه: دیگر با نقاط هم‌مکان خود جابه‌جا نمی‌شود */
   const doUnjoin = (segId: number, part: "a" | "b") => {
     setSeparated((prev) => new Set(prev).add(handleKey(segId, part)));
+    const target = segs.find((segment) => segment.id === segId);
+    if (target?.polylineId != null) {
+      const members = segs.filter((segment) => segment.polylineId === target.polylineId);
+      const index = members.findIndex((segment) => segment.id === segId);
+      const cut = part === "a" ? index : index + 1;
+      const left = new Set(members.slice(0, cut).map((segment) => segment.id));
+      const right = new Set(members.slice(cut).map((segment) => segment.id));
+      const leftGroup = left.size > 1 ? members.find((segment) => left.has(segment.id))!.id : undefined;
+      const rightGroup = right.size > 1 ? members.find((segment) => right.has(segment.id))!.id : undefined;
+      /* دو سوی Unjoin شناسه‌های مستقل می‌گیرند؛ عضو تک‌خطی دیگر Polyline نیست. */
+      onSegs(segs.map((segment) => {
+        if (left.has(segment.id)) return { ...segment, polylineId: leftGroup };
+        if (right.has(segment.id)) return { ...segment, polylineId: rightGroup };
+        return segment;
+      }), true);
+      onSelected([segId]);
+    }
     setCtxMenu(null);
   };
 
@@ -2826,7 +2864,22 @@ export default function ProfileEditor({
       first = { id: s.id, kind: "line", a: { ...s.a }, b: at };
       second = { id: newSegId(), kind: "line", a: at, b: { ...s.b } };
     }
-    onSegs(segs.flatMap((segment) => segment.id === s.id ? [first, second] : [segment]), true);
+    let nextSegments = segs.flatMap((segment) => segment.id === s.id ? [first, second] : [segment]);
+    if (s.polylineId != null) {
+      const members = segs.filter((segment) => segment.polylineId === s.polylineId);
+      const index = members.findIndex((segment) => segment.id === s.id);
+      const leftIds = new Set([...members.slice(0, index).map((segment) => segment.id), first.id]);
+      const rightIds = new Set([second.id, ...members.slice(index + 1).map((segment) => segment.id)]);
+      const leftGroup = leftIds.size > 1 ? first.id : undefined;
+      const rightGroup = rightIds.size > 1 ? second.id : undefined;
+      nextSegments = nextSegments.map((segment) => {
+        if (leftIds.has(segment.id)) return { ...segment, polylineId: leftGroup };
+        if (rightIds.has(segment.id)) return { ...segment, polylineId: rightGroup };
+        return segment;
+      });
+    }
+    onSegs(nextSegments, true);
+    onSelected([first.id]);
     onSplit({ ...split, z: at.z, r: at.r });
     setSplitCtxMenu(null);
   };
@@ -2894,7 +2947,32 @@ export default function ProfileEditor({
     /* کلیک‌راست بدون درگ: در حالت ترسیم لغو پیش‌نویس، در انتخاب منوی اتصال */
     if (d?.mode === "rwait") {
       if (!d.moved) {
-        if (draft.length) cancelDraft();
+        if (draft.length && (tool === "line" || tool === "polyline")) {
+          /* در ابزارهای خطی، راست‌کلیک دقیقاً معادل Enter است. */
+          if (measuredLineEnd) {
+            if (tool === "polyline") setDraft([...draft, measuredLineEnd]);
+            else {
+              const seg = makeSeg("line", [draft[0], measuredLineEnd]);
+              if (seg) { commit([...segs, seg]); onSelected([seg.id]); }
+              setDraft([]);
+            }
+            setLineLengthText("");
+          } else if (tool === "line" && lineCursor) {
+            const seg = makeSeg("line", [draft[0], lineCursor]);
+            if (seg) { commit([...segs, seg]); onSelected([seg.id]); }
+            setDraft([]);
+          } else if (tool === "polyline") {
+            const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
+            if (parts.length) {
+              const groupId = parts[0].id;
+              const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
+              commit([...segs, ...grouped]);
+              onSelected(grouped.map((part) => part.id));
+            }
+            setDraft([]);
+            setLineLengthText("");
+          }
+        } else if (draft.length) cancelDraft();
         else if (editOpen) openSpeedMenu(e.clientX, e.clientY);
         else openJoinMenu(e.clientX, e.clientY);
       }
