@@ -389,7 +389,9 @@ export function flattenSketch(segs: SketchSeg[], blankR: number, blankL: number)
     const pts = s.kind === "line" ? [s.a, s.b] : segPoints(s);
     for (const p of pts) {
       if (!Number.isFinite(p.z) || !Number.isFinite(p.r)) continue;
-      raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0.2, p.r)) });
+      /* نقطهٔ واقعی روی محور باید R=0 بماند؛ کف ۰٫۲mm ابتدای مسیر پرداخت خارج
+         را از پروفایل اصلی جدا می‌کرد و یک زاویهٔ مصنوعی می‌ساخت. */
+      raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)) });
     }
   }
   if (raw.length < 2) return [];
@@ -619,7 +621,7 @@ export function branchPoints(branch: SPoint[], blankR: number, blankL: number, k
   const raw: SPoint[] = [];
   for (const p of branch) {
     if (!Number.isFinite(p.z) || !Number.isFinite(p.r)) continue;
-    raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0.2, p.r)) });
+    raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)) });
   }
   if (raw.length < 2) return [];
   raw.sort((x, y) => x.z - y.z);
