@@ -2999,6 +2999,22 @@ export default function ProfileEditor({
         setMoveSession(null);
         chooseTool("select");
         setCursor(null);
+      } else if (d?.mode === "pan" && moveSession && camRef.current) {
+        /* بعد از Pan هم‌زمان، مبنای Move با دوربین جدید Rebase می‌شود تا هندسه
+           در اولین حرکت بعدی نشانگر نپرد و نشست جابه‌جایی ادامه پیدا کند. */
+        const pointer = toWorld(e.clientX, e.clientY);
+        const dz = moveSession.pointer.z - moveSession.origin.z;
+        const dr = moveSession.pointer.r - moveSession.origin.r;
+        const scale = camRef.current.s;
+        setMoveSession({
+          ...moveSession,
+          origin: { z: pointer.z - dz, r: pointer.r - dr },
+          pointer,
+          clientX: e.clientX - dz * scale,
+          clientY: e.clientY + dr * scale,
+          lastClientX: e.clientX,
+          lastClientY: e.clientY,
+        });
       }
       return;
     }
@@ -4669,8 +4685,8 @@ export default function ProfileEditor({
         </div>
       )}
 
-      {/* راهنمای مرحلهٔ ترسیم */}
-      {tool !== "select" && (
+      {/* راهنمای مرحلهٔ ترسیم؛ Move مرحلهٔ شماره‌دار ندارد. */}
+      {tool !== "select" && tool !== "move" && (
         <div className="anim-in absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
           <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
           {stepText}
