@@ -1673,8 +1673,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[]): GenResu
             /* فقط ناحیهٔ اول هر لایه از محور و دهانه شروع می‌شود. بعد از هر قله،
                ابزار در همان شعاع جلوتر قرار گرفته و مستقیماً در −X وارد می‌شود. */
             if (intervalIndex === 0) {
-              if (!preparedForNextLayer) {
-                rawRapid(0, mouthX);
+              if (!preparedForNextLayer && layerIndex === 0) {
+                /* فقط نخستین لایه از صفحه ورود دهانه آغاز می‌شود. در لایه‌های
+                   بعدی اگر ابزار به محور برگشته باشد، همان‌جا در X امن قرار دارد
+                   و باید مستقیم در −X وارد پاس بعدی شود؛ بازگشت دوباره به mouthX
+                   یک حرکت +X کاملاً اضافی می‌ساخت. */
                 rawRapid(2 * startR, mouthX);
               }
               preparedForNextLayer = false;
