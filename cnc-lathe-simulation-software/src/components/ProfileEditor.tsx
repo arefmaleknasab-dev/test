@@ -1185,6 +1185,15 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Escape") {
+        if (tool === "move") {
+          if (moveSession?.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+          else if (moveSession) onSegs(moveSession.base, false);
+          setMoveBox(null);
+          setMoveSession(null);
+          drag.current = null;
+          chooseTool("select");
+          return;
+        }
         if (drag.current?.mode === "marquee") {
           drag.current = null;
           setMarquee(null);
@@ -2962,7 +2971,19 @@ export default function ProfileEditor({
     const d = drag.current;
     drag.current = null;
     setSnapHit(null);
-    if (tool === "move" || tool === "fillet") return;
+    if (tool === "fillet") return;
+    if (tool === "move") {
+      if (d?.mode === "rwait" && !d.moved) {
+        /* راست‌کلیک ساده دقیقاً مانند Esc: لغو Preview و خروج از Move. */
+        if (moveSession?.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+        else if (moveSession) onSegs(moveSession.base, false);
+        setMoveBox(null);
+        setMoveSession(null);
+        chooseTool("select");
+        setCursor(null);
+      }
+      return;
+    }
 
     /* --- حالت ویرایش مسیر: ثبت ژست (نرمال‌سازی + تاریخچه) --- */
     if (d?.mode === "eline" || d?.mode === "evert") {
@@ -4442,7 +4463,15 @@ export default function ProfileEditor({
             onChange={(e) => setMoveBox({ ...moveBox, value: e.target.value, error: "" })}
             onKeyDown={(e) => {
               e.stopPropagation();
-              if (e.key === "Escape") { if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false); else onSegs(moveSession.base, false); setMoveBox(null); setMoveSession(null); return; }
+              if (e.key === "Escape") {
+                if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+                else onSegs(moveSession.base, false);
+                setMoveBox(null);
+                setMoveSession(null);
+                drag.current = null;
+                chooseTool("select");
+                return;
+              }
               if (e.key === "Tab") { e.preventDefault(); setMoveSession({ ...moveSession, mode: moveSession.mode === "relative" ? "absolute" : "relative" }); return; }
               if (e.key !== "Enter") return;
               const parts = moveBox.value.split(",");
