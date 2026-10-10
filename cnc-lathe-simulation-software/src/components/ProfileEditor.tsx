@@ -881,6 +881,9 @@ export default function ProfileEditor({
   useEffect(() => {
     if (editOpen) {
       /* ابزارهای ترسیم پروفایل در ویرایش مسیر مجاز نیستند. */
+      /* state و ref ابزار باید همگام بمانند؛ اختلاف آن‌ها باعث می‌شد chooseTool
+         تصور کند Move از قبل فعال است و کلیک کاربر را نادیده بگیرد. */
+      toolRef.current = "select";
       setTool("select");
       setDraft([]);
       setCursor(null);
@@ -2208,6 +2211,21 @@ export default function ProfileEditor({
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
+    /* Pan راست/وسط باید بر نشست فعال Move اولویت داشته باشد. */
+    const cameraGesture = drag.current;
+    if (cameraGesture?.mode === "pan") {
+      if (Math.hypot(e.clientX - cameraGesture.sx, e.clientY - cameraGesture.sy) > 3) cameraGesture.moved = true;
+      setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
+      return;
+    }
+    if (cameraGesture?.mode === "rwait") {
+      if (Math.hypot(e.clientX - cameraGesture.sx, e.clientY - cameraGesture.sy) > 4) {
+        cameraGesture.moved = true;
+        drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
+        setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
+      }
+      return;
+    }
     if (tool === "fillet" && e.button === 0 && !editOpen) {
       const hit = hitSeg(raw);
       if (!hit || hit.kind !== "line") {
