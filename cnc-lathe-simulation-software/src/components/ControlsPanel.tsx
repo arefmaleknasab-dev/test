@@ -29,7 +29,7 @@ interface Props {
   activePreset: string | null;
   onApplyPreset: (p: Preset) => void;
 
-  onStrategy: (name: string) => void;
+  onStrategy: (id: string, name: string, types: OpType[]) => void;
   isolatedOpId: number | null;
   onIsolate: (id: number | null) => void;
   onNotify: (msg: string) => void;
@@ -50,6 +50,7 @@ function ControlsPanel({
 }: Props) {
   /* امضای استراتژی فعلی برای تشخیص پیش‌تنظیم فعال (با قاعدهٔ پیش‌فرض: بیرونی‌ها اول) */
   const sig = outerFirstOps(params.ops.filter((o) => o.on)).map((o) => o.type).join(",");
+  const [pendingStrategy, setPendingStrategy] = useState<(typeof STRATEGIES)[number] | null>(null);
   const sectionsAreCollapsed = () => {
     const saved = loadCollapsedSections();
     return COLLAPSIBLE_SECTION_TITLES.every((title) => !!saved[title]);
@@ -195,20 +196,7 @@ function ControlsPanel({
             return (
               <button
                 key={st.id}
-                onClick={() => {
-                  onParams({
-                    ops: makeOps(st.types),
-                    ...(st.id === "bowl"
-                      ? {
-                          holder2: {
-                            xOff: Math.max(MIN_HOLDER2_OFFSET, params.holder2.xOff),
-                            yOff: Math.max(MIN_HOLDER2_OFFSET, params.holder2.yOff),
-                          },
-                        }
-                      : {}),
-                  });
-                  onStrategy(st.name);
-                }}
+                onClick={() => setPendingStrategy(st)}
                 className={cn(
                   "rounded-md border px-1 py-1.5 text-[10.5px] font-bold transition-all hover:-translate-y-0.5",
                   on ? "border-teal/70 bg-teal/10 text-teal" : "border-edge bg-panel2 text-mute hover:border-edge2 hover:text-ink"
@@ -745,6 +733,31 @@ function ControlsPanel({
       <p className="px-1 pb-2 text-[10.5px] leading-5 text-dim">
         عملیات‌ها به ترتیبِ فهرست اجرا می‌شوند؛ با جابه‌جایی، حذف و افزودن آن‌ها استراتژی شخصی خود را بسازید. فلش‌ها روی مسیر، جهت حرکت ابزار را نشان می‌دهند.
       </p>
+
+      {pendingStrategy && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/65 p-4 backdrop-blur-[2px]" dir="rtl" role="dialog" aria-modal="true">
+          <div className="w-full max-w-[390px] rounded-xl border border-brass/45 bg-panel p-4 shadow-[0_24px_80px_rgba(0,0,0,.75)]">
+            <p className="text-center text-[13px] font-bold leading-7 text-ink">
+              همه تغییرات بازنشانی می شود آیا از تغییرات ایجاد شده صرف نظر میکنید؟
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="btn btn-brass justify-center py-2 text-[12px] font-bold"
+                onClick={() => {
+                  onStrategy(pendingStrategy.id, pendingStrategy.name, pendingStrategy.types);
+                  setPendingStrategy(null);
+                }}
+              >بله</button>
+              <button
+                type="button"
+                className="btn justify-center py-2 text-[12px] font-bold"
+                onClick={() => setPendingStrategy(null)}
+              >خیر</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

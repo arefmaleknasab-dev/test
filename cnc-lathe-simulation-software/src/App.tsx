@@ -9,7 +9,7 @@ import SimulationView from "./components/SimulationView";
 import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, Params, PPoint, Preset } from "./lib/lathe";
+import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, OpType, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPathPoints, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, segMid, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
@@ -531,7 +531,28 @@ export default function App() {
     // onEditBuf بر پایه refهای پایدار کار می‌کند؛ هویت callback فقط با پارامتر مولد عوض می‌شود.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onParamsCb]);
-  const onStrategyCb = useCallback((name: string) => showToast(`استراتژی «${name}» فعال شد`), [showToast]);
+  const onStrategyCb = useCallback((id: string, name: string, types: OpType[]) => {
+    /* انتخاب استراتژی یک Reset اتمیک است؛ Snapshot کامل پیش از آن نگه داشته
+       می‌شود تا Ctrl+Z پارامترها، Overrideها و Edit Path را یکجا برگرداند. */
+    pushPast(snap());
+    commitRef.current = null;
+    pendingParamRebaseRef.current = null;
+    setGcodeOvr({});
+    setEditBuf(null);
+    setEditOpen(false);
+    setParams((current) => ({
+      ...current,
+      ops: makeOps(types),
+      ...(id === "bowl" ? {
+        holder2: {
+          xOff: Math.max(MIN_HOLDER2_OFFSET, current.holder2.xOff),
+          yOff: Math.max(MIN_HOLDER2_OFFSET, current.holder2.yOff),
+        },
+      } : {}),
+    }));
+    setHistVer((value) => value + 1);
+    showToast(`استراتژی «${name}» فعال شد`);
+  }, [showToast]);
 
   /* ---------- چیدمان داک (پنجره‌ها) ---------- */
   const setPanel = useCallback((id: PanelId, patch: Partial<PanelState>) => {
