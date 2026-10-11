@@ -709,6 +709,19 @@ function reflectSegment(segment: SketchSeg, a: SPoint, b: SPoint): SketchSeg {
   };
 }
 
+function makeMirroredSegments(source: SketchSeg[], a: SPoint, b: SPoint): SketchSeg[] {
+  const groupMap = new Map<number, number>();
+  const mirrored = source.map((segment) => reflectSegment(cloneSeg(segment), a, b));
+  source.forEach((segment, index) => {
+    if (segment.polylineId != null && !groupMap.has(segment.polylineId)) groupMap.set(segment.polylineId, mirrored[index].id);
+  });
+  mirrored.forEach((segment, index) => {
+    const oldGroup = source[index].polylineId;
+    segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
+  });
+  return mirrored;
+}
+
 type CopySession = {
   sourceIds: number[];
   base: SketchSeg[];
@@ -775,6 +788,7 @@ export default function ProfileEditor({
   const [moveSession, setMoveSession] = useState<MoveSession | null>(null);
   const [copySession, setCopySession] = useState<CopySession | null>(null);
   const [mirrorSession, setMirrorSession] = useState<MirrorSession | null>(null);
+  const [mirrorKeepCopy, setMirrorKeepCopy] = useState(true);
   const [copyBox, setCopyBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const copyInputRef = useRef<HTMLInputElement>(null);
   const moveInputRef = useRef<HTMLInputElement>(null);
@@ -2340,7 +2354,7 @@ export default function ProfileEditor({
           ids,
           base: segs.map((segment) => ({ ...segment })),
           source: segs.filter((segment) => ids.includes(segment.id)),
-          keepCopy: true,
+          keepCopy: mirrorKeepCopy,
           p1: selected.length ? raw : undefined,
           cursor: selected.length ? raw : undefined,
         });
@@ -2355,20 +2369,14 @@ export default function ProfileEditor({
         const dz = raw.z - mirrorSession.p1.z, dr = raw.r - mirrorSession.p1.r;
         if (e.shiftKey) p2 = Math.abs(dz) >= Math.abs(dr) ? { z: raw.z, r: mirrorSession.p1.r } : { z: mirrorSession.p1.z, r: raw.r };
         if (dist(mirrorSession.p1, p2) < 1e-8) return;
-        const groupMap = new Map<number, number>();
-        const mirrored = mirrorSession.source.map((segment) => reflectSegment(cloneSeg(segment), mirrorSession.p1!, p2));
-        mirrorSession.source.forEach((segment, index) => {
-          if (segment.polylineId != null && !groupMap.has(segment.polylineId)) groupMap.set(segment.polylineId, mirrored[index].id);
-        });
-        mirrored.forEach((segment, index) => {
-          const oldGroup = mirrorSession.source[index].polylineId;
-          segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
-        });
+        const mirrored = makeMirroredSegments(mirrorSession.source, mirrorSession.p1, p2);
         const next = mirrorSession.keepCopy
           ? [...mirrorSession.base, ...mirrored]
           : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrored];
-        onSegs(next, false);
-        setMirrorSession({ ...mirrorSession, p2, cursor: p2, mirrored });
+        onSegs(next, true);
+        onSelected(mirrored.map((segment) => segment.id));
+        setMirrorSession(null);
+        chooseTool("select");
         return;
       }
     }
@@ -2729,7 +2737,17 @@ export default function ProfileEditor({
       const cursor = e.shiftKey
         ? (Math.abs(dz) >= Math.abs(dr) ? { z: raw.z, r: mirrorSession.p1.r } : { z: mirrorSession.p1.z, r: raw.r })
         : raw;
-      setMirrorSession({ ...mirrorSession, cursor });
+      if (dist(mirrorSession.p1, cursor) > 1e-8) {
+        const mirrored = makeMirroredSegments(mirrorSession.source, mirrorSession.p1, cursor);
+        const next = mirrorSession.keepCopy
+          ? [...mirrorSession.base, ...mirrored]
+          : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrored];
+        onSegs(next, false);
+        setMirrorSession({ ...mirrorSession, cursor, mirrored });
+      } else {
+        onSegs(mirrorSession.base, false);
+        setMirrorSession({ ...mirrorSession, cursor, mirrored: undefined });
+      }
       return;
     }
     if (tool === "copy" && copySession && !editOpen) {
@@ -4513,11 +4531,14 @@ export default function ProfileEditor({
         {mirrorSession?.p1 && mirrorSession.cursor && (() => {
           const [x1, y1] = P(mirrorSession.p1!.z, mirrorSession.p1!.r);
           const [x2, y2] = P(mirrorSession.cursor!.z, mirrorSession.cursor!.r);
+          const horizontal = Math.abs(mirrorSession.cursor!.r - mirrorSession.p1!.r) < 1e-9;
+          const vertical = Math.abs(mirrorSession.cursor!.z - mirrorSession.p1!.z) < 1e-9;
+          const guideColor = horizontal ? "#754052" : vertical ? "#3b7373" : "#28dfc2";
           return (
             <g pointerEvents="none">
-              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
-              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke="#28dfc2" strokeWidth={1.3} />
-              <circle cx={x2} cy={y2} r={3} fill="#071018" stroke="#28dfc2" strokeWidth={1.3} />
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
+              <circle cx={x2} cy={y2} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
             </g>
           );
         })()}
@@ -4572,39 +4593,7 @@ export default function ProfileEditor({
 
       </svg>
 
-      {mirrorSession?.p2 && mirrorSession.mirrored && (
-        <div dir="rtl" className="absolute right-3 top-3 z-50 w-44 rounded-lg border border-[#00a9c7] bg-[#071018]/95 p-3 text-xs text-ink shadow-2xl shadow-black/60">
-          <div className="mb-2 font-bold text-[#26e6c7]">پیش‌نمایش قرینه</div>
-          <label className="mb-3 flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              checked={mirrorSession.keepCopy}
-              onChange={(event) => {
-                const keepCopy = event.target.checked;
-                const next = keepCopy
-                  ? [...mirrorSession.base, ...mirrorSession.mirrored!]
-                  : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrorSession.mirrored!];
-                onSegs(next, false);
-                setMirrorSession({ ...mirrorSession, keepCopy });
-              }}
-            />
-            <span>کپی</span>
-          </label>
-          <div className="flex gap-2">
-            <button className="flex-1 rounded bg-[#28dfc2] px-2 py-1.5 font-bold text-[#071018]" onClick={() => {
-              onSegs(segs, true);
-              onSelected(mirrorSession.mirrored!.map((segment) => segment.id));
-              setMirrorSession(null);
-              chooseTool("select");
-            }}>تأیید</button>
-            <button className="flex-1 rounded border border-edge2 bg-panel3 px-2 py-1.5" onClick={() => {
-              onSegs(mirrorSession.base, false);
-              setMirrorSession(null);
-              chooseTool("select");
-            }}>لغو</button>
-          </div>
-        </div>
-      )}
+
 
       {/* ---------- منوی راست‌کلیک سرعت Segmentهای انتخاب‌شده ---------- */}
       {speedMenu && editOpen && selL.length > 0 && (
@@ -4920,6 +4909,7 @@ export default function ProfileEditor({
                   setMoveSession(null);
                   drag.current = null;
                 }
+                if (t.id === "mirror" && tool !== "mirror") setMirrorKeepCopy(true);
                 chooseTool(t.id);
                 cancelDraft();
               }}
@@ -5037,6 +5027,38 @@ export default function ProfileEditor({
               </button>
             ))}
           </div>
+        </div>
+      )}
+
+      {tool === "mirror" && (
+        <div className="anim-in absolute top-2.5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
+          <label className="flex cursor-pointer items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={mirrorSession?.keepCopy ?? mirrorKeepCopy}
+              onChange={(event) => {
+                const keepCopy = event.target.checked;
+                setMirrorKeepCopy(keepCopy);
+                if (!mirrorSession) return;
+                if (mirrorSession.mirrored) {
+                  const next = keepCopy
+                    ? [...mirrorSession.base, ...mirrorSession.mirrored]
+                    : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrorSession.mirrored];
+                  onSegs(next, false);
+                }
+                setMirrorSession({ ...mirrorSession, keepCopy });
+              }}
+            />
+            کپی
+          </label>
+          <span className="text-[10px] font-normal text-mute">{!mirrorSession?.p1 ? "نقطه شروع محور" : "نقطه پایان محور"}</span>
+          <button onClick={() => {
+            if (mirrorSession) onSegs(mirrorSession.base, false);
+            setMirrorSession(null);
+            chooseTool("select");
+          }} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="لغو (Esc)">
+            <IconX className="h-3 w-3" />
+          </button>
         </div>
       )}
 
