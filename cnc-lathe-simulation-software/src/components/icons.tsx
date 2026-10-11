@@ -121,4 +121,4 @@ export const IconMirror = (p: P) => (
 );
 
 export const IconFillet = (p: P) =>
-  base(p, <><path d="M4 4v16h16" /><path d="M4 13a7 7 0 0 0 7 7" /></>);
+  base(p, <><path d="M4 4v16h16" /><path d="M4 7.5A12.5 12.5 0 0 0 16.5 20" strokeWidth={2.4} /></>);
