@@ -94,17 +94,14 @@ export const IconHand = (p: P) =>
 
 export const IconMove = (p: P) =>
   base(p, <><path d="M12 2v20M2 12h20" /><path d="m8.5 5.5 3.5-3.5 3.5 3.5M8.5 18.5 12 22l3.5-3.5M5.5 8.5 2 12l3.5 3.5M18.5 8.5 22 12l-3.5 3.5" /></>);
-export const IconMirror = (p: P) =>
-  base(p, <>
-    {/* خط‌چین عمودی مرکز */}
-    <line x1="12" y1="4" x2="12" y2="7" />
-    <line x1="12" y1="10.5" x2="12" y2="13.5" />
-    <line x1="12" y1="17" x2="12" y2="20" />
-    {/* بال سمت چپ */}
-    <path d="M 9.5 5.5 C 5.5 4 3 8 7 12 C 3 16 5.5 20 9.5 18.5" />
-    {/* بال سمت راست */}
-    <path d="M 14.5 5.5 C 18.5 4 21 8 17 12 C 21 16 18.5 20 14.5 18.5" />
-  </>);
+export const IconMirror = (p: P) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-4 h-4"} viewBox="0 0 100 100" aria-hidden>
+    <rect width="100" height="100" fill="#303030" rx="3" />
+    <path d="M43 29 C35 18,27 17,20 21 C12 25,11 35,17 42 L29 53 L22 61 C14 70,17 80,25 83 C35 87,43 79,43 68" fill="none" stroke="#AFAFAF" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M57 29 C65 18,73 17,80 21 C88 25,89 35,83 42 L71 53 L78 61 C86 70,83 80,75 83 C65 87,57 79,57 68" fill="none" stroke="#AFAFAF" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
+    <line x1="50" y1="12" x2="50" y2="88" stroke="#BDBDBD" strokeWidth="5.5" strokeDasharray="10 6" />
+  </svg>
+);
 
 export const IconFillet = (p: P) =>
   base(p, <><path d="M4 4v16h16" /><path d="M4 13a7 7 0 0 0 7 7" /></>);
