@@ -3723,6 +3723,9 @@ export default function ProfileEditor({
     const rounded = Math.round(value * 1000) / 1000;
     return Object.is(rounded, -0) ? "0" : String(rounded);
   };
+  const copyReadout = copySession
+    ? `${concise(copySession.pointer.z - copySession.origin.z)}, ${concise(copySession.pointer.r - copySession.origin.r)}`
+    : "0, 0";
   let moveReadout = "0, 0";
   if (moveSession) {
     const editBase = moveSession.editBase?.find((vertex) => moveSession.editVertexIds?.includes(vertex.id));
@@ -4683,6 +4686,9 @@ export default function ProfileEditor({
             }}
           />
           {copyBox.error && <div className="mt-1 text-center text-[9px] text-danger" dir="rtl">{copyBox.error}</div>}
+          <div className="mt-1 whitespace-nowrap pl-0.5 font-mono text-[10px] font-bold leading-none tracking-wide text-[#26e6c7]">
+            {copyReadout}
+          </div>
         </div>
       )}
 
