@@ -749,14 +749,45 @@ export default function ProfileEditor({
   useEffect(() => { if (copyBox) requestAnimationFrame(() => copyInputRef.current?.focus()); }, [!!copyBox]);
   useEffect(() => {
     const releaseAxis = (event: KeyboardEvent) => {
-      if (event.key === "Shift") {
-        setMoveSession((session) => session ? { ...session, axis: "free" } : session);
-        setCopySession((session) => session ? { ...session, axis: "free" } : session);
-      }
+      if (event.key === "Shift") setMoveSession((session) => session ? { ...session, axis: "free" } : session);
     };
     window.addEventListener("keyup", releaseAxis);
     return () => window.removeEventListener("keyup", releaseAxis);
   }, []);
+  /* در Copy، Shift یک کلید Toggle است: بار اول قفل محور غالب و بار دوم آزاد. */
+  useEffect(() => {
+    const toggleCopyAxis = (event: KeyboardEvent) => {
+      if (event.key !== "Shift" || event.repeat || !copySession) return;
+      const dz = copySession.pointer.z - copySession.origin.z;
+      const dr = copySession.pointer.r - copySession.origin.r;
+      const axis: MoveAxis = copySession.axis === "free" ? (Math.abs(dz) >= Math.abs(dr) ? "x" : "y") : "free";
+      let pointer = copySession.pointer;
+      const numericDistance = copyBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(copyBox.value) : null;
+      if (axis === "x") pointer = { z: copySession.origin.z + (numericDistance == null ? dz : Math.sign(dz || 1) * numericDistance), r: copySession.origin.r };
+      else if (axis === "y") pointer = { z: copySession.origin.z, r: copySession.origin.r + (numericDistance == null ? dr : Math.sign(dr || 1) * numericDistance) };
+      const ndx = pointer.z - copySession.origin.z;
+      const ndr = pointer.r - copySession.origin.r;
+      onSegs([...copySession.base, ...copySession.copies.map((segment) => moveSeg(segment, ndx, ndr))], false);
+      setCopySession({ ...copySession, axis, pointer });
+    };
+    window.addEventListener("keydown", toggleCopyAxis, true);
+    return () => window.removeEventListener("keydown", toggleCopyAxis, true);
+  }, [copySession, copyBox?.value, onSegs]);
+  /* عدد ساده در Copy، بدون Enter فاصله را شعاعی قفل می‌کند. */
+  useEffect(() => {
+    if (!copySession || !copyBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/)) return;
+    const amount = Number(copyBox.value);
+    const dz0 = copySession.pointer.z - copySession.origin.z;
+    const dr0 = copySession.pointer.r - copySession.origin.r;
+    const length = Math.hypot(dz0, dr0);
+    let dz = length > 1e-9 ? amount * dz0 / length : amount;
+    let dr = length > 1e-9 ? amount * dr0 / length : 0;
+    if (copySession.axis === "x") { dz = Math.sign(dz0 || 1) * amount; dr = 0; }
+    else if (copySession.axis === "y") { dz = 0; dr = Math.sign(dr0 || 1) * amount; }
+    const pointer = { z: copySession.origin.z + dz, r: copySession.origin.r + dr };
+    onSegs([...copySession.base, ...copySession.copies.map((segment) => moveSeg(segment, dz, dr))], false);
+    setCopySession((session) => session ? { ...session, pointer } : session);
+  }, [copyBox?.value]);
   /* پیش‌نمایش عددی بدون ثبت در تاریخچه؛ Enter همان هندسه را به یک گام Undo تبدیل می‌کند. */
   useEffect(() => {
     if (!moveBox?.value.trim() || !moveSession) return;
@@ -2611,10 +2642,19 @@ export default function ProfileEditor({
     }
     if (tool === "copy" && copySession && !editOpen) {
       const rawDelta = quantStep(raw, copySession.origin);
-      const axis: MoveAxis = e.shiftKey
-        ? (copySession.axis === "free" ? (Math.abs(rawDelta.z) >= Math.abs(rawDelta.r) ? "x" : "y") : copySession.axis)
-        : "free";
-      const delta = axis === "x" ? { z: rawDelta.z, r: 0 } : axis === "y" ? { z: 0, r: rawDelta.r } : rawDelta;
+      const axis = copySession.axis;
+      const numericDistance = copyBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(copyBox.value) : null;
+      let delta = axis === "x" ? { z: rawDelta.z, r: 0 } : axis === "y" ? { z: 0, r: rawDelta.r } : rawDelta;
+      if (numericDistance != null) {
+        if (axis === "x") delta = { z: Math.sign(rawDelta.z || 1) * numericDistance, r: 0 };
+        else if (axis === "y") delta = { z: 0, r: Math.sign(rawDelta.r || 1) * numericDistance };
+        else {
+          const length = Math.hypot(rawDelta.z, rawDelta.r);
+          delta = length > 1e-9
+            ? { z: numericDistance * rawDelta.z / length, r: numericDistance * rawDelta.r / length }
+            : { z: numericDistance, r: 0 };
+        }
+      }
       const pointer = { z: copySession.origin.z + delta.z, r: copySession.origin.r + delta.r };
       const movedCopies = copySession.copies.map((segment) => moveSeg(segment, delta.z, delta.r));
       onSegs([...copySession.base, ...movedCopies], false);
