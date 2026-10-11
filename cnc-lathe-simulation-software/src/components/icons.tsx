@@ -95,26 +95,26 @@ export const IconHand = (p: P) =>
 export const IconMove = (p: P) =>
   base(p, <><path d="M12 2v20M2 12h20" /><path d="m8.5 5.5 3.5-3.5 3.5 3.5M8.5 18.5 12 22l3.5-3.5M5.5 8.5 2 12l3.5 3.5M18.5 8.5 22 12l-3.5 3.5" /></>);
 export const IconMirror = (p: P) => (
-  <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-4 h-4"} viewBox="-1 -1 130 121" fill="none" aria-hidden>
+  <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-5 h-5"} viewBox="14 14 99 92" fill="none" aria-hidden>
     {/* هندسه از SVG مرجع 130×121 گرفته شده؛ currentColor آن را با سایر ابزارها یک‌رنگ می‌کند. */}
     <path
       d="M53 39C46 29 40 25 33 25C25 25 20 30 20 39C20 46 24 50 30 56L41 67C36 72 31 77 31 80C31 89 36 94 41 94C49 94 53 88 53 81"
       stroke="currentColor"
-      strokeWidth="6"
+      strokeWidth="8"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
     <path
       d="M74 39C81 29 87 25 94 25C102 25 107 30 107 39C107 46 103 50 97 56L86 67C91 72 96 77 96 80C96 89 91 94 86 94C78 94 74 88 74 81"
       stroke="currentColor"
-      strokeWidth="6"
+      strokeWidth="8"
       strokeLinecap="round"
       strokeLinejoin="round"
     />
     <path
       d="M63 20V28M63 38V46M63 55V63M63 73V81M63 91V99"
       stroke="currentColor"
-      strokeWidth="6"
+      strokeWidth="8"
       strokeLinecap="round"
     />
   </svg>
