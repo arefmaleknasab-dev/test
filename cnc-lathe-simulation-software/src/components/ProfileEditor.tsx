@@ -78,11 +78,12 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "copy" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
+  { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
@@ -92,11 +93,12 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, copy: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   move: [],
+  copy: [],
   fillet: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
   polyline: ["نقطهٔ شروع Polyline", "نقطهٔ بعدی — Enter پایان، Esc لغو"],
@@ -674,6 +676,14 @@ function arithmeticValue(source: string): number | null {
 }
 
 type MoveAxis = "free" | "x" | "y";
+type CopySession = {
+  sourceIds: number[];
+  base: SketchSeg[];
+  copies: SketchSeg[];
+  origin: SPoint;
+  pointer: SPoint;
+};
+
 type MoveSession = {
   ids: number[]; base: SketchSeg[]; origin: SPoint; clientX: number; clientY: number;
   pointer: SPoint; axis: MoveAxis; mode: "relative" | "absolute";
@@ -728,10 +738,14 @@ export default function ProfileEditor({
   const filletInputRef = useRef<HTMLInputElement>(null);
   const [moveBox, setMoveBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const [moveSession, setMoveSession] = useState<MoveSession | null>(null);
+  const [copySession, setCopySession] = useState<CopySession | null>(null);
+  const [copyBox, setCopyBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const copyInputRef = useRef<HTMLInputElement>(null);
   const moveInputRef = useRef<HTMLInputElement>(null);
   const [lastMove, setLastMove] = useState<{ dz: number; dr: number } | null>(null);
   useEffect(() => { if (filletBox) requestAnimationFrame(() => { filletInputRef.current?.focus(); filletInputRef.current?.select(); }); }, [!!filletBox]);
   useEffect(() => { if (moveBox) requestAnimationFrame(() => { moveInputRef.current?.focus(); moveInputRef.current?.select(); }); }, [!!moveBox]);
+  useEffect(() => { if (copyBox) requestAnimationFrame(() => copyInputRef.current?.focus()); }, [!!copyBox]);
   useEffect(() => {
     const releaseAxis = (event: KeyboardEvent) => {
       if (event.key === "Shift") setMoveSession((session) => session ? { ...session, axis: "free" } : session);
@@ -1188,6 +1202,14 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Escape") {
+        if (tool === "copy") {
+          if (copySession) onSegs(copySession.base, false);
+          setCopySession(null);
+          setCopyBox(null);
+          drag.current = null;
+          chooseTool("select");
+          return;
+        }
         if (tool === "move") {
           if (moveSession?.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
           else if (moveSession) onSegs(moveSession.base, false);
@@ -2231,6 +2253,33 @@ export default function ProfileEditor({
       drag.current = null;
       return;
     }
+    if (tool === "copy" && e.button === 0 && !editOpen) {
+      if (copySession) {
+        onSegs(segs, true);
+        onSelected(copySession.copies.map((segment) => segment.id));
+        setCopySession(null);
+        setCopyBox(null);
+        return;
+      }
+      const hit = hitSeg(raw);
+      const sourceIds = hit ? (selected.includes(hit.id) ? [...selected] : sketchObjectIds(hit.id)) : [...selected];
+      if (!sourceIds.length) return;
+      const source = segs.filter((segment) => sourceIds.includes(segment.id));
+      const copies = source.map((segment) => cloneSeg(segment));
+      const groupMap = new Map<number, number>();
+      source.forEach((segment, index) => {
+        if (segment.polylineId != null && !groupMap.has(segment.polylineId)) groupMap.set(segment.polylineId, copies[index].id);
+      });
+      copies.forEach((segment, index) => {
+        const oldGroup = source[index].polylineId;
+        segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
+      });
+      if (hit) onSelected(sourceIds);
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setCopySession({ sourceIds, base: segs.map((segment) => ({ ...segment })), copies, origin: raw, pointer: raw });
+      setCopyBox({ x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+      return;
+    }
     if (tool === "move" && e.button === 0) {
       /* کلیک دوم، پیش‌نمایش فعلی را تأیید می‌کند و پنجره را می‌بندد. */
       if (moveSession) {
@@ -2554,6 +2603,15 @@ export default function ProfileEditor({
         drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
         setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
       }
+      return;
+    }
+    if (tool === "copy" && copySession && !editOpen) {
+      const delta = quantStep(raw, copySession.origin);
+      const movedCopies = copySession.copies.map((segment) => moveSeg(segment, delta.z, delta.r));
+      onSegs([...copySession.base, ...movedCopies], false);
+      setCopySession({ ...copySession, pointer: raw });
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setCopyBox((box) => box ? { ...box, x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)) } : box);
       return;
     }
     if (tool === "fillet" && e.button === 0 && !editOpen) {
@@ -2990,6 +3048,13 @@ export default function ProfileEditor({
     drag.current = null;
     setSnapHit(null);
     if (tool === "fillet") return;
+    if (tool === "copy") {
+      if (d?.mode === "rwait" && !d.moved) {
+        if (copySession) onSegs(copySession.base, false);
+        setCopySession(null); setCopyBox(null); chooseTool("select");
+      }
+      return;
+    }
     if (tool === "move") {
       if (d?.mode === "rwait" && !d.moved) {
         /* راست‌کلیک ساده دقیقاً مانند Esc: لغو Preview و خروج از Move. */
@@ -4487,6 +4552,57 @@ export default function ProfileEditor({
         );
       })()}
 
+      {copyBox && copySession && (
+        <div className="absolute z-50" style={{ left: copyBox.x, top: copyBox.y, width: `${Math.max(72, 30 + copyBox.value.length * 8)}px` }} dir="ltr">
+          <input
+            ref={copyInputRef}
+            value={copyBox.value}
+            aria-label="Copy pattern"
+            placeholder="*5  /4"
+            className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 py-1 text-center font-mono text-xs text-[#d9f7f5] outline-none shadow-[0_8px_24px_rgba(0,0,0,.55)]", copyBox.error ? "border-danger" : "border-[#00a9c7] focus:border-[#20c9df]")}
+            onChange={(event) => {
+              const value = latinDigits(event.target.value).replace(/[^*/0-9]/g, "");
+              setCopyBox({ ...copyBox, value, error: "" });
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                onSegs(copySession.base, false);
+                setCopySession(null); setCopyBox(null); chooseTool("select");
+                return;
+              }
+              if (event.key !== "Enter") return;
+              const match = copyBox.value.match(/^([*/])([1-9]\d*)$/);
+              if (!match) { setCopyBox({ ...copyBox, error: "فقط *عدد یا /عدد" }); return; }
+              const count = Number(match[2]);
+              if (count > 100) { setCopyBox({ ...copyBox, error: "حداکثر 100" }); return; }
+              const dz = copySession.pointer.z - copySession.origin.z;
+              const dr = copySession.pointer.r - copySession.origin.r;
+              const factors = match[1] === "*"
+                ? Array.from({ length: count }, (_, index) => index + 1)
+                : Array.from({ length: count }, (_, index) => (index + 1) / count);
+              const batch: SketchSeg[] = [];
+              for (const factor of factors) {
+                const groupMap = new Map<number, number>();
+                const made = copySession.copies.map((source) => cloneSeg(source, dz * factor, dr * factor));
+                copySession.copies.forEach((source, index) => {
+                  if (source.polylineId != null && !groupMap.has(source.polylineId)) groupMap.set(source.polylineId, made[index].id);
+                });
+                made.forEach((segment, index) => {
+                  const oldGroup = copySession.copies[index].polylineId;
+                  segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
+                });
+                batch.push(...made);
+              }
+              onSegs([...copySession.base, ...batch], true);
+              onSelected(batch.map((segment) => segment.id));
+              setCopySession(null); setCopyBox(null);
+            }}
+          />
+          {copyBox.error && <div className="mt-1 text-center text-[9px] text-danger" dir="rtl">{copyBox.error}</div>}
+        </div>
+      )}
+
       {moveBox && moveSession && (
         <div className="absolute z-50" style={{ left: moveBox.x, top: moveBox.y, width: `${Math.max(42, Math.min(150, 24 + moveBox.value.length * 8))}px` }} dir="ltr">
           <input ref={moveInputRef} value={moveBox.value} aria-label="Move value" className={cn(
@@ -4686,7 +4802,7 @@ export default function ProfileEditor({
       )}
 
       {/* راهنمای مرحلهٔ ترسیم؛ Move مرحلهٔ شماره‌دار ندارد. */}
-      {tool !== "select" && tool !== "move" && (
+      {tool !== "select" && tool !== "move" && tool !== "copy" && (
         <div className="anim-in absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
           <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
           {stepText}
