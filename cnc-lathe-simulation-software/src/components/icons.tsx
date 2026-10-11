@@ -95,7 +95,7 @@ export const IconHand = (p: P) =>
 export const IconMove = (p: P) =>
   base(p, <><path d="M12 2v20M2 12h20" /><path d="m8.5 5.5 3.5-3.5 3.5 3.5M8.5 18.5 12 22l3.5-3.5M5.5 8.5 2 12l3.5 3.5M18.5 8.5 22 12l-3.5 3.5" /></>);
 export const IconMirror = (p: P) =>
-  base(p, <><path d="M12 2v20" strokeDasharray="2 2" /><path d="M9 6 3 12l6 6z" /><path d="m15 6 6 6-6 6z" strokeDasharray="2.2 1.6" /></>);
+  base(p, <><path d="M12 2v20" strokeDasharray="2 2" /><path d="M9 5C3 5 3 19 9 19" /><path d="M15 5c6 0 6 14 0 14" /></>);
 
 export const IconFillet = (p: P) =>
   base(p, <><path d="M4 4v16h16" /><path d="M4 13a7 7 0 0 0 7 7" /></>);
