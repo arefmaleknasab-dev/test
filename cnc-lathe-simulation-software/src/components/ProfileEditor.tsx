@@ -683,6 +683,7 @@ type CopySession = {
   origin: SPoint;
   pointer: SPoint;
   axis: MoveAxis;
+  distanceConfirmed: boolean;
 };
 
 type MoveSession = {
@@ -2311,7 +2312,7 @@ export default function ProfileEditor({
       });
       if (hit) onSelected(sourceIds);
       const rect = wrapRef.current!.getBoundingClientRect();
-      setCopySession({ sourceIds, base: segs.map((segment) => ({ ...segment })), copies, origin: raw, pointer: raw, axis: "free" });
+      setCopySession({ sourceIds, base: segs.map((segment) => ({ ...segment })), copies, origin: raw, pointer: raw, axis: "free", distanceConfirmed: false });
       setCopyBox({ x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
       return;
     }
@@ -2641,8 +2642,16 @@ export default function ProfileEditor({
       return;
     }
     if (tool === "copy" && copySession && !editOpen) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setCopyBox((box) => box ? { ...box, x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)) } : box);
+      /* Enter فاصله و جهت را تثبیت می‌کند؛ حرکت بعدی ماوس نباید راهنما را جابه‌جا کند. */
+      if (copySession.distanceConfirmed) return;
       const rawDelta = quantStep(raw, copySession.origin);
-      const axis = copySession.axis;
+      /* در حالت قفل محوری، محور غالب با حرکت نشانگر عوض می‌شود؛ قفل متعلق به
+         هر دو محور است، نه فقط محوری که لحظهٔ فشردن Shift غالب بوده است. */
+      const axis: MoveAxis = copySession.axis === "free"
+        ? "free"
+        : (Math.abs(rawDelta.z) >= Math.abs(rawDelta.r) ? "x" : "y");
       const numericDistance = copyBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(copyBox.value) : null;
       let delta = axis === "x" ? { z: rawDelta.z, r: 0 } : axis === "y" ? { z: 0, r: rawDelta.r } : rawDelta;
       if (numericDistance != null) {
@@ -2659,8 +2668,6 @@ export default function ProfileEditor({
       const movedCopies = copySession.copies.map((segment) => moveSeg(segment, delta.z, delta.r));
       onSegs([...copySession.base, ...movedCopies], false);
       setCopySession({ ...copySession, pointer, axis });
-      const rect = wrapRef.current!.getBoundingClientRect();
-      setCopyBox((box) => box ? { ...box, x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)) } : box);
       return;
     }
     if (tool === "fillet" && e.button === 0 && !editOpen) {
@@ -4644,7 +4651,7 @@ export default function ProfileEditor({
                 const dr = length > 1e-9 ? amount * dr0 / length : 0;
                 const pointer = { z: copySession.origin.z + dz, r: copySession.origin.r + dr };
                 onSegs([...copySession.base, ...copySession.copies.map((segment) => moveSeg(segment, dz, dr))], false);
-                setCopySession({ ...copySession, pointer });
+                setCopySession({ ...copySession, pointer, distanceConfirmed: true });
                 setCopyBox({ ...copyBox, value: "", error: "" });
                 return;
               }
