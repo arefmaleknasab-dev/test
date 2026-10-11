@@ -682,6 +682,7 @@ type CopySession = {
   copies: SketchSeg[];
   origin: SPoint;
   pointer: SPoint;
+  axis: MoveAxis;
 };
 
 type MoveSession = {
@@ -748,7 +749,10 @@ export default function ProfileEditor({
   useEffect(() => { if (copyBox) requestAnimationFrame(() => copyInputRef.current?.focus()); }, [!!copyBox]);
   useEffect(() => {
     const releaseAxis = (event: KeyboardEvent) => {
-      if (event.key === "Shift") setMoveSession((session) => session ? { ...session, axis: "free" } : session);
+      if (event.key === "Shift") {
+        setMoveSession((session) => session ? { ...session, axis: "free" } : session);
+        setCopySession((session) => session ? { ...session, axis: "free" } : session);
+      }
     };
     window.addEventListener("keyup", releaseAxis);
     return () => window.removeEventListener("keyup", releaseAxis);
@@ -2276,7 +2280,7 @@ export default function ProfileEditor({
       });
       if (hit) onSelected(sourceIds);
       const rect = wrapRef.current!.getBoundingClientRect();
-      setCopySession({ sourceIds, base: segs.map((segment) => ({ ...segment })), copies, origin: raw, pointer: raw });
+      setCopySession({ sourceIds, base: segs.map((segment) => ({ ...segment })), copies, origin: raw, pointer: raw, axis: "free" });
       setCopyBox({ x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
       return;
     }
@@ -2606,10 +2610,15 @@ export default function ProfileEditor({
       return;
     }
     if (tool === "copy" && copySession && !editOpen) {
-      const delta = quantStep(raw, copySession.origin);
+      const rawDelta = quantStep(raw, copySession.origin);
+      const axis: MoveAxis = e.shiftKey
+        ? (copySession.axis === "free" ? (Math.abs(rawDelta.z) >= Math.abs(rawDelta.r) ? "x" : "y") : copySession.axis)
+        : "free";
+      const delta = axis === "x" ? { z: rawDelta.z, r: 0 } : axis === "y" ? { z: 0, r: rawDelta.r } : rawDelta;
+      const pointer = { z: copySession.origin.z + delta.z, r: copySession.origin.r + delta.r };
       const movedCopies = copySession.copies.map((segment) => moveSeg(segment, delta.z, delta.r));
       onSegs([...copySession.base, ...movedCopies], false);
-      setCopySession({ ...copySession, pointer: raw });
+      setCopySession({ ...copySession, pointer, axis });
       const rect = wrapRef.current!.getBoundingClientRect();
       setCopyBox((box) => box ? { ...box, x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)) } : box);
       return;
@@ -4351,6 +4360,19 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {/* راهنمای Copy، دقیقاً با الگوی خط‌چین Move */}
+        {copySession && (() => {
+          const [x1, y1] = P(copySession.origin.z, copySession.origin.r);
+          const [x2, y2] = P(copySession.pointer.z, copySession.pointer.r);
+          const guideColor = copySession.axis === "x" ? "#754052" : copySession.axis === "y" ? "#3b7373" : "#28dfc2";
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
+            </g>
+          );
+        })()}
+
         {/* راهنمای شعاع Move: از مرکز دایرهٔ فرضی تا موقعیت زنده نشانگر */}
         {moveSession && (() => {
           const [x1, y1] = P(moveSession.origin.z, moveSession.origin.r);
@@ -4561,7 +4583,7 @@ export default function ProfileEditor({
             placeholder="*5  /4"
             className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 py-1 text-center font-mono text-xs text-[#d9f7f5] outline-none shadow-[0_8px_24px_rgba(0,0,0,.55)]", copyBox.error ? "border-danger" : "border-[#00a9c7] focus:border-[#20c9df]")}
             onChange={(event) => {
-              const value = latinDigits(event.target.value).replace(/[^*/0-9]/g, "");
+              const value = latinDigits(event.target.value).replace(/[^*/0-9.]/g, "");
               setCopyBox({ ...copyBox, value, error: "" });
             }}
             onKeyDown={(event) => {
@@ -4572,8 +4594,22 @@ export default function ProfileEditor({
                 return;
               }
               if (event.key !== "Enter") return;
+              const plain = copyBox.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/);
+              if (plain) {
+                const amount = Number(copyBox.value);
+                const dz0 = copySession.pointer.z - copySession.origin.z;
+                const dr0 = copySession.pointer.r - copySession.origin.r;
+                const length = Math.hypot(dz0, dr0);
+                const dz = length > 1e-9 ? amount * dz0 / length : amount;
+                const dr = length > 1e-9 ? amount * dr0 / length : 0;
+                const pointer = { z: copySession.origin.z + dz, r: copySession.origin.r + dr };
+                onSegs([...copySession.base, ...copySession.copies.map((segment) => moveSeg(segment, dz, dr))], false);
+                setCopySession({ ...copySession, pointer });
+                setCopyBox({ ...copyBox, value: "", error: "" });
+                return;
+              }
               const match = copyBox.value.match(/^([*/])([1-9]\d*)$/);
-              if (!match) { setCopyBox({ ...copyBox, error: "فقط *عدد یا /عدد" }); return; }
+              if (!match) { setCopyBox({ ...copyBox, error: "عدد، *عدد یا /عدد" }); return; }
               const count = Number(match[2]);
               if (count > 100) { setCopyBox({ ...copyBox, error: "حداکثر 100" }); return; }
               const dz = copySession.pointer.z - copySession.origin.z;
