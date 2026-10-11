@@ -78,12 +78,13 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "copy" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "copy" | "mirror" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
   { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
+  { id: "mirror", name: "قرینه (Mirror)", key: "I", icon: <IconCopy className="h-4 w-4 -scale-x-100" />, hint: "قرینه‌سازی حول محور دو نقطه‌ای" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
@@ -93,12 +94,13 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, copy: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, copy: 0, mirror: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   move: [],
   copy: [],
+  mirror: [],
   fillet: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
   polyline: ["نقطهٔ شروع Polyline", "نقطهٔ بعدی — Enter پایان، Esc لغو"],
@@ -676,6 +678,37 @@ function arithmeticValue(source: string): number | null {
 }
 
 type MoveAxis = "free" | "x" | "y";
+type MirrorSession = {
+  ids: number[];
+  base: SketchSeg[];
+  source: SketchSeg[];
+  p1?: SPoint;
+  p2?: SPoint;
+  cursor?: SPoint;
+  mirrored?: SketchSeg[];
+  keepCopy: boolean;
+};
+
+function reflectPoint(point: SPoint, a: SPoint, b: SPoint): SPoint {
+  const vx = b.z - a.z, vy = b.r - a.r;
+  const length2 = vx * vx + vy * vy;
+  if (length2 < 1e-12) return { ...point };
+  const t = ((point.z - a.z) * vx + (point.r - a.r) * vy) / length2;
+  const pz = a.z + t * vx, pr = a.r + t * vy;
+  return { z: 2 * pz - point.z, r: 2 * pr - point.r };
+}
+
+function reflectSegment(segment: SketchSeg, a: SPoint, b: SPoint): SketchSeg {
+  return {
+    ...segment,
+    a: reflectPoint(segment.a, a, b),
+    b: reflectPoint(segment.b, a, b),
+    c1: segment.c1 ? reflectPoint(segment.c1, a, b) : undefined,
+    c2: segment.c2 ? reflectPoint(segment.c2, a, b) : undefined,
+    via: segment.via ? reflectPoint(segment.via, a, b) : undefined,
+  };
+}
+
 type CopySession = {
   sourceIds: number[];
   base: SketchSeg[];
@@ -741,6 +774,7 @@ export default function ProfileEditor({
   const [moveBox, setMoveBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const [moveSession, setMoveSession] = useState<MoveSession | null>(null);
   const [copySession, setCopySession] = useState<CopySession | null>(null);
+  const [mirrorSession, setMirrorSession] = useState<MirrorSession | null>(null);
   const [copyBox, setCopyBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const copyInputRef = useRef<HTMLInputElement>(null);
   const moveInputRef = useRef<HTMLInputElement>(null);
@@ -1238,6 +1272,13 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Escape") {
+        if (tool === "mirror") {
+          if (mirrorSession) onSegs(mirrorSession.base, false);
+          setMirrorSession(null);
+          drag.current = null;
+          chooseTool("select");
+          return;
+        }
         if (tool === "copy") {
           if (copySession) onSegs(copySession.base, false);
           setCopySession(null);
@@ -2289,6 +2330,48 @@ export default function ProfileEditor({
       drag.current = null;
       return;
     }
+    if (tool === "mirror" && e.button === 0 && !editOpen) {
+      if (!mirrorSession) {
+        const hit = hitSeg(raw);
+        const ids = selected.length ? [...selected] : (hit ? sketchObjectIds(hit.id) : []);
+        if (!ids.length) return;
+        if (!selected.length) onSelected(ids);
+        setMirrorSession({
+          ids,
+          base: segs.map((segment) => ({ ...segment })),
+          source: segs.filter((segment) => ids.includes(segment.id)),
+          keepCopy: true,
+          p1: selected.length ? raw : undefined,
+          cursor: selected.length ? raw : undefined,
+        });
+        return;
+      }
+      if (!mirrorSession.p1) {
+        setMirrorSession({ ...mirrorSession, p1: raw, cursor: raw });
+        return;
+      }
+      if (!mirrorSession.p2) {
+        let p2 = raw;
+        const dz = raw.z - mirrorSession.p1.z, dr = raw.r - mirrorSession.p1.r;
+        if (e.shiftKey) p2 = Math.abs(dz) >= Math.abs(dr) ? { z: raw.z, r: mirrorSession.p1.r } : { z: mirrorSession.p1.z, r: raw.r };
+        if (dist(mirrorSession.p1, p2) < 1e-8) return;
+        const groupMap = new Map<number, number>();
+        const mirrored = mirrorSession.source.map((segment) => reflectSegment(cloneSeg(segment), mirrorSession.p1!, p2));
+        mirrorSession.source.forEach((segment, index) => {
+          if (segment.polylineId != null && !groupMap.has(segment.polylineId)) groupMap.set(segment.polylineId, mirrored[index].id);
+        });
+        mirrored.forEach((segment, index) => {
+          const oldGroup = mirrorSession.source[index].polylineId;
+          segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
+        });
+        const next = mirrorSession.keepCopy
+          ? [...mirrorSession.base, ...mirrored]
+          : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrored];
+        onSegs(next, false);
+        setMirrorSession({ ...mirrorSession, p2, cursor: p2, mirrored });
+        return;
+      }
+    }
     if (tool === "copy" && e.button === 0 && !editOpen) {
       if (copySession) {
         onSegs(segs, true);
@@ -2639,6 +2722,14 @@ export default function ProfileEditor({
         drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
         setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
       }
+      return;
+    }
+    if (tool === "mirror" && mirrorSession?.p1 && !mirrorSession.p2 && !editOpen) {
+      const dz = raw.z - mirrorSession.p1.z, dr = raw.r - mirrorSession.p1.r;
+      const cursor = e.shiftKey
+        ? (Math.abs(dz) >= Math.abs(dr) ? { z: raw.z, r: mirrorSession.p1.r } : { z: mirrorSession.p1.z, r: raw.r })
+        : raw;
+      setMirrorSession({ ...mirrorSession, cursor });
       return;
     }
     if (tool === "copy" && copySession && !editOpen) {
@@ -3104,6 +3195,14 @@ export default function ProfileEditor({
     drag.current = null;
     setSnapHit(null);
     if (tool === "fillet") return;
+    if (tool === "mirror") {
+      if (d?.mode === "rwait" && !d.moved) {
+        if (mirrorSession) onSegs(mirrorSession.base, false);
+        setMirrorSession(null);
+        chooseTool("select");
+      }
+      return;
+    }
     if (tool === "copy") {
       if (d?.mode === "rwait" && !d.moved) {
         if (copySession) onSegs(copySession.base, false);
@@ -4410,6 +4509,19 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {/* محور زنده و نهایی Mirror */}
+        {mirrorSession?.p1 && mirrorSession.cursor && (() => {
+          const [x1, y1] = P(mirrorSession.p1!.z, mirrorSession.p1!.r);
+          const [x2, y2] = P(mirrorSession.cursor!.z, mirrorSession.cursor!.r);
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke="#28dfc2" strokeWidth={1.3} />
+              <circle cx={x2} cy={y2} r={3} fill="#071018" stroke="#28dfc2" strokeWidth={1.3} />
+            </g>
+          );
+        })()}
+
         {/* راهنمای Copy، دقیقاً با الگوی خط‌چین Move */}
         {copySession && (() => {
           const [x1, y1] = P(copySession.origin.z, copySession.origin.r);
@@ -4459,6 +4571,40 @@ export default function ProfileEditor({
         })()}
 
       </svg>
+
+      {mirrorSession?.p2 && mirrorSession.mirrored && (
+        <div dir="rtl" className="absolute right-3 top-3 z-50 w-44 rounded-lg border border-[#00a9c7] bg-[#071018]/95 p-3 text-xs text-ink shadow-2xl shadow-black/60">
+          <div className="mb-2 font-bold text-[#26e6c7]">پیش‌نمایش قرینه</div>
+          <label className="mb-3 flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={mirrorSession.keepCopy}
+              onChange={(event) => {
+                const keepCopy = event.target.checked;
+                const next = keepCopy
+                  ? [...mirrorSession.base, ...mirrorSession.mirrored!]
+                  : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrorSession.mirrored!];
+                onSegs(next, false);
+                setMirrorSession({ ...mirrorSession, keepCopy });
+              }}
+            />
+            <span>کپی</span>
+          </label>
+          <div className="flex gap-2">
+            <button className="flex-1 rounded bg-[#28dfc2] px-2 py-1.5 font-bold text-[#071018]" onClick={() => {
+              onSegs(segs, true);
+              onSelected(mirrorSession.mirrored!.map((segment) => segment.id));
+              setMirrorSession(null);
+              chooseTool("select");
+            }}>تأیید</button>
+            <button className="flex-1 rounded border border-edge2 bg-panel3 px-2 py-1.5" onClick={() => {
+              onSegs(mirrorSession.base, false);
+              setMirrorSession(null);
+              chooseTool("select");
+            }}>لغو</button>
+          </div>
+        </div>
+      )}
 
       {/* ---------- منوی راست‌کلیک سرعت Segmentهای انتخاب‌شده ---------- */}
       {speedMenu && editOpen && selL.length > 0 && (
@@ -4763,6 +4909,10 @@ export default function ProfileEditor({
               onClick={() => {
                 /* کلیک دوباره روی Move هر نشست نیمه‌تمام/گیرکرده را پاک می‌کند؛
                    Preview ثبت‌نشده نیز به مبنای قبل از نشست برمی‌گردد. */
+                if (mirrorSession && t.id !== "mirror") {
+                  onSegs(mirrorSession.base, false);
+                  setMirrorSession(null);
+                }
                 if (t.id === "move" && moveSession) {
                   if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
                   else onSegs(moveSession.base, false);
@@ -4891,7 +5041,7 @@ export default function ProfileEditor({
       )}
 
       {/* راهنمای مرحلهٔ ترسیم؛ Move مرحلهٔ شماره‌دار ندارد. */}
-      {tool !== "select" && tool !== "move" && tool !== "copy" && (
+      {tool !== "select" && tool !== "move" && tool !== "copy" && tool !== "mirror" && (
         <div className="anim-in absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
           <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
           {stepText}
