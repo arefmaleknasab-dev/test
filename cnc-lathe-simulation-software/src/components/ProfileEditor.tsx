@@ -46,6 +46,7 @@ import {
   IconMagnetSm,
   IconMinus,
   IconMove,
+  IconMirror,
   IconPlus,
   IconPolyline,
   IconQuad,
@@ -84,7 +85,7 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
   { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
-  { id: "mirror", name: "قرینه (Mirror)", key: "I", icon: <IconCopy className="h-4 w-4 -scale-x-100" />, hint: "قرینه‌سازی حول محور دو نقطه‌ای" },
+  { id: "mirror", name: "قرینه (Mirror)", key: "I", icon: <IconMirror className="h-4 w-4" />, hint: "قرینه‌سازی حول محور دو نقطه‌ای" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
@@ -2350,6 +2351,7 @@ export default function ProfileEditor({
         const ids = selected.length ? [...selected] : (hit ? sketchObjectIds(hit.id) : []);
         if (!ids.length) return;
         if (!selected.length) onSelected(ids);
+        setSnapHit(null);
         setMirrorSession({
           ids,
           base: segs.map((segment) => ({ ...segment })),
@@ -2361,6 +2363,7 @@ export default function ProfileEditor({
         return;
       }
       if (!mirrorSession.p1) {
+        setSnapHit(null);
         setMirrorSession({ ...mirrorSession, p1: raw, cursor: raw });
         return;
       }
@@ -2739,10 +2742,9 @@ export default function ProfileEditor({
         : raw;
       if (dist(mirrorSession.p1, cursor) > 1e-8) {
         const mirrored = makeMirroredSegments(mirrorSession.source, mirrorSession.p1, cursor);
-        const next = mirrorSession.keepCopy
-          ? [...mirrorSession.base, ...mirrored]
-          : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrored];
-        onSegs(next, false);
+        /* در Preview هندسهٔ اصلی همیشه باقی می‌ماند؛ در حالت بدون Copy فقط
+           کم‌رنگ می‌شود و حذف واقعی هنگام انتخاب نقطهٔ دوم انجام می‌شود. */
+        onSegs([...mirrorSession.base, ...mirrored], false);
         setMirrorSession({ ...mirrorSession, cursor, mirrored });
       } else {
         onSegs(mirrorSession.base, false);
@@ -4239,13 +4241,15 @@ export default function ProfileEditor({
             </>;
           })()}
           {/* بدون Split، رنگ معمول هر المان استفاده می‌شود. */}
-          {!split.enabled && segs.map((s) => (
-            <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke="#e3a94e" strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
-          ))}
+          {!split.enabled && segs.map((s) => {
+            const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
+            return <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke="#e3a94e" strokeOpacity={mirrorDimmed ? 0.07 : 0.28} strokeWidth={1.6} strokeLinecap="round" />;
+          })}
           {segs.map((s) => {
             const sel = selected.includes(s.id);
             const hov = hoverId === s.id;
             const hasSelPt = selPointSegIds.includes(s.id);
+            const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
             const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : "#f3c26b";
             return (
               <path
@@ -4254,8 +4258,9 @@ export default function ProfileEditor({
                 fill="none"
                 stroke={sel ? "#45b394" : hasSelPt ? "#ffd27a" : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
                 strokeWidth={iso ? 2.4 : sel ? 3.2 : hasSelPt ? 3.4 : hov ? 3 : 2.4}
+                strokeOpacity={mirrorDimmed ? 0.2 : 1}
                 strokeLinecap="round"
-                filter={!iso && (sel || hasSelPt) ? "url(#curveGlow)" : undefined}
+                filter={!mirrorDimmed && !iso && (sel || hasSelPt) ? "url(#curveGlow)" : undefined}
               />
             );
           })}
@@ -4275,7 +4280,7 @@ export default function ProfileEditor({
           )}
 
           {/* دسته‌ها و نقاط المان‌های انتخاب‌شده یا دارای نقطهٔ مستقلِ انتخاب‌شده */}
-          {handleSegs.map((s) => {
+          {(mirrorSession ? [] : handleSegs).map((s) => {
             const [ax, ay] = P(s.a.z, s.a.r);
             const [bx, by] = P(s.b.z, s.b.r);
             const pointIsActive = (part: HandleRef["part"]) =>
@@ -5040,12 +5045,6 @@ export default function ProfileEditor({
                 const keepCopy = event.target.checked;
                 setMirrorKeepCopy(keepCopy);
                 if (!mirrorSession) return;
-                if (mirrorSession.mirrored) {
-                  const next = keepCopy
-                    ? [...mirrorSession.base, ...mirrorSession.mirrored]
-                    : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrorSession.mirrored];
-                  onSegs(next, false);
-                }
                 setMirrorSession({ ...mirrorSession, keepCopy });
               }}
             />
