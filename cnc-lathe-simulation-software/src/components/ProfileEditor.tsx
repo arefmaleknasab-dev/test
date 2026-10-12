@@ -3941,6 +3941,30 @@ export default function ProfileEditor({
   const copyReadout = copySession
     ? `${concise(copySession.pointer.z - copySession.origin.z)}, ${concise(copySession.pointer.r - copySession.origin.r)}`
     : "0, 0";
+  /* متن مرکزی پنجرهٔ مشترک «آپشن ابزار»؛ همهٔ گزینه‌های آیندهٔ هر ابزار
+     نیز باید در همین ظرف اضافه شوند، نه در پنل‌های شناور جداگانه. */
+  const toolOptionText = tool === "move" ? "جابجایی هندسه"
+    : tool === "copy" ? (copySession ? "تعیین محل کپی" : "انتخاب هندسه")
+    : tool === "mirror" ? (!mirrorSession?.p1 ? "نقطه شروع محور" : "نقطه پایان محور")
+    : tool === "scale" ? (!scaleSession ? "انتخاب هندسه" : !scaleSession.reference ? "نقطه دوم مرجع" : "تعیین اندازه")
+    : stepText;
+  const closeToolOptions = () => {
+    if (moveSession) {
+      if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+      else onSegs(moveSession.base, false);
+    }
+    if (copySession) onSegs(copySession.base, false);
+    if (mirrorSession) onSegs(mirrorSession.base, false);
+    if (scaleSession) onSegs(scaleSession.base, false);
+    setMoveSession(null); setMoveBox(null);
+    setCopySession(null); setCopyBox(null);
+    setMirrorSession(null);
+    setScaleSession(null); setScaleBox(null);
+    setFilletPicks([]); setFilletBox(null);
+    drag.current = null;
+    cancelDraft();
+    chooseTool("select");
+  };
   let moveReadout = "0, 0";
   if (moveSession) {
     const editBase = moveSession.editBase?.find((vertex) => moveSession.editVertexIds?.includes(vertex.id));
@@ -5199,39 +5223,29 @@ export default function ProfileEditor({
         </div>
       )}
 
-      {tool === "mirror" && (
-        <div className="anim-in absolute top-2.5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
-          <label className="flex cursor-pointer items-center gap-1.5">
-            <input
-              type="checkbox"
-              checked={mirrorSession?.keepCopy ?? mirrorKeepCopy}
-              onChange={(event) => {
-                const keepCopy = event.target.checked;
-                setMirrorKeepCopy(keepCopy);
-                if (!mirrorSession) return;
-                setMirrorSession({ ...mirrorSession, keepCopy });
-              }}
-            />
-            کپی
-          </label>
-          <span className="text-[10px] font-normal text-mute">{!mirrorSession?.p1 ? "نقطه شروع محور" : "نقطه پایان محور"}</span>
-          <button onClick={() => {
-            if (mirrorSession) onSegs(mirrorSession.base, false);
-            setMirrorSession(null);
-            chooseTool("select");
-          }} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="لغو (Esc)">
-            <IconX className="h-3 w-3" />
-          </button>
-        </div>
-      )}
-
-      {/* راهنمای مرحلهٔ ترسیم؛ Move مرحلهٔ شماره‌دار ندارد. */}
-      {tool !== "select" && tool !== "move" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && (
-        <div className="anim-in absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
-          <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
-          {stepText}
+      {/* پنجرهٔ مشترک «آپشن ابزار» — گزینه‌های اختصاصی همهٔ ابزارها اینجا قرار می‌گیرند. */}
+      {tool !== "select" && (
+        <div data-panel="tool-options" className="anim-in absolute top-2.5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
+          {NEED_PTS[tool] > 0 && (
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
+          )}
+          <span>{toolOptionText || TOOLS.find((item) => item.id === tool)?.name}</span>
+          {tool === "mirror" && (
+            <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2">
+              <input
+                type="checkbox"
+                checked={mirrorSession?.keepCopy ?? mirrorKeepCopy}
+                onChange={(event) => {
+                  const keepCopy = event.target.checked;
+                  setMirrorKeepCopy(keepCopy);
+                  if (mirrorSession) setMirrorSession({ ...mirrorSession, keepCopy });
+                }}
+              />
+              کپی
+            </label>
+          )}
           {liveInfo && <span className="font-mono text-[10px] font-normal text-mute">{liveInfo}</span>}
-          <button onClick={() => { chooseTool("select"); cancelDraft(); }} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="لغو (Esc)">
+          <button onClick={closeToolOptions} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="بستن آپشن ابزار (Esc)">
             <IconX className="h-3 w-3" />
           </button>
         </div>
