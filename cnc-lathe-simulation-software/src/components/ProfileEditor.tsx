@@ -5027,8 +5027,12 @@ export default function ProfileEditor({
           const sb=source.bounds, sw=sb.maxZ-sb.minZ, sh=sb.maxR-sb.minR;
           const handle=boxScaleLastHandle.current;
           const anchor={
-            z: axis==="x" && handle?.includes("e") ? sb.minZ : axis==="x" && handle?.includes("w") ? sb.maxZ : (sb.minZ+sb.maxZ)/2,
-            r: axis==="y" && handle?.includes("n") ? sb.minR : axis==="y" && handle?.includes("s") ? sb.maxR : (sb.minR+sb.maxR)/2,
+            z: (axis==="x" || effectiveLock) && handle?.includes("e") ? sb.minZ
+              : (axis==="x" || effectiveLock) && handle?.includes("w") ? sb.maxZ
+              : (sb.minZ+sb.maxZ)/2,
+            r: (axis==="y" || effectiveLock) && handle?.includes("n") ? sb.minR
+              : (axis==="y" || effectiveLock) && handle?.includes("s") ? sb.maxR
+              : (sb.minR+sb.maxR)/2,
           };
           const f=axis==="x"?value/sw:value/sh;
           onSegs(source.segs.map(s=>selected.includes(s.id)?scaleSegmentXY(s,anchor,axis==="x"||effectiveLock?f:1,axis==="y"||effectiveLock?f:1):s),commit);
