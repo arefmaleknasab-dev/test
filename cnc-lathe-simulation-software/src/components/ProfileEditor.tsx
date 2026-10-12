@@ -825,6 +825,8 @@ export default function ProfileEditor({
   const [mirrorSession, setMirrorSession] = useState<MirrorSession | null>(null);
   const [mirrorKeepCopy, setMirrorKeepCopy] = useState(true);
   const [boxScaleLocked, setBoxScaleLocked] = useState(false);
+  const [boxScaleWidthText, setBoxScaleWidthText] = useState<string | null>(null);
+  const [boxScaleHeightText, setBoxScaleHeightText] = useState<string | null>(null);
   const boxScaleDrag = useRef<{ handle: string; base: SketchSeg[]; ids: number[]; bounds: { minZ: number; maxZ: number; minR: number; maxR: number } } | null>(null);
   const [scaleSession, setScaleSession] = useState<ScaleSession | null>(null);
   const [scaleBox, setScaleBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
@@ -3342,6 +3344,10 @@ export default function ProfileEditor({
     drag.current = null;
     setSnapHit(null);
     if (tool === "fillet") return;
+    if (tool === "boxscale") {
+      if (d?.mode === "rwait" && !d.moved) { boxScaleDrag.current = null; onSelected([]); chooseTool("select"); }
+      return;
+    }
     if (tool === "scale") {
       if (d?.mode === "rwait" && !d.moved) {
         if (scaleSession) onSegs(scaleSession.base, false);
@@ -4698,10 +4704,10 @@ export default function ProfileEditor({
         )}
 
         {boxScaleBounds && (() => {
-          const b = boxScaleBounds; const [x0,y0]=P(b.minZ,b.maxR), [x1,y1]=P(b.maxZ,b.minR);
-          const handles = [{h:"nw",x:x0,y:y1},{h:"n",x:(x0+x1)/2,y:y1},{h:"ne",x:x1,y:y1},{h:"e",x:x1,y:(y0+y1)/2},{h:"se",x:x1,y:y0},{h:"s",x:(x0+x1)/2,y:y0},{h:"sw",x:x0,y:y0},{h:"w",x:x0,y:(y0+y1)/2}];
+          const b = boxScaleBounds; const [x0,yTop]=P(b.minZ,b.maxR), [x1,yBottom]=P(b.maxZ,b.minR);
+          const handles = [{h:"nw",x:x0,y:yTop},{h:"n",x:(x0+x1)/2,y:yTop},{h:"ne",x:x1,y:yTop},{h:"e",x:x1,y:(yTop+yBottom)/2},{h:"se",x:x1,y:yBottom},{h:"s",x:(x0+x1)/2,y:yBottom},{h:"sw",x:x0,y:yBottom},{h:"w",x:x0,y:(yTop+yBottom)/2}];
           return <g pointerEvents="all">
-            <rect x={x0} y={y1} width={x1-x0} height={y0-y1} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
+            <rect x={x0} y={yTop} width={x1-x0} height={yBottom-yTop} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
             {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
           </g>;
         })()}
@@ -4964,12 +4970,14 @@ export default function ProfileEditor({
       })()}
 
       {boxScaleBounds && (() => {
-        const b=boxScaleBounds, [x0,y0]=P(b.minZ,b.maxR), [x1,y1]=P(b.maxZ,b.minR), width=b.maxZ-b.minZ, height=b.maxR-b.minR;
-        const applyDimension=(axis:"x"|"y", value:number)=>{ if (!(value>0)) return; const center={z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2}; const f=axis==="x"?value/width:value/height; const locked=boxScaleLocked; onSegs(segs.map(s=>selected.includes(s.id)?scaleSegmentXY(s,center,axis==="x"||locked?f:1,axis==="y"||locked?f:1):s),true); };
+        const b=boxScaleBounds, [x0,yTop]=P(b.minZ,b.maxR), [x1,yBottom]=P(b.maxZ,b.minR), width=b.maxZ-b.minZ, height=b.maxR-b.minR;
+        const effectiveLock=boxScaleLocked || shiftDown;
+        const applyDimension=(axis:"x"|"y", value:number, commit:boolean)=>{ if (!(value>0)) return; const center={z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2}; const f=axis==="x"?value/width:value/height; onSegs(segs.map(s=>selected.includes(s.id)?scaleSegmentXY(s,center,axis==="x"||effectiveLock?f:1,axis==="y"||effectiveLock?f:1):s),commit); };
+        const lockIcon=effectiveLock?<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>:<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M16 10V7a4 4 0 0 0-7.5-2"/></svg>;
         return <>
-          <input key={`bw-${width}`} defaultValue={concise(width)} title="عرض" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:y1-27}} onFocus={e=>e.currentTarget.select()} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>applyDimension("x",Number(e.currentTarget.value))}/>
-          <input key={`bh-${height}`} defaultValue={concise(height)} title="ارتفاع" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(y0+y1)/2-11}} onFocus={e=>e.currentTarget.select()} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>applyDimension("y",Number(e.currentTarget.value))}/>
-          <button title={boxScaleLocked?"باز کردن نسبت":"قفل نسبت"} className="absolute z-50 grid h-6 w-6 place-items-center rounded border border-edge bg-panel/95 text-[12px] text-mute" style={{left:x0-29,top:y1-29}} onClick={()=>setBoxScaleLocked(v=>!v)}>{boxScaleLocked?"🔒":"🔓"}</button>
+          <input value={boxScaleWidthText ?? concise(width)} title="عرض افقی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:yTop-27}} onFocus={e=>e.currentTarget.select()} onChange={e=>{const v=e.currentTarget.value;setBoxScaleWidthText(v);applyDimension("x",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("x",Number(e.currentTarget.value),true);setBoxScaleWidthText(null);}}/>
+          <input value={boxScaleHeightText ?? concise(height)} title="ارتفاع عمودی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(yTop+yBottom)/2-11}} onFocus={e=>e.currentTarget.select()} onChange={e=>{const v=e.currentTarget.value;setBoxScaleHeightText(v);applyDimension("y",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("y",Number(e.currentTarget.value),true);setBoxScaleHeightText(null);}}/>
+          <button title={boxScaleLocked?"باز کردن نسبت":shiftDown?"قفل موقت با Shift":"قفل نسبت"} className="absolute z-50 grid h-6 w-6 place-items-center rounded border border-edge bg-panel/95 text-mute" style={{left:x0-29,top:yTop-29}} onClick={()=>setBoxScaleLocked(v=>!v)}>{lockIcon}</button>
         </>;
       })()}
 
