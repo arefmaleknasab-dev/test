@@ -2837,11 +2837,21 @@ export default function ProfileEditor({
       const east = d.handle.includes("e"), west = d.handle.includes("w"), north = d.handle.includes("n"), south = d.handle.includes("s");
       const centered = e.ctrlKey || e.metaKey;
       const anchor = { z: centered ? (b.minZ + b.maxZ) / 2 : east ? b.minZ : west ? b.maxZ : (b.minZ + b.maxZ) / 2, r: centered ? (b.minR + b.maxR) / 2 : north ? b.minR : south ? b.maxR : (b.minR + b.maxR) / 2 };
-      let sx = east || west ? Math.abs(raw.z - anchor.z) / (centered ? w / 2 : w) : 1;
-      let sy = north || south ? Math.abs(raw.r - anchor.r) / (centered ? h / 2 : h) : 1;
+      let sx = east ? (raw.z - anchor.z) / (centered ? w / 2 : w)
+        : west ? (anchor.z - raw.z) / (centered ? w / 2 : w) : 1;
+      let sy = north ? (raw.r - anchor.r) / (centered ? h / 2 : h)
+        : south ? (anchor.r - raw.r) / (centered ? h / 2 : h) : 1;
       if (boxScaleLocked || shiftDown) {
         const horizontal = east || west, vertical = north || south;
-        const f = horizontal && vertical ? (Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy) : horizontal ? sx : sy;
+        let f = horizontal ? sx : sy;
+        if (horizontal && vertical) {
+          /* در گوشهٔ قفل‌شده، ضریب از تصویر حرکت موس روی قطر اصلی محاسبه
+             می‌شود؛ بنابراین تغییر اندازه دقیقاً در جهت کشش ادامه پیدا می‌کند. */
+          const target = { z: east ? b.maxZ : b.minZ, r: north ? b.maxR : b.minR };
+          const vx = target.z - anchor.z, vy = target.r - anchor.r;
+          const length2 = vx * vx + vy * vy;
+          if (length2 > 1e-12) f = ((raw.z - anchor.z) * vx + (raw.r - anchor.r) * vy) / length2;
+        }
         sx = sy = f;
       }
       sx = Math.max(.001, sx); sy = Math.max(.001, sy);
