@@ -830,6 +830,9 @@ export default function ProfileEditor({
   const [boxScaleWidthText, setBoxScaleWidthText] = useState<string | null>(null);
   const [boxScaleHeightText, setBoxScaleHeightText] = useState<string | null>(null);
   const boxScaleNumericBase = useRef<{ segs: SketchSeg[]; bounds: { minZ: number; maxZ: number; minR: number; maxR: number } } | null>(null);
+  const boxScaleLastHandle = useRef<string | null>(null);
+  const boxScaleWidthInputRef = useRef<HTMLInputElement>(null);
+  const boxScaleHeightInputRef = useRef<HTMLInputElement>(null);
   const boxScaleDrag = useRef<{ handle: string; base: SketchSeg[]; ids: number[]; bounds: { minZ: number; maxZ: number; minR: number; maxR: number } } | null>(null);
   const [scaleSession, setScaleSession] = useState<ScaleSession | null>(null);
   const [scaleBox, setScaleBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
@@ -3333,8 +3336,15 @@ export default function ProfileEditor({
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     if (boxScaleDrag.current) {
+      const handle = boxScaleDrag.current.handle;
       boxScaleDrag.current = null;
       onSegs(segs, true);
+      requestAnimationFrame(() => {
+        const input = handle === "e" || handle === "w" ? boxScaleWidthInputRef.current
+          : handle === "n" || handle === "s" ? boxScaleHeightInputRef.current
+          : boxScaleWidthInputRef.current;
+        input?.focus(); input?.select();
+      });
       return;
     }
     if (editVertexPan.current?.pointerId === e.pointerId && (e.button === 1 || e.button === 2)) {
@@ -4707,10 +4717,15 @@ export default function ProfileEditor({
         )}
 
         {tool === "boxscale" && boxScaleGhost && boxScaleNumericBase.current && (boxScaleWidthText != null || boxScaleHeightText != null) && (
-          <g pointerEvents="none" opacity={0.28}>
+          <g pointerEvents="none" opacity={0.25}>
             {boxScaleNumericBase.current.segs.filter((s) => selected.includes(s.id)).map((s) => (
-              <path key={`box-scale-ghost-${s.id}`} d={segPath(s, cam)} fill="none" stroke="#28dfc2" strokeWidth={2} strokeDasharray="5 4" />
+              <path key={`box-scale-ghost-${s.id}`} d={segPath(s, cam)} fill="none" stroke="#28dfc2" strokeWidth={2} />
             ))}
+            {(() => {
+              const gb=boxScaleNumericBase.current!.bounds;
+              const [gx0,gyTop]=P(gb.minZ,gb.maxR), [gx1,gyBottom]=P(gb.maxZ,gb.minR);
+              return <rect x={gx0} y={gyTop} width={gx1-gx0} height={gyBottom-gyTop} fill="none" stroke="#28dfc2" strokeWidth={1.1} strokeDasharray="5 4" />;
+            })()}
           </g>
         )}
 
@@ -4719,7 +4734,7 @@ export default function ProfileEditor({
           const handles = [{h:"nw",x:x0,y:yTop},{h:"n",x:(x0+x1)/2,y:yTop},{h:"ne",x:x1,y:yTop},{h:"e",x:x1,y:(yTop+yBottom)/2},{h:"se",x:x1,y:yBottom},{h:"s",x:(x0+x1)/2,y:yBottom},{h:"sw",x:x0,y:yBottom},{h:"w",x:x0,y:(yTop+yBottom)/2}];
           return <g pointerEvents="all">
             <rect x={x0} y={yTop} width={x1-x0} height={yBottom-yTop} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
-            {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
+            {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleLastHandle.current=h; boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
           </g>;
         })()}
 
@@ -4987,14 +5002,18 @@ export default function ProfileEditor({
           if (!(value>0)) return;
           const source=boxScaleNumericBase.current ?? {segs,bounds:b};
           const sb=source.bounds, sw=sb.maxZ-sb.minZ, sh=sb.maxR-sb.minR;
-          const center={z:(sb.minZ+sb.maxZ)/2,r:(sb.minR+sb.maxR)/2};
+          const handle=boxScaleLastHandle.current;
+          const anchor={
+            z: axis==="x" && handle?.includes("e") ? sb.minZ : axis==="x" && handle?.includes("w") ? sb.maxZ : (sb.minZ+sb.maxZ)/2,
+            r: axis==="y" && handle?.includes("n") ? sb.minR : axis==="y" && handle?.includes("s") ? sb.maxR : (sb.minR+sb.maxR)/2,
+          };
           const f=axis==="x"?value/sw:value/sh;
-          onSegs(source.segs.map(s=>selected.includes(s.id)?scaleSegmentXY(s,center,axis==="x"||effectiveLock?f:1,axis==="y"||effectiveLock?f:1):s),commit);
+          onSegs(source.segs.map(s=>selected.includes(s.id)?scaleSegmentXY(s,anchor,axis==="x"||effectiveLock?f:1,axis==="y"||effectiveLock?f:1):s),commit);
         };
         const lockIcon=effectiveLock?<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>:<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M16 10V7a4 4 0 0 0-7.5-2"/></svg>;
         return <>
-          <input value={boxScaleWidthText ?? concise(width)} title="عرض افقی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:yTop-27}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleWidthText(v);if(boxScaleLive)applyDimension("x",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("x",Number(e.currentTarget.value),true);setBoxScaleWidthText(null);boxScaleNumericBase.current=null;}}/>
-          <input value={boxScaleHeightText ?? concise(height)} title="ارتفاع عمودی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(yTop+yBottom)/2-11}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleHeightText(v);if(boxScaleLive)applyDimension("y",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("y",Number(e.currentTarget.value),true);setBoxScaleHeightText(null);boxScaleNumericBase.current=null;}}/>
+          <input ref={boxScaleWidthInputRef} value={boxScaleWidthText ?? concise(width)} title="عرض افقی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:yTop-27}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleWidthText(v);if(boxScaleLive)applyDimension("x",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("x",Number(e.currentTarget.value),true);setBoxScaleWidthText(null);boxScaleNumericBase.current=null;}}/>
+          <input ref={boxScaleHeightInputRef} value={boxScaleHeightText ?? concise(height)} title="ارتفاع عمودی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(yTop+yBottom)/2-11}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleHeightText(v);if(boxScaleLive)applyDimension("y",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("y",Number(e.currentTarget.value),true);setBoxScaleHeightText(null);boxScaleNumericBase.current=null;}}/>
           <button title={boxScaleLocked?"باز کردن نسبت":shiftDown?"قفل موقت با Shift":"قفل نسبت"} className="absolute z-50 grid h-6 w-6 place-items-center rounded border border-edge bg-panel/95 text-mute" style={{left:x0-29,top:yTop-29}} onClick={()=>setBoxScaleLocked(v=>!v)}>{lockIcon}</button>
         </>;
       })()}
