@@ -4716,6 +4716,19 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {tool === "boxscale" && boxScaleGhost && boxScaleDrag.current && (
+          <g pointerEvents="none" opacity={0.25}>
+            {boxScaleDrag.current.base.filter((s) => boxScaleDrag.current!.ids.includes(s.id)).map((s) => (
+              <path key={`box-scale-drag-ghost-${s.id}`} d={segPath(s, cam)} fill="none" stroke="#28dfc2" strokeWidth={2} />
+            ))}
+            {(() => {
+              const gb=boxScaleDrag.current!.bounds;
+              const [gx0,gyTop]=P(gb.minZ,gb.maxR), [gx1,gyBottom]=P(gb.maxZ,gb.minR);
+              return <rect x={gx0} y={gyTop} width={gx1-gx0} height={gyBottom-gyTop} fill="none" stroke="#28dfc2" strokeWidth={1.1} strokeDasharray="5 4" />;
+            })()}
+          </g>
+        )}
+
         {tool === "boxscale" && boxScaleGhost && boxScaleNumericBase.current && (boxScaleWidthText != null || boxScaleHeightText != null) && (
           <g pointerEvents="none" opacity={0.25}>
             {boxScaleNumericBase.current.segs.filter((s) => selected.includes(s.id)).map((s) => (
