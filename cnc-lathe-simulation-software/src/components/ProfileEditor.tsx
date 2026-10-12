@@ -4757,7 +4757,7 @@ export default function ProfileEditor({
           const handles = [{h:"nw",x:x0,y:yTop},{h:"n",x:(x0+x1)/2,y:yTop},{h:"ne",x:x1,y:yTop},{h:"e",x:x1,y:(yTop+yBottom)/2},{h:"se",x:x1,y:yBottom},{h:"s",x:(x0+x1)/2,y:yBottom},{h:"sw",x:x0,y:yBottom},{h:"w",x:x0,y:(yTop+yBottom)/2}];
           return <g pointerEvents="all">
             <rect x={x0} y={yTop} width={x1-x0} height={yBottom-yTop} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
-            {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleLastHandle.current=h; boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
+            {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleLastHandle.current=h; boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
           </g>;
         })()}
 
