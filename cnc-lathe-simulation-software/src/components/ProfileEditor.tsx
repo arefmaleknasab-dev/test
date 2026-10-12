@@ -2383,13 +2383,17 @@ export default function ProfileEditor({
     }
     if (tool === "scale" && e.button === 0 && !editOpen) {
       if (!scaleSession) {
-        const hit = hitSeg(raw);
-        if (!selected.length && !hit) return;
-        const ids = selected.length ? [...selected] : sketchObjectIds(hit!.id);
-        /* با انتخاب قبلی، نقطه مبنا می‌تواند هر جای بوم باشد؛ بدون انتخاب قبلی
-           همان کلیک روی هندسه هم آبجکت و هم نقطه مبنا را تعیین می‌کند. */
-        const origin = selected.length ? raw : nearestOnSeg(hit!, raw).point;
-        if (!selected.length) onSelected(ids);
+        /* اگر چیزی انتخاب نشده، کلیک اول فقط آبجکت/Polyline را انتخاب می‌کند.
+           کلیک بعدی نقطه مبنا را تعیین کرده و نشست Scale را آغاز می‌کند. */
+        if (!selected.length) {
+          const hit = hitSeg(raw);
+          if (!hit) return;
+          onSelected(sketchObjectIds(hit.id));
+          setSnapHit(null);
+          return;
+        }
+        const ids = [...selected];
+        const origin = raw;
         setScaleSession({ ids, base: segs.map((segment) => ({ ...segment })), origin });
         setSnapHit(null);
         return;
