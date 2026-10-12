@@ -120,8 +120,12 @@ export const IconMirror = (p: P) => (
   </svg>
 );
 
-export const IconScale = (p: P) =>
-  base(p, <><path d="M5 19 19 5" /><path d="M11 5h8v8M13 19H5v-8" /></>);
+export const IconScale = (p: P) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-4 h-4"} viewBox="-1 -1 111 113" aria-hidden>
+    {/* فرم مرجع: قاب بزرگِ باز در پایین چپ و مربع کوچک مقیاس‌شده */}
+    <path d="M13 13H96V97H59V90H89V20H20V50H13V13ZM13 59H50V97H13V59ZM20 66V90H43V66H20Z" fill="currentColor" fillRule="evenodd" />
+  </svg>
+);
 
 export const IconFillet = (p: P) =>
   base(p, <><path d="M4 4v16h16" /><path d="M4 7.5A12.5 12.5 0 0 0 16.5 20" strokeWidth={2.4} /></>);
