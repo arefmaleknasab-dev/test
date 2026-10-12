@@ -80,12 +80,13 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "boxscale" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
-  { id: "scale", name: "مقیاس (Scale)", key: "S", icon: <IconScale className="h-[18px] w-[18px]" />, hint: "تغییر اندازه با طول مرجع" },
+  { id: "boxscale", name: "مقیاس باکس", key: "B", icon: <IconScale className="h-[18px] w-[18px]" />, hint: "تغییر اندازه با اضلاع و گوشه‌های باکس" },
+  { id: "scale", name: "مقیاس مرجع", key: "S", icon: <IconScale className="h-[16px] w-[16px]" />, hint: "تغییر اندازه با طول مرجع" },
   { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
   { id: "mirror", name: "قرینه (Mirror)", key: "I", icon: <IconMirror className="h-[19px] w-[19px]" />, hint: "قرینه‌سازی حول محور دو نقطه‌ای" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
@@ -97,11 +98,12 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, boxscale: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   move: [],
+  boxscale: [],
   copy: [],
   mirror: [],
   scale: [],
@@ -695,6 +697,11 @@ function scalePoint(point: SPoint, origin: SPoint, factor: number): SPoint {
   return { z: origin.z + (point.z - origin.z) * factor, r: origin.r + (point.r - origin.r) * factor };
 }
 
+function scaleSegmentXY(segment: SketchSeg, origin: SPoint, sx: number, sy: number): SketchSeg {
+  const point = (p: SPoint) => ({ z: origin.z + (p.z - origin.z) * sx, r: origin.r + (p.r - origin.r) * sy });
+  return { ...segment, a: point(segment.a), b: point(segment.b), c1: segment.c1 ? point(segment.c1) : undefined, c2: segment.c2 ? point(segment.c2) : undefined, via: segment.via ? point(segment.via) : undefined };
+}
+
 function scaleSegment(segment: SketchSeg, origin: SPoint, factor: number): SketchSeg {
   return {
     ...segment,
@@ -817,6 +824,8 @@ export default function ProfileEditor({
   const [copySession, setCopySession] = useState<CopySession | null>(null);
   const [mirrorSession, setMirrorSession] = useState<MirrorSession | null>(null);
   const [mirrorKeepCopy, setMirrorKeepCopy] = useState(true);
+  const [boxScaleLocked, setBoxScaleLocked] = useState(false);
+  const boxScaleDrag = useRef<{ handle: string; base: SketchSeg[]; ids: number[]; bounds: { minZ: number; maxZ: number; minR: number; maxR: number } } | null>(null);
   const [scaleSession, setScaleSession] = useState<ScaleSession | null>(null);
   const [scaleBox, setScaleBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const scaleInputRef = useRef<HTMLInputElement>(null);
@@ -2381,6 +2390,13 @@ export default function ProfileEditor({
       drag.current = null;
       return;
     }
+    if (tool === "boxscale" && e.button === 0 && !editOpen) {
+      if (!selected.length) {
+        const hit = hitSeg(raw);
+        if (hit) onSelected(sketchObjectIds(hit.id));
+      }
+      return;
+    }
     if (tool === "scale" && e.button === 0 && !editOpen) {
       if (!scaleSession) {
         /* اگر چیزی انتخاب نشده، کلیک اول فقط آبجکت/Polyline را انتخاب می‌کند.
@@ -2805,6 +2821,23 @@ export default function ProfileEditor({
         drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
         setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
       }
+      return;
+    }
+    if (tool === "boxscale" && boxScaleDrag.current) {
+      const d = boxScaleDrag.current, b = d.bounds;
+      const w = Math.max(1e-9, b.maxZ - b.minZ), h = Math.max(1e-9, b.maxR - b.minR);
+      const east = d.handle.includes("e"), west = d.handle.includes("w"), north = d.handle.includes("n"), south = d.handle.includes("s");
+      const centered = e.ctrlKey || e.metaKey;
+      const anchor = { z: centered ? (b.minZ + b.maxZ) / 2 : east ? b.minZ : west ? b.maxZ : (b.minZ + b.maxZ) / 2, r: centered ? (b.minR + b.maxR) / 2 : north ? b.minR : south ? b.maxR : (b.minR + b.maxR) / 2 };
+      let sx = east || west ? Math.abs(raw.z - anchor.z) / (centered ? w / 2 : w) : 1;
+      let sy = north || south ? Math.abs(raw.r - anchor.r) / (centered ? h / 2 : h) : 1;
+      if (boxScaleLocked || shiftDown) {
+        const horizontal = east || west, vertical = north || south;
+        const f = horizontal && vertical ? (Math.abs(sx - 1) >= Math.abs(sy - 1) ? sx : sy) : horizontal ? sx : sy;
+        sx = sy = f;
+      }
+      sx = Math.max(.001, sx); sy = Math.max(.001, sy);
+      onSegs(d.base.map((segment) => d.ids.includes(segment.id) ? scaleSegmentXY(segment, anchor, sx, sy) : segment), false);
       return;
     }
     if (tool === "scale" && scaleSession && !scaleSession.reference && !editOpen) {
@@ -3294,6 +3327,11 @@ export default function ProfileEditor({
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (boxScaleDrag.current) {
+      boxScaleDrag.current = null;
+      onSegs(segs, true);
+      return;
+    }
     if (editVertexPan.current?.pointerId === e.pointerId && (e.button === 1 || e.button === 2)) {
       editVertexPan.current = null;
       e.currentTarget.releasePointerCapture?.(e.pointerId);
@@ -3938,12 +3976,19 @@ export default function ProfileEditor({
     const rounded = Math.round(value * 1000) / 1000;
     return Object.is(rounded, -0) ? "0" : String(rounded);
   };
+  const boxScaleBounds = (() => {
+    if (tool !== "boxscale" || !selected.length) return null;
+    const bounds = segs.filter((s) => selected.includes(s.id)).map(segBounds);
+    if (!bounds.length) return null;
+    return { minZ: Math.min(...bounds.map((b) => b.minZ)), maxZ: Math.max(...bounds.map((b) => b.maxZ)), minR: Math.min(...bounds.map((b) => b.minR)), maxR: Math.max(...bounds.map((b) => b.maxR)) };
+  })();
   const copyReadout = copySession
     ? `${concise(copySession.pointer.z - copySession.origin.z)}, ${concise(copySession.pointer.r - copySession.origin.r)}`
     : "0, 0";
   /* متن مرکزی پنجرهٔ مشترک «آپشن ابزار»؛ همهٔ گزینه‌های آیندهٔ هر ابزار
      نیز باید در همین ظرف اضافه شوند، نه در پنل‌های شناور جداگانه. */
   const toolOptionText = tool === "move" ? "جابجایی هندسه"
+    : tool === "boxscale" ? "مقیاس باکس"
     : tool === "copy" ? (copySession ? "تعیین محل کپی" : "انتخاب هندسه")
     : tool === "mirror" ? (!mirrorSession?.p1 ? "نقطه شروع محور" : "نقطه پایان محور")
     : tool === "scale" ? (!scaleSession ? "انتخاب هندسه" : !scaleSession.reference ? "نقطه دوم مرجع" : "تعیین اندازه")
@@ -4652,6 +4697,15 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {boxScaleBounds && (() => {
+          const b = boxScaleBounds; const [x0,y0]=P(b.minZ,b.maxR), [x1,y1]=P(b.maxZ,b.minR);
+          const handles = [{h:"nw",x:x0,y:y1},{h:"n",x:(x0+x1)/2,y:y1},{h:"ne",x:x1,y:y1},{h:"e",x:x1,y:(y0+y1)/2},{h:"se",x:x1,y:y0},{h:"s",x:(x0+x1)/2,y:y0},{h:"sw",x:x0,y:y0},{h:"w",x:x0,y:(y0+y1)/2}];
+          return <g pointerEvents="all">
+            <rect x={x0} y={y1} width={x1-x0} height={y0-y1} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
+            {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
+          </g>;
+        })()}
+
         {/* خط مرجع و طول زنده Scale */}
         {scaleSession?.pointer && (() => {
           const origin = scaleSession.origin;
@@ -4907,6 +4961,16 @@ export default function ProfileEditor({
             <span className="text-center">{lineLengthText} mm</span>
           </div>
         );
+      })()}
+
+      {boxScaleBounds && (() => {
+        const b=boxScaleBounds, [x0,y0]=P(b.minZ,b.maxR), [x1,y1]=P(b.maxZ,b.minR), width=b.maxZ-b.minZ, height=b.maxR-b.minR;
+        const applyDimension=(axis:"x"|"y", value:number)=>{ if (!(value>0)) return; const center={z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2}; const f=axis==="x"?value/width:value/height; const locked=boxScaleLocked; onSegs(segs.map(s=>selected.includes(s.id)?scaleSegmentXY(s,center,axis==="x"||locked?f:1,axis==="y"||locked?f:1):s),true); };
+        return <>
+          <input key={`bw-${width}`} defaultValue={concise(width)} title="عرض" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:y1-27}} onFocus={e=>e.currentTarget.select()} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>applyDimension("x",Number(e.currentTarget.value))}/>
+          <input key={`bh-${height}`} defaultValue={concise(height)} title="ارتفاع" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(y0+y1)/2-11}} onFocus={e=>e.currentTarget.select()} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>applyDimension("y",Number(e.currentTarget.value))}/>
+          <button title={boxScaleLocked?"باز کردن نسبت":"قفل نسبت"} className="absolute z-50 grid h-6 w-6 place-items-center rounded border border-edge bg-panel/95 text-[12px] text-mute" style={{left:x0-29,top:y1-29}} onClick={()=>setBoxScaleLocked(v=>!v)}>{boxScaleLocked?"🔒":"🔓"}</button>
+        </>;
       })()}
 
       {scaleBox && scaleSession?.reference && scaleSession.referenceLength && (
