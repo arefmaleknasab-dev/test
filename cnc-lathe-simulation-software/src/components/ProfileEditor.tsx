@@ -2384,23 +2384,27 @@ export default function ProfileEditor({
     if (tool === "scale" && e.button === 0 && !editOpen) {
       if (!scaleSession) {
         const hit = hitSeg(raw);
-        if (!hit) return;
-        const ids = selected.includes(hit.id) ? [...selected] : sketchObjectIds(hit.id);
-        const origin = nearestOnSeg(hit, raw).point;
-        if (!selected.includes(hit.id)) onSelected(ids);
+        if (!selected.length && !hit) return;
+        const ids = selected.length ? [...selected] : sketchObjectIds(hit!.id);
+        /* با انتخاب قبلی، نقطه مبنا می‌تواند هر جای بوم باشد؛ بدون انتخاب قبلی
+           همان کلیک روی هندسه هم آبجکت و هم نقطه مبنا را تعیین می‌کند. */
+        const origin = selected.length ? raw : nearestOnSeg(hit!, raw).point;
+        if (!selected.length) onSelected(ids);
         setScaleSession({ ids, base: segs.map((segment) => ({ ...segment })), origin });
         setSnapHit(null);
         return;
       }
       if (!scaleSession.reference) {
+        const snapped = applySnap(raw);
         const hit = hitSeg(raw);
-        const reference = hit ? nearestOnSeg(hit, raw).point : raw;
+        const reference = snapped.hit ? snapped.p : hit ? nearestOnSeg(hit, raw).point : raw;
         const referenceLength = dist(scaleSession.origin, reference);
         if (referenceLength < 1e-8) return;
         const rect = wrapRef.current!.getBoundingClientRect();
         setScaleSession({ ...scaleSession, reference, pointer: reference, referenceLength });
         setScaleBox({ x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 48, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
-        setSnapHit(null);
+        /* نشان اسنپِ نقطه دوم عمداً باقی می‌ماند تا کاربر از اتصال مطمئن شود. */
+        setSnapHit(snapped.hit);
         return;
       }
       onSegs(segs, true);
@@ -4622,11 +4626,24 @@ export default function ProfileEditor({
 
         {/* خط مرجع و طول زنده Scale */}
         {scaleSession?.pointer && (() => {
-          const [x1, y1] = P(scaleSession.origin.z, scaleSession.origin.r);
-          const [x2, y2] = P(scaleSession.pointer!.z, scaleSession.pointer!.r);
+          const origin = scaleSession.origin;
+          const pointer = scaleSession.pointer!;
+          const dz = pointer.z - origin.z, dr = pointer.r - origin.r;
+          const fullLength = Math.hypot(dz, dr);
+          const entered = scaleBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(scaleBox.value) : null;
+          const coloredLength = entered != null && entered > 0 ? entered : fullLength;
+          const coloredEnd = fullLength > 1e-9
+            ? { z: origin.z + dz / fullLength * coloredLength, r: origin.r + dr / fullLength * coloredLength }
+            : pointer;
+          const [x1, y1] = P(origin.z, origin.r);
+          const [xc, yc] = P(coloredEnd.z, coloredEnd.r);
+          const [x2, y2] = P(pointer.z, pointer.r);
           return (
             <g pointerEvents="none">
-              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <line x1={x1} y1={y1} x2={xc} y2={yc} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              {entered != null && entered > 0 && fullLength > entered && (
+                <line x1={xc} y1={yc} x2={x2} y2={y2} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.25} />
+              )}
               <circle cx={x1} cy={y1} r={3} fill="#071018" stroke="#28dfc2" strokeWidth={1.3} />
             </g>
           );
