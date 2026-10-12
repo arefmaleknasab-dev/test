@@ -3369,12 +3369,6 @@ export default function ProfileEditor({
     if (tool === "fillet") return;
     if (tool === "boxscale") {
       if (d?.mode === "rwait" && !d.moved) { boxScaleDrag.current = null; chooseTool("select"); }
-      else if (d?.mode === "pan" && (boxScaleWidthText != null || boxScaleHeightText != null)) {
-        requestAnimationFrame(() => {
-          const input = boxScaleWidthText != null ? boxScaleWidthInputRef.current : boxScaleHeightInputRef.current;
-          input?.focus();
-        });
-      }
       return;
     }
     if (tool === "scale") {
@@ -5045,8 +5039,8 @@ export default function ProfileEditor({
         };
         const lockIcon=effectiveLock?<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>:<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M16 10V7a4 4 0 0 0-7.5-2"/></svg>;
         return <>
-          <input ref={boxScaleWidthInputRef} value={boxScaleWidthText ?? concise(width)} title="عرض افقی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:yTop-27}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleWidthText(v);if(boxScaleLive)applyDimension("x",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{if(drag.current?.mode==="rwait"||drag.current?.mode==="pan")return;applyDimension("x",Number(e.currentTarget.value),true);setBoxScaleWidthText(null);boxScaleNumericBase.current=null;}}/>
-          <input ref={boxScaleHeightInputRef} value={boxScaleHeightText ?? concise(height)} title="ارتفاع عمودی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(yTop+yBottom)/2-11}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleHeightText(v);if(boxScaleLive)applyDimension("y",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{if(drag.current?.mode==="rwait"||drag.current?.mode==="pan")return;applyDimension("y",Number(e.currentTarget.value),true);setBoxScaleHeightText(null);boxScaleNumericBase.current=null;}}/>
+          <input ref={boxScaleWidthInputRef} value={boxScaleWidthText ?? concise(width)} title="عرض افقی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:yTop-27}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleWidthText(v);if(boxScaleLive)applyDimension("x",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("x",Number(e.currentTarget.value),true);setBoxScaleWidthText(null);boxScaleNumericBase.current=null;}}/>
+          <input ref={boxScaleHeightInputRef} value={boxScaleHeightText ?? concise(height)} title="ارتفاع عمودی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(yTop+yBottom)/2-11}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleHeightText(v);if(boxScaleLive)applyDimension("y",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("y",Number(e.currentTarget.value),true);setBoxScaleHeightText(null);boxScaleNumericBase.current=null;}}/>
           <button title={boxScaleLocked?"باز کردن نسبت":shiftDown?"قفل موقت با Shift":"قفل نسبت"} className="absolute z-50 grid h-6 w-6 place-items-center rounded border border-edge bg-panel/95 text-mute" style={{left:x0-29,top:yTop-29}} onClick={()=>setBoxScaleLocked(v=>!v)}>{lockIcon}</button>
         </>;
       })()}
