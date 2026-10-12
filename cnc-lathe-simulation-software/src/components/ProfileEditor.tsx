@@ -49,6 +49,7 @@ import {
   IconMirror,
   IconPlus,
   IconPolyline,
+  IconScale,
   IconQuad,
   IconRedo,
   IconSplit,
@@ -79,13 +80,14 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "copy" | "mirror" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
   { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
   { id: "mirror", name: "قرینه (Mirror)", key: "I", icon: <IconMirror className="h-[19px] w-[19px]" />, hint: "قرینه‌سازی حول محور دو نقطه‌ای" },
+  { id: "scale", name: "مقیاس (Scale)", key: "S", icon: <IconScale className="h-4 w-4" />, hint: "تغییر اندازه با طول مرجع" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
@@ -95,13 +97,14 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, copy: 0, mirror: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   move: [],
   copy: [],
   mirror: [],
+  scale: [],
   fillet: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
   polyline: ["نقطهٔ شروع Polyline", "نقطهٔ بعدی — Enter پایان، Esc لغو"],
@@ -679,6 +682,30 @@ function arithmeticValue(source: string): number | null {
 }
 
 type MoveAxis = "free" | "x" | "y";
+type ScaleSession = {
+  ids: number[];
+  base: SketchSeg[];
+  origin: SPoint;
+  reference?: SPoint;
+  pointer?: SPoint;
+  referenceLength?: number;
+};
+
+function scalePoint(point: SPoint, origin: SPoint, factor: number): SPoint {
+  return { z: origin.z + (point.z - origin.z) * factor, r: origin.r + (point.r - origin.r) * factor };
+}
+
+function scaleSegment(segment: SketchSeg, origin: SPoint, factor: number): SketchSeg {
+  return {
+    ...segment,
+    a: scalePoint(segment.a, origin, factor),
+    b: scalePoint(segment.b, origin, factor),
+    c1: segment.c1 ? scalePoint(segment.c1, origin, factor) : undefined,
+    c2: segment.c2 ? scalePoint(segment.c2, origin, factor) : undefined,
+    via: segment.via ? scalePoint(segment.via, origin, factor) : undefined,
+  };
+}
+
 type MirrorSession = {
   ids: number[];
   base: SketchSeg[];
@@ -790,6 +817,9 @@ export default function ProfileEditor({
   const [copySession, setCopySession] = useState<CopySession | null>(null);
   const [mirrorSession, setMirrorSession] = useState<MirrorSession | null>(null);
   const [mirrorKeepCopy, setMirrorKeepCopy] = useState(true);
+  const [scaleSession, setScaleSession] = useState<ScaleSession | null>(null);
+  const [scaleBox, setScaleBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const scaleInputRef = useRef<HTMLInputElement>(null);
   const [copyBox, setCopyBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const copyInputRef = useRef<HTMLInputElement>(null);
   const moveInputRef = useRef<HTMLInputElement>(null);
@@ -797,6 +827,7 @@ export default function ProfileEditor({
   useEffect(() => { if (filletBox) requestAnimationFrame(() => { filletInputRef.current?.focus(); filletInputRef.current?.select(); }); }, [!!filletBox]);
   useEffect(() => { if (moveBox) requestAnimationFrame(() => { moveInputRef.current?.focus(); moveInputRef.current?.select(); }); }, [!!moveBox]);
   useEffect(() => { if (copyBox) requestAnimationFrame(() => copyInputRef.current?.focus()); }, [!!copyBox]);
+  useEffect(() => { if (scaleBox) requestAnimationFrame(() => scaleInputRef.current?.focus()); }, [!!scaleBox]);
   useEffect(() => {
     const releaseAxis = (event: KeyboardEvent) => {
       if (event.key === "Shift") setMoveSession((session) => session ? { ...session, axis: "free" } : session);
@@ -1287,6 +1318,11 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Escape") {
+        if (tool === "scale") {
+          if (scaleSession) onSegs(scaleSession.base, false);
+          setScaleSession(null); setScaleBox(null); drag.current = null; chooseTool("select");
+          return;
+        }
         if (tool === "mirror") {
           if (mirrorSession) onSegs(mirrorSession.base, false);
           setMirrorSession(null);
@@ -2345,6 +2381,34 @@ export default function ProfileEditor({
       drag.current = null;
       return;
     }
+    if (tool === "scale" && e.button === 0 && !editOpen) {
+      if (!scaleSession) {
+        const hit = hitSeg(raw);
+        if (!hit) return;
+        const ids = selected.includes(hit.id) ? [...selected] : sketchObjectIds(hit.id);
+        const origin = nearestOnSeg(hit, raw).point;
+        if (!selected.includes(hit.id)) onSelected(ids);
+        setScaleSession({ ids, base: segs.map((segment) => ({ ...segment })), origin });
+        setSnapHit(null);
+        return;
+      }
+      if (!scaleSession.reference) {
+        const hit = hitSeg(raw);
+        const reference = hit ? nearestOnSeg(hit, raw).point : raw;
+        const referenceLength = dist(scaleSession.origin, reference);
+        if (referenceLength < 1e-8) return;
+        const rect = wrapRef.current!.getBoundingClientRect();
+        setScaleSession({ ...scaleSession, reference, pointer: reference, referenceLength });
+        setScaleBox({ x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 48, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+        setSnapHit(null);
+        return;
+      }
+      onSegs(segs, true);
+      setScaleSession(null);
+      setScaleBox(null);
+      chooseTool("select");
+      return;
+    }
     if (tool === "mirror" && e.button === 0 && !editOpen) {
       if (!mirrorSession) {
         const hit = hitSeg(raw);
@@ -2733,6 +2797,23 @@ export default function ProfileEditor({
         drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
         setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
       }
+      return;
+    }
+    if (tool === "scale" && scaleSession && !scaleSession.reference && !editOpen) {
+      setScaleSession({ ...scaleSession, pointer: raw });
+      return;
+    }
+    if (tool === "scale" && scaleSession?.reference && scaleSession.referenceLength && !editOpen) {
+      const targetLength = scaleBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/)
+        ? Number(scaleBox.value)
+        : dist(scaleSession.origin, raw);
+      const factor = targetLength / scaleSession.referenceLength;
+      if (Number.isFinite(factor) && factor > 0) {
+        onSegs(scaleSession.base.map((segment) => scaleSession.ids.includes(segment.id) ? scaleSegment(segment, scaleSession.origin, factor) : segment), false);
+      }
+      setScaleSession({ ...scaleSession, pointer: raw });
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setScaleBox((box) => box ? { ...box, x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 48, Math.max(4, e.clientY - rect.top - 48)) } : box);
       return;
     }
     if (tool === "mirror" && mirrorSession?.p1 && !mirrorSession.p2 && !editOpen) {
@@ -3215,6 +3296,13 @@ export default function ProfileEditor({
     drag.current = null;
     setSnapHit(null);
     if (tool === "fillet") return;
+    if (tool === "scale") {
+      if (d?.mode === "rwait" && !d.moved) {
+        if (scaleSession) onSegs(scaleSession.base, false);
+        setScaleSession(null); setScaleBox(null); chooseTool("select");
+      }
+      return;
+    }
     if (tool === "mirror") {
       if (d?.mode === "rwait" && !d.moved) {
         if (mirrorSession) onSegs(mirrorSession.base, false);
@@ -4380,7 +4468,7 @@ export default function ProfileEditor({
         )}
         {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
             صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
-        {tool !== "select" && tool !== "move" && tool !== "copy" && tool !== "mirror" && cursor && drag.current?.mode !== "handle" &&
+        {tool !== "select" && tool !== "move" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && cursor && drag.current?.mode !== "handle" &&
           !(straightDrawing && measuredLineEnd) && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
@@ -4531,6 +4619,18 @@ export default function ProfileEditor({
             <path d={segPath(filletCalc.result.arc, cam)} fill="none" stroke="#28dfc2" strokeWidth={3.5} />
           </g>
         )}
+
+        {/* خط مرجع و طول زنده Scale */}
+        {scaleSession?.pointer && (() => {
+          const [x1, y1] = P(scaleSession.origin.z, scaleSession.origin.r);
+          const [x2, y2] = P(scaleSession.pointer!.z, scaleSession.pointer!.r);
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke="#28dfc2" strokeWidth={1.3} />
+            </g>
+          );
+        })()}
 
         {/* محور زنده و نهایی Mirror */}
         {mirrorSession?.p1 && mirrorSession.cursor && (() => {
@@ -4764,6 +4864,44 @@ export default function ProfileEditor({
         );
       })()}
 
+      {scaleBox && scaleSession?.reference && scaleSession.referenceLength && (
+        <div className="absolute z-50" style={{ left: scaleBox.x, top: scaleBox.y, width: `${Math.max(72, 28 + scaleBox.value.length * 8)}px` }} dir="ltr">
+          <input
+            ref={scaleInputRef}
+            value={scaleBox.value}
+            aria-label="Scale length"
+            placeholder="Length"
+            className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 py-1 text-center font-mono text-xs text-[#d9f7f5] outline-none shadow-[0_8px_24px_rgba(0,0,0,.55)]", scaleBox.error ? "border-danger" : "border-[#00a9c7] focus:border-[#20c9df]")}
+            onChange={(event) => {
+              const value = latinDigits(event.target.value).replace(/[^0-9.]/g, "");
+              const amount = value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(value) : null;
+              if (amount != null && amount > 0) {
+                const factor = amount / scaleSession.referenceLength!;
+                onSegs(scaleSession.base.map((segment) => scaleSession.ids.includes(segment.id) ? scaleSegment(segment, scaleSession.origin, factor) : segment), false);
+              }
+              setScaleBox({ ...scaleBox, value, error: "" });
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                onSegs(scaleSession.base, false); setScaleSession(null); setScaleBox(null); chooseTool("select");
+                return;
+              }
+              if (event.key !== "Enter") return;
+              const amount = scaleBox.value ? Number(scaleBox.value) : dist(scaleSession.origin, scaleSession.pointer ?? scaleSession.reference!);
+              if (!Number.isFinite(amount) || amount <= 0) { setScaleBox({ ...scaleBox, error: "مقدار نامعتبر" }); return; }
+              const factor = amount / scaleSession.referenceLength!;
+              const next = scaleSession.base.map((segment) => scaleSession.ids.includes(segment.id) ? scaleSegment(segment, scaleSession.origin, factor) : segment);
+              onSegs(next, true); setScaleSession(null); setScaleBox(null); chooseTool("select");
+            }}
+          />
+          <div className="mt-1 whitespace-nowrap pl-0.5 font-mono text-[10px] font-bold leading-none tracking-wide text-[#26e6c7]">
+            {concise(scaleBox.value && Number(scaleBox.value) > 0 ? Number(scaleBox.value) : dist(scaleSession.origin, scaleSession.pointer ?? scaleSession.reference))}
+          </div>
+          {scaleBox.error && <div className="mt-1 text-center text-[9px] text-danger" dir="rtl">{scaleBox.error}</div>}
+        </div>
+      )}
+
       {copyBox && copySession && (
         <div className="absolute z-50" style={{ left: copyBox.x, top: copyBox.y, width: `${Math.max(72, 30 + copyBox.value.length * 8)}px` }} dir="ltr">
           <input
@@ -4906,6 +5044,11 @@ export default function ProfileEditor({
                 if (mirrorSession && t.id !== "mirror") {
                   onSegs(mirrorSession.base, false);
                   setMirrorSession(null);
+                }
+                if (scaleSession && t.id !== "scale") {
+                  onSegs(scaleSession.base, false);
+                  setScaleSession(null);
+                  setScaleBox(null);
                 }
                 if (t.id === "move" && moveSession) {
                   if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
@@ -5062,7 +5205,7 @@ export default function ProfileEditor({
       )}
 
       {/* راهنمای مرحلهٔ ترسیم؛ Move مرحلهٔ شماره‌دار ندارد. */}
-      {tool !== "select" && tool !== "move" && tool !== "copy" && tool !== "mirror" && (
+      {tool !== "select" && tool !== "move" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && (
         <div className="anim-in absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
           <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
           {stepText}

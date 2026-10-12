@@ -120,5 +120,8 @@ export const IconMirror = (p: P) => (
   </svg>
 );
 
+export const IconScale = (p: P) =>
+  base(p, <><path d="M5 19 19 5" /><path d="M11 5h8v8M13 19H5v-8" /></>);
+
 export const IconFillet = (p: P) =>
   base(p, <><path d="M4 4v16h16" /><path d="M4 7.5A12.5 12.5 0 0 0 16.5 20" strokeWidth={2.4} /></>);
