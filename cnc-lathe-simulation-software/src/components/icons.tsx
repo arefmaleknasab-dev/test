@@ -134,7 +134,7 @@ export const IconReferenceScale = (p: P) =>
 export const IconScale = (p: P) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-4 h-4"} viewBox="-1 -1 111 113" aria-hidden>
     {/* فرم مرجع: قاب بزرگِ باز در پایین چپ و مربع کوچک مقیاس‌شده */}
-    <path d="M13 13H96V97H59V90H89V20H20V50H13V13ZM13 59H50V97H13V59ZM20 66V90H43V66H20Z" fill="currentColor" fillRule="evenodd" />
+    <path d="M13 13H96V97H59V90H89V20H20V50H13V13ZM13 59H50V97H13V59ZM20 66V90H43V66H20Z" fill="currentColor" fillRule="evenodd" stroke="currentColor" strokeWidth="6" strokeLinejoin="round" />
   </svg>
 );
 
