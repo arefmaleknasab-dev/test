@@ -50,7 +50,10 @@ interface ProjectTab {
   params: Params;
   gcodeOvr: GcodeOvrMap;
   activePreset: string | null;
+  savedSnapshot: string | null;
 }
+
+const projectSnapshot = (sketch: SketchSeg[], params: Params, gcodeOvr: GcodeOvrMap) => JSON.stringify({ sketch, params, gcodeOvr });
 
 interface HistEntry {
   sketch: SketchSeg[];
@@ -172,7 +175,9 @@ export default function App() {
   const [gcodeOvr, setGcodeOvr] = useState<GcodeOvrMap>(() => normGcodeOvr(SAVED?.gcodeOvr));
   const initialProjectId = useRef(`project-${Date.now()}`);
   const [activeProjectId, setActiveProjectId] = useState(initialProjectId.current);
-  const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), activePreset }]);
+  const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), activePreset, savedSnapshot: null }]);
+  const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
+  const [saveThenCloseProject, setSaveThenCloseProject] = useState<string|null>(null);
   const [editBuf, setEditBuf] = useState<EditBuf | null>(null);
   /* باز/بسته‌بودن UI از وجود پیش‌نویس جداست تا خروج تصادفی، تغییرات تأییدنشده را پاک نکند. */
   const [editOpen, setEditOpen] = useState(false);
@@ -195,7 +200,7 @@ export default function App() {
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);
   const projectInputRef = useRef<HTMLInputElement>(null);
-  const projectHandleRef = useRef<{ name?: string; createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }> } | null>(null);
+  const projectHandlesRef = useRef(new Map<string, { name?: string; createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }> }>());
   const stateRef = useRef({ sketch, gcodeOvr, editBuf, editOpen, params });
   stateRef.current = { sketch, gcodeOvr, editBuf, editOpen, params };
   useEffect(() => {
@@ -206,6 +211,13 @@ export default function App() {
     setActiveProjectId(id);setSketch(tab.sketch);setGenerationSketch(tab.sketch);setParams(tab.params);setGcodeOvr(tab.gcodeOvr);setActivePreset(tab.activePreset);
     setSelectedIds([]);setEditBuf(null);setEditOpen(false);past.current=[];future.current=[];setHistVer(v=>v+1);
   };
+  const finishCloseProject = (id:string) => {
+    const remaining=projectTabs.filter(t=>t.id!==id);projectHandlesRef.current.delete(id);
+    if(remaining.length){setProjectTabs(remaining);if(id===activeProjectId){const next=remaining[Math.max(0,projectTabs.findIndex(t=>t.id===id)-1)]??remaining[0];setActiveProjectId(next.id);setSketch(next.sketch);setGenerationSketch(next.sketch);setParams(next.params);setGcodeOvr(next.gcodeOvr);setActivePreset(next.activePreset);}}
+    else { const p=PRESETS[0], nextSketch=sketchFromPoints(presetPoints(p)), id2=`project-${Date.now()}`;const nextParams=normalizeParams({...params,blankD:p.blankD,blankL:p.blankL},false);setProjectTabs([{id:id2,name:"پروژه بدون نام",sketch:nextSketch,params:nextParams,gcodeOvr:{},activePreset:p.id,savedSnapshot:null}]);setActiveProjectId(id2);setSketch(nextSketch);setGenerationSketch(nextSketch);setParams(nextParams);setGcodeOvr({});setActivePreset(p.id);}
+    setPendingCloseProject(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);
+  };
+  const requestCloseProject=(id:string)=>{const tab=projectTabs.find(t=>t.id===id);if(!tab)return;const dirty=tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr);if(dirty)setPendingCloseProject(id);else finishCloseProject(id);};
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -653,7 +665,7 @@ export default function App() {
         : sketchFromPoints(presetPoints(p));
     const hadEditDraft = !!editBufRef.current;
     const newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    setProjectTabs(tabs=>[...tabs,{id:newProjectId,name:p.name,sketch:nextSketch,params,gcodeOvr:{},activePreset:p.id}]);
+    setProjectTabs(tabs=>[...tabs,{id:newProjectId,name:p.name,sketch:nextSketch,params,gcodeOvr:{},activePreset:p.id,savedSnapshot:null}]);
     setActiveProjectId(newProjectId);
 
     /* preset یک تغییر اتمیکِ طرح است. نگه‌داشتن verts/lines یا overrideهای طرح
@@ -787,24 +799,32 @@ export default function App() {
     const url = URL.createObjectURL(new Blob([projectData()], { type: "application/json;charset=utf-8" }));
     const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
   };
-  const saveProjectAs = async () => {
+  const saveProjectAs = async (): Promise<boolean> => {
     try {
-      const picker = (window as unknown as { showSaveFilePicker?: (options: unknown) => Promise<typeof projectHandleRef.current> }).showSaveFilePicker;
+      const picker = (window as unknown as { showSaveFilePicker?: (options: unknown) => Promise<{ name?: string; createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
       if (picker) {
         const handle = await picker({ suggestedName: "project.kharraat", types: [{ description: "KharraatCode Project", accept: { "application/json": [".kharraat"] } }] });
-        if (!handle) return; projectHandleRef.current = handle;
+        if (!handle) return false; projectHandlesRef.current.set(activeProjectId,handle);
         const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close();
         if(handle.name)setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,name:handle.name!.replace(/\.kharraat$/i,"")}:t));
       } else downloadProject();
-      showToast("پروژه با تمام تنظیمات ذخیره شد");
-    } catch (error) { if ((error as {name?:string}).name !== "AbortError") showToast("ذخیره پروژه ممکن نشد", "warn"); }
+      setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr)}:t));
+      showToast("پروژه ذخیره شد"); return true;
+    } catch (error) { if ((error as {name?:string}).name !== "AbortError") showToast("ذخیره پروژه ممکن نشد", "warn"); return false; }
   };
-  const saveProject = async () => {
-    const handle = projectHandleRef.current;
-    if (!handle) { await saveProjectAs(); return; }
-    try { const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close(); showToast("پروژه ذخیره شد"); }
-    catch { showToast("ذخیره مستقیم ممکن نشد؛ از Save As استفاده کنید", "warn"); }
+  const saveProject = async (): Promise<boolean> => {
+    const handle = projectHandlesRef.current.get(activeProjectId);
+    if (!handle) return saveProjectAs();
+    try { const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close(); setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr)}:t)); showToast("پروژه ذخیره شد"); return true; }
+    catch { showToast("ذخیره مستقیم ممکن نشد؛ از Save As استفاده کنید", "warn"); return false; }
   };
+  useEffect(() => {
+    if(!saveThenCloseProject || activeProjectId!==saveThenCloseProject)return;
+    let live=true;void saveProject().then(ok=>{if(live&&ok)finishCloseProject(saveThenCloseProject);if(live)setSaveThenCloseProject(null);});
+    return()=>{live=false;};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[saveThenCloseProject,activeProjectId]);
+
   const openProjectFile = async (file: File) => {
     try {
       const raw = JSON.parse(await file.text()) as Saved & {
@@ -816,11 +836,11 @@ export default function App() {
       if (raw.format !== "KharraatCode Project" || !data.sketch) throw new Error("invalid-project");
       const nextSketch = normalizeSketch(data.sketch); if (!nextSketch) throw new Error("invalid-sketch");
       const nextParams=normalizeParams(data.params,false), nextOvr=normGcodeOvr(data.gcodeOvr), newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-      setProjectTabs(tabs=>[...tabs,{id:newProjectId,name:file.name.replace(/\.kharraat$/i,""),sketch:nextSketch,params:nextParams,gcodeOvr:nextOvr,activePreset:null}]);setActiveProjectId(newProjectId);
+      setProjectTabs(tabs=>[...tabs,{id:newProjectId,name:file.name.replace(/\.kharraat$/i,""),sketch:nextSketch,params:nextParams,gcodeOvr:nextOvr,activePreset:null,savedSnapshot:projectSnapshot(nextSketch,nextParams,nextOvr)}]);setActiveProjectId(newProjectId);
       setSketch(nextSketch); setGenerationSketch(nextSketch); setParams(nextParams);
       /* settings/preferences/layout عمداً بارگذاری نمی‌شوند تا محیط شخصی گیرنده تغییر نکند. */
       setActivePreset(null); setGcodeOvr(nextOvr);
-      setSelectedIds([]); setEditBuf(null); setEditOpen(false); setMode("design"); projectHandleRef.current = null;
+      setSelectedIds([]); setEditBuf(null); setEditOpen(false); setMode("design");
       past.current=[]; future.current=[]; setHistVer(v=>v+1);
       const outputDiffers = !!raw.output && (raw.output.postProcessor !== preferences.postProcessor || raw.output.gcodeUnits !== preferences.gcodeUnits || raw.output.sequenceNumbers !== preferences.sequenceNumbers);
       showToast(outputDiffers ? `پروژه باز شد؛ تنظیمات خروجی پروژه با Preferences شما متفاوت است` : `پروژه «${file.name}» باز شد`, outputDiffers ? "warn" : "ok");
@@ -866,10 +886,12 @@ export default function App() {
       <input ref={projectInputRef} type="file" accept=".kharraat,application/json" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void openProjectFile(file);e.currentTarget.value="";}} />
       {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
       {showPreferences && <PreferencesDialog value={preferences} snapTolerance={settings.snapTolerancePx} onChange={setPreferences} onSnapTolerance={(snapTolerancePx) => setSettings((s) => ({ ...s, snapTolerancePx }))} onClose={() => setShowPreferences(false)} />}
+      {pendingCloseProject && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات ذخیره‌نشده</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییرات پروژه «{projectTabs.find(t=>t.id===pendingCloseProject)?.name}» ذخیره نشده است. آیا می‌خواهید پیش از بستن پروژه آن را ذخیره کنید؟</p><div className="mt-5 flex justify-end gap-2"><button onClick={()=>setPendingCloseProject(null)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>finishCloseProject(pendingCloseProject)} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{const id=pendingCloseProject;setSaveThenCloseProject(id);if(id!==activeProjectId)switchProject(id);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       <DesktopMenuBar
-        projects={projectTabs.map(({id,name})=>({id,name}))}
+        projects={projectTabs.map(tab=>({id:tab.id,name:tab.name,dirty:tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr)}))}
         activeProjectId={activeProjectId}
         onSwitchProject={switchProject}
+        onCloseProject={requestCloseProject}
         onOpenProject={() => projectInputRef.current?.click()}
         onSaveProject={() => void saveProject()}
         onSaveProjectAs={() => void saveProjectAs()}
@@ -1067,8 +1089,8 @@ export default function App() {
   );
 }
 
-function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
-  projects: {id:string;name:string}[]; activeProjectId:string; onSwitchProject:(id:string)=>void;
+function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onCloseProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
+  projects: {id:string;name:string;dirty:boolean}[]; activeProjectId:string; onSwitchProject:(id:string)=>void; onCloseProject:(id:string)=>void;
   onOpenProject: () => void; onSaveProject: () => void; onSaveProjectAs: () => void;
   onImportAi: () => void; onExportGcode: () => void; onExportDxf: () => void; onPreferences: () => void;
   onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
@@ -1087,7 +1109,7 @@ function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onOpenProj
     <MenuTop label="File" active={open==="file"} onClick={()=>setOpen(open==="file"?null:"file")} />
     <MenuTop label="Edit" active={open==="edit"} onClick={()=>setOpen(open==="edit"?null:"edit")} />
     <div className="ml-2 flex h-full min-w-0 flex-1 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]" dir="ltr">
-      {projects.map(project=><button key={project.id} onClick={()=>{setOpen(null);onSwitchProject(project.id);}} title={project.name} className={cn("h-[24px] min-w-[105px] max-w-[190px] truncate rounded-t-md border border-b-0 px-3 text-[10.5px] transition-colors",project.id===activeProjectId?"border-edge2 bg-panel text-ink":"border-edge/70 bg-panel2/55 text-dim hover:bg-panel2 hover:text-mute")}>{project.name}</button>)}
+      {projects.map(project=><div key={project.id} className={cn("flex h-[24px] min-w-[115px] max-w-[200px] items-center rounded-t-md border border-b-0 transition-colors",project.id===activeProjectId?"border-edge2 bg-panel text-ink":"border-edge/70 bg-panel2/55 text-dim hover:bg-panel2 hover:text-mute")}><button onClick={()=>{setOpen(null);onSwitchProject(project.id);}} title={project.name} className="min-w-0 flex-1 truncate px-2 text-[10.5px]">{project.dirty&&<span className="ml-1 text-brass">•</span>}{project.name}</button><button onClick={e=>{e.stopPropagation();onCloseProject(project.id);}} title="بستن پروژه" className="grid h-full w-6 shrink-0 place-items-center rounded-sm text-dim hover:bg-danger/15 hover:text-danger">×</button></div>)}
     </div>
     {open==="file" && <div className="absolute top-full left-1 z-50 w-52 overflow-hidden rounded-b-md border border-edge2 bg-panel/98 py-1 shadow-2xl shadow-black/60" dir="rtl">
       <MenuItem label="بازکردن پروژه…" hint="Ctrl+O" onClick={()=>run(onOpenProject)} />
