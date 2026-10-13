@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { IconSettings, IconX } from "./icons";
 import { cn } from "../utils/cn";
 
@@ -24,14 +24,16 @@ export default function PreferencesDialog({ value, snapTolerance, onChange, onSn
   onSnapTolerance: (value: number) => void; onClose: () => void;
 }) {
   const [tab, setTab] = useState<"snap" | "appearance" | "post">("snap");
+  const [frame, setFrame] = useState(() => ({ x: Math.max(16, (window.innerWidth - 672) / 2), y: Math.max(16, (window.innerHeight - 470) / 2), w: Math.min(672, window.innerWidth - 32), h: Math.min(470, window.innerHeight - 32) }));
+  const drag = useRef<{x:number;y:number;left:number;top:number}|null>(null);
   const patch = (p: Partial<AppPreferences>) => onChange({ ...value, ...p });
-  return <div className="fixed inset-0 z-[100] grid place-items-center bg-black/55 p-4 backdrop-blur-sm" onPointerDown={e=>{if(e.target===e.currentTarget)onClose();}} dir="rtl">
-    <section className="anim-in w-full max-w-2xl overflow-hidden rounded-xl border border-edge2 bg-panel/98 shadow-2xl shadow-black/70">
-      <header className="flex items-center justify-between border-b border-edge bg-panel2/90 px-4 py-3">
+  return <div className="pointer-events-none fixed inset-0 z-[100]" dir="rtl">
+    <section className="anim-in pointer-events-auto absolute flex min-h-[360px] min-w-[480px] resize flex-col overflow-hidden rounded-xl border border-edge2 bg-panel/98 shadow-2xl shadow-black/70" style={{left:frame.x,top:frame.y,width:frame.w,height:frame.h,maxWidth:"calc(100vw - 16px)",maxHeight:"calc(100vh - 16px)"}} onPointerUp={e=>{if(drag.current){drag.current=null;} const r=e.currentTarget.getBoundingClientRect();setFrame(f=>({...f,w:r.width,h:r.height}));}}>
+      <header className="flex cursor-move select-none items-center justify-between border-b border-edge bg-panel2/90 px-4 py-3" onPointerDown={e=>{if((e.target as HTMLElement).closest("button"))return;drag.current={x:e.clientX,y:e.clientY,left:frame.x,top:frame.y};e.currentTarget.setPointerCapture?.(e.pointerId);}} onPointerMove={e=>{const d=drag.current;if(!d)return;setFrame(f=>({...f,x:Math.max(0,Math.min(window.innerWidth-80,d.left+e.clientX-d.x)),y:Math.max(0,Math.min(window.innerHeight-40,d.top+e.clientY-d.y))}));}}>
         <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg border border-brass/35 bg-brass/10 text-brass2"><IconSettings className="h-4.5 w-4.5"/></span><div><h2 className="text-sm font-bold text-ink">Preferences</h2><p className="text-[9.5px] text-dim">تنظیمات عمومی خراط‌کد</p></div></div>
         <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-md text-dim hover:bg-panel3 hover:text-ink"><IconX className="h-4 w-4"/></button>
       </header>
-      <div className="grid min-h-[360px] grid-cols-[145px_1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-[145px_1fr] overflow-auto">
         <nav className="space-y-1 border-l border-edge bg-[#110e0a]/50 p-2">
           {[["snap","اسنپ و دقت"],["appearance","رنگ، خطوط و تم"],["post","پست‌پراسس جی‌کد"]].map(([id,label])=><button key={id} onClick={()=>setTab(id as typeof tab)} className={cn("w-full rounded-md px-3 py-2 text-right text-[11px] font-bold",tab===id?"bg-brass/15 text-brass2":"text-mute hover:bg-panel3 hover:text-ink")}>{label}</button>)}
         </nav>
