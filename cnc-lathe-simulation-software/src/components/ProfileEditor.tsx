@@ -60,6 +60,13 @@ import {
   IconX,
 } from "./icons";
 
+// Curved, double-ended rotation cursor. Each corner gets the same cursor rotated
+// to follow its two adjoining box edges (Photoshop-style transform feedback).
+const BOX_ROTATE_CURSORS = [0, 90, 180, 270].map((angle) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><g transform="rotate(${angle} 16 16)" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 23C5 12 12 5 23 5M5 23l0-7M5 23l7 0M23 5l-7 0M23 5l0 7" stroke="#000" stroke-width="5"/><path d="M5 23C5 12 12 5 23 5M5 23l0-7M5 23l7 0M23 5l-7 0M23 5l0 7" stroke="#fff" stroke-width="2.2"/></g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 16 16, alias`;
+});
+
 export interface EdSettings {
   snap: number;
   smartSnap: boolean;
@@ -4847,7 +4854,7 @@ export default function ProfileEditor({
           return <g pointerEvents="all">
             <rect x={x0} y={yTop} width={x1-x0} height={yBottom-yTop} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
             {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleLastHandle.current=h; boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
-            {[{x:x0-7,y:yTop-7},{x:x1+7,y:yTop-7},{x:x1+7,y:yBottom+7},{x:x0-7,y:yBottom+7}].map((p,i)=><circle key={`rh-${i}`} cx={p.x} cy={p.y} r={5} fill="transparent" stroke="none" style={{cursor:i%2===0?"nwse-resize":"nesw-resize"}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation();svgRef.current?.setPointerCapture?.(e.pointerId);const pivot=boxScalePivot??{z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2};const w=toWorld(e.clientX,e.clientY);const session={base:segs.map(s=>({...s})),ids:[...selected],pivot,angle:0};boxRotateDrag.current={...session,startAngle:Math.atan2(w.r-pivot.r,w.z-pivot.z)};setBoxRotateSession(session);const rect=wrapRef.current!.getBoundingClientRect();setBoxRotateBox({x:e.clientX-rect.left+12,y:e.clientY-rect.top-48,value:"",error:""});}}/>)}
+            {[{x:x0-7,y:yTop-7},{x:x1+7,y:yTop-7},{x:x1+7,y:yBottom+7},{x:x0-7,y:yBottom+7}].map((p,i)=><circle key={`rh-${i}`} cx={p.x} cy={p.y} r={5} fill="transparent" stroke="none" style={{cursor:BOX_ROTATE_CURSORS[i]}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation();svgRef.current?.setPointerCapture?.(e.pointerId);const pivot=boxScalePivot??{z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2};const w=toWorld(e.clientX,e.clientY);const session={base:segs.map(s=>({...s})),ids:[...selected],pivot,angle:0};boxRotateDrag.current={...session,startAngle:Math.atan2(w.r-pivot.r,w.z-pivot.z)};setBoxRotateSession(session);const rect=wrapRef.current!.getBoundingClientRect();setBoxRotateBox({x:e.clientX-rect.left+12,y:e.clientY-rect.top-48,value:"",error:""});}}/>)}
             {(()=>{const pivot=boxScalePivot??{z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2};const [px,py]=P(pivot.z,pivot.r);return <g style={{cursor:"move"}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation();svgRef.current?.setPointerCapture?.(e.pointerId);boxPivotDrag.current=true;}}><circle cx={px} cy={py} r={9} fill="transparent"/><path d={`M${px-6} ${py}H${px+6}M${px} ${py-6}V${py+6}`} stroke="#28dfc2" strokeWidth={1.8}/></g>;})()}
           </g>;
         })()}
