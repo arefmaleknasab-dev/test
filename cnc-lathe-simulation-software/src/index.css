@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./preferences.css";
 
 @theme {
   --font-body: "Vazirmatn", "Segoe UI", sans-serif;

@@ -70,6 +70,8 @@ const BOX_ROTATE_CURSORS = [180, 270, 0, 90].map((angle) => {
 export interface EdSettings {
   snap: number;
   smartSnap: boolean;
+  /** شعاع تشخیص اسنپ در فضای صفحه، مستقل از زوم. */
+  snapTolerancePx: number;
   showRough: boolean;
   showFinish: boolean;
   showOffset: boolean;
@@ -1511,7 +1513,7 @@ export default function ProfileEditor({
   const applySnap = (raw: SPoint, skipIds: number[] = []): { p: SPoint; hit: SnapPoint | null } => {
     const c = camRef.current;
     if (!c) return { p: raw, hit: null };
-    const tolW = 11 / c.s; // ۱۱ پیکسل
+    const tolW = Math.min(30, Math.max(3, settings.snapTolerancePx)) / c.s;
     if (settings.smartSnap) {
       let best: SnapPoint | null = null;
       let bestD = tolW;

@@ -6,7 +6,8 @@ import type { LayoutState, PanelId, PanelState, PanelVis, WindowMenuItem } from 
 import GCodePanel from "./components/GCodePanel";
 import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
-import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSpindle, IconUndo, IconWarn } from "./components/icons";
+import PreferencesDialog, { DEFAULT_PREFERENCES, type AppPreferences } from "./components/PreferencesDialog";
+import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSettings, IconSpindle, IconUndo, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
 import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, OpType, Params, PPoint, Preset } from "./lib/lathe";
@@ -21,6 +22,7 @@ interface Saved {
   sketch?: SketchSeg[];
   params?: Partial<Params>;
   settings?: Partial<EdSettings>;
+  preferences?: Partial<AppPreferences>;
   layout?: LayoutState;
   activePreset?: string | null;
   gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>; del?: boolean }>;
@@ -91,6 +93,8 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
 
 export default function App() {
   const [showAiImport, setShowAiImport] = useState(false);
+  const [showPreferences, setShowPreferences] = useState(false);
+  const [preferences, setPreferences] = useState<AppPreferences>(() => ({ ...DEFAULT_PREFERENCES, ...(SAVED?.preferences ?? {}) }));
   const [sketch, setSketch] = useState<SketchSeg[]>(() => {
     const fromSaved = normalizeSketch(SAVED?.sketch);
     if (fromSaved) return fromSaved;
@@ -110,6 +114,7 @@ export default function App() {
     return {
       snap: s?.snap ?? 1,
       smartSnap: s?.smartSnap ?? true,
+      snapTolerancePx: typeof s?.snapTolerancePx === "number" ? Math.min(30, Math.max(3, s.snapTolerancePx)) : 11,
       showRough: s?.showRough ?? false,
       showFinish: s?.showFinish ?? false,
       showOffset: s?.showOffset ?? false,
@@ -307,11 +312,20 @@ export default function App() {
   /* ذخیره محلی */
   useEffect(() => {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ sketch, params, settings, activePreset, layout, gcodeOvr, version: SAVE_VERSION }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ sketch, params, settings, preferences, activePreset, layout, gcodeOvr, version: SAVE_VERSION }));
     } catch {
       /* ignore */
     }
-  }, [sketch, params, settings, activePreset, layout, gcodeOvr]);
+  }, [sketch, params, settings, preferences, activePreset, layout, gcodeOvr]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = preferences.theme;
+    root.style.setProperty("--profile-line-color", preferences.profileColor);
+    root.style.setProperty("--selected-line-color", preferences.selectedColor);
+    root.style.setProperty("--guide-line-color", preferences.guideColor);
+    root.style.setProperty("--profile-line-width", String(preferences.lineWidth));
+  }, [preferences]);
 
   /* هنگام تغییر برنامه، هایلایت جی‌کد پاک شود */
   useEffect(() => {
@@ -763,8 +777,12 @@ export default function App() {
   return (
     <div className="flex h-full flex-col @container">
       {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
+      {showPreferences && <PreferencesDialog value={preferences} snapTolerance={settings.snapTolerancePx} onChange={setPreferences} onSnapTolerance={(snapTolerancePx) => setSettings((s) => ({ ...s, snapTolerancePx }))} onClose={() => setShowPreferences(false)} />}
       {/* ---------- سربرگ ---------- */}
-      <header className="relative z-40 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-panel/85 px-3.5 py-2 backdrop-blur">
+      <header className="relative z-40 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-panel/85 px-3.5 py-2 pl-14 backdrop-blur">
+        <button onClick={() => setShowPreferences(true)} title="Preferences" aria-label="Preferences" className="absolute top-2.5 left-3 grid h-8 w-8 place-items-center rounded-lg border border-edge bg-panel2 text-mute shadow-lg transition-colors hover:border-brass/50 hover:text-brass2">
+          <IconSettings className="h-4.5 w-4.5" />
+        </button>
         <div className="flex items-center gap-2.5">
           <span className="grid h-9 w-9 place-items-center rounded-lg border border-brass/40 bg-gradient-to-b from-panel3 to-panel text-brass shadow-[0_0_18px_rgba(227,169,78,0.18)]">
             <IconSpindle className="h-5 w-5" />
