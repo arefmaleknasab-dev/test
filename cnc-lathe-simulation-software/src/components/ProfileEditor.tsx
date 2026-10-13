@@ -5433,8 +5433,8 @@ export default function ProfileEditor({
           <span>{toolOptionText || TOOLS.find((item) => item.id === tool)?.name}</span>
           {tool === "rotate" && (
             <>
-              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateLive} onChange={e=>setRotateLive(e.target.checked)}/>پیش‌نمایش زنده عدد</label>
-              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateGhost} onChange={e=>setRotateGhost(e.target.checked)}/>نمایش شکل اصلی</label>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateLive} onChange={e=>{setRotateLive(e.target.checked);requestAnimationFrame(()=>rotateInputRef.current?.focus());}}/>پیش‌نمایش زنده عدد</label>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateGhost} onChange={e=>{setRotateGhost(e.target.checked);requestAnimationFrame(()=>rotateInputRef.current?.focus());}}/>نمایش شکل اصلی</label>
             </>
           )}
           {tool === "boxscale" && (
