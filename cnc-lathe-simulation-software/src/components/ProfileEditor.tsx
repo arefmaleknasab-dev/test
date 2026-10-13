@@ -5326,7 +5326,7 @@ export default function ProfileEditor({
       )}
 
       {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
-      <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="profile-tool-column absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
           {(editOpen ? TOOLS.filter((t) => t.id === "select" || t.id === "move") : TOOLS).map((t, i) => (
             <button

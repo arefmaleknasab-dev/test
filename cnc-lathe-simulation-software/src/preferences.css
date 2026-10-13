@@ -24,3 +24,14 @@
   --color-brass: #c4a46b;
   --color-brass2: #dfc28d;
 }
+
+.profile-tool-column {
+  width: calc(30px * var(--profile-toolbar-scale, 1));
+  gap: calc(6px * var(--profile-toolbar-scale, 1));
+}
+.profile-tool-column button {
+  height: calc(27px * var(--profile-toolbar-scale, 1));
+}
+.profile-tool-column button svg {
+  transform: scale(var(--profile-toolbar-scale, 1));
+}

@@ -325,6 +325,7 @@ export default function App() {
     root.style.setProperty("--selected-line-color", preferences.selectedColor);
     root.style.setProperty("--guide-line-color", preferences.guideColor);
     root.style.setProperty("--profile-line-width", String(preferences.lineWidth));
+    root.style.setProperty("--profile-toolbar-scale", String(preferences.toolbarScale));
   }, [preferences]);
 
   /* هنگام تغییر برنامه، هایلایت جی‌کد پاک شود */
