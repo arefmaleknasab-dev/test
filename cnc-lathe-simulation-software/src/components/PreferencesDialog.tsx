@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { IconSettings, IconX } from "./icons";
 import { cn } from "../utils/cn";
 
@@ -26,10 +26,30 @@ export default function PreferencesDialog({ value, snapTolerance, onChange, onSn
   const [tab, setTab] = useState<"snap" | "appearance" | "post">("snap");
   const [frame, setFrame] = useState(() => ({ x: Math.max(16, (window.innerWidth - 672) / 2), y: Math.max(16, (window.innerHeight - 470) / 2), w: Math.min(672, window.innerWidth - 32), h: Math.min(470, window.innerHeight - 32) }));
   const drag = useRef<{x:number;y:number;left:number;top:number}|null>(null);
+  const resize = useRef<{edge:string;x:number;y:number;frame:typeof frame}|null>(null);
   const patch = (p: Partial<AppPreferences>) => onChange({ ...value, ...p });
+  const moveFrame = (e: ReactPointerEvent<HTMLElement>) => {
+    const d=drag.current;
+    if(d) setFrame(f=>({...f,x:Math.max(0,Math.min(window.innerWidth-80,d.left+e.clientX-d.x)),y:Math.max(0,Math.min(window.innerHeight-40,d.top+e.clientY-d.y))}));
+    const r=resize.current;if(!r)return;const dx=e.clientX-r.x,dy=e.clientY-r.y;let {x,y,w,h}=r.frame;
+    if(r.edge.includes("e")) w=Math.max(480,Math.min(window.innerWidth-x,w+dx));
+    if(r.edge.includes("s")) h=Math.max(360,Math.min(window.innerHeight-y,h+dy));
+    if(r.edge.includes("w")){const nw=Math.max(480,w-dx);x=Math.max(0,x+w-nw);w=nw;}
+    if(r.edge.includes("n")){const nh=Math.max(360,h-dy);y=Math.max(0,y+h-nh);h=nh;}
+    setFrame({x,y,w,h});
+  };
+  const beginResize=(edge:string)=>(e:ReactPointerEvent<HTMLDivElement>)=>{e.preventDefault();e.stopPropagation();resize.current={edge,x:e.clientX,y:e.clientY,frame:{...frame}};(e.currentTarget.parentElement as HTMLElement).setPointerCapture?.(e.pointerId);};
   return <div className="pointer-events-none fixed inset-0 z-[100]" dir="rtl">
-    <section dir="ltr" className="anim-in pointer-events-auto absolute flex min-h-[360px] min-w-[480px] resize flex-col overflow-hidden rounded-xl border border-edge2 bg-panel/98 shadow-2xl shadow-black/70" style={{left:frame.x,top:frame.y,width:frame.w,height:frame.h,maxWidth:"calc(100vw - 16px)",maxHeight:"calc(100vh - 16px)"}} onPointerUp={e=>{if(drag.current){drag.current=null;} const r=e.currentTarget.getBoundingClientRect();setFrame(f=>({...f,w:r.width,h:r.height}));}}>
-      <header dir="rtl" className="flex cursor-move select-none items-center justify-between border-b border-edge bg-panel2/90 px-4 py-3" onPointerDown={e=>{if((e.target as HTMLElement).closest("button"))return;drag.current={x:e.clientX,y:e.clientY,left:frame.x,top:frame.y};e.currentTarget.setPointerCapture?.(e.pointerId);}} onPointerMove={e=>{const d=drag.current;if(!d)return;setFrame(f=>({...f,x:Math.max(0,Math.min(window.innerWidth-80,d.left+e.clientX-d.x)),y:Math.max(0,Math.min(window.innerHeight-40,d.top+e.clientY-d.y))}));}}>
+    <section dir="ltr" className="anim-in pointer-events-auto absolute flex min-h-[360px] min-w-[480px] flex-col overflow-hidden rounded-xl border border-edge2 bg-panel/98 shadow-2xl shadow-black/70" style={{left:frame.x,top:frame.y,width:frame.w,height:frame.h,maxWidth:"calc(100vw - 16px)",maxHeight:"calc(100vh - 16px)"}} onPointerMove={moveFrame} onPointerUp={()=>{drag.current=null;resize.current=null;}}>
+      <div onPointerDown={beginResize("n")} className="absolute top-0 right-3 left-3 z-50 h-2 cursor-n-resize" />
+      <div onPointerDown={beginResize("s")} className="absolute right-3 bottom-0 left-3 z-50 h-2 cursor-s-resize" />
+      <div onPointerDown={beginResize("e")} className="absolute top-3 right-0 bottom-3 z-50 w-2 cursor-e-resize" />
+      <div onPointerDown={beginResize("w")} className="absolute top-3 bottom-3 left-0 z-50 w-2 cursor-w-resize" />
+      <div onPointerDown={beginResize("ne")} className="absolute top-0 right-0 z-[51] h-3 w-3 cursor-ne-resize" />
+      <div onPointerDown={beginResize("nw")} className="absolute top-0 left-0 z-[51] h-3 w-3 cursor-nw-resize" />
+      <div onPointerDown={beginResize("se")} className="absolute right-0 bottom-0 z-[51] h-3 w-3 cursor-se-resize" />
+      <div onPointerDown={beginResize("sw")} className="absolute bottom-0 left-0 z-[51] h-3 w-3 cursor-sw-resize" />
+      <header dir="rtl" className="flex cursor-move select-none items-center justify-between border-b border-edge bg-panel2/90 px-4 py-3" onPointerDown={e=>{if((e.target as HTMLElement).closest("button"))return;drag.current={x:e.clientX,y:e.clientY,left:frame.x,top:frame.y};e.currentTarget.setPointerCapture?.(e.pointerId);}}>
         <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-lg border border-brass/35 bg-brass/10 text-brass2"><IconSettings className="h-4.5 w-4.5"/></span><div><h2 className="text-sm font-bold text-ink">Preferences</h2><p className="text-[9.5px] text-dim">تنظیمات عمومی خراط‌کد</p></div></div>
         <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded-md text-dim hover:bg-panel3 hover:text-ink"><IconX className="h-4 w-4"/></button>
       </header>
