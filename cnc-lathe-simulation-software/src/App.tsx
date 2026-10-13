@@ -988,7 +988,7 @@ function DesktopMenuBar({ onImportAi, onExportGcode, onExportDxf, onPreferences,
     return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", key); };
   }, [open]);
   const run = (fn:()=>void) => { setOpen(null); fn(); };
-  return <div ref={ref} dir="ltr" className="relative z-[60] flex h-7 shrink-0 items-center border-b border-edge bg-[#0e0c09] px-2 text-[11px] text-mute shadow-sm">
+  return <div ref={ref} dir="ltr" onPointerDown={(e)=>{if(e.target===e.currentTarget)setOpen(null);}} className="relative z-[60] flex h-7 shrink-0 items-center border-b border-edge bg-[#0e0c09] px-2 text-[11px] text-mute shadow-sm">
     <MenuTop label="File" active={open==="file"} onClick={()=>setOpen(open==="file"?null:"file")} />
     <MenuTop label="Edit" active={open==="edit"} onClick={()=>setOpen(open==="edit"?null:"edit")} />
     {open==="file" && <div className="absolute top-full left-1 z-50 w-52 overflow-hidden rounded-b-md border border-edge2 bg-panel/98 py-1 shadow-2xl shadow-black/60" dir="rtl">
