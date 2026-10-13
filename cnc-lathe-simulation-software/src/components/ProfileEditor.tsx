@@ -854,6 +854,12 @@ export default function ProfileEditor({
   const boxScaleWidthInputRef = useRef<HTMLInputElement>(null);
   const boxScaleHeightInputRef = useRef<HTMLInputElement>(null);
   const boxScaleDrag = useRef<{ handle: string; base: SketchSeg[]; ids: number[]; bounds: { minZ: number; maxZ: number; minR: number; maxR: number } } | null>(null);
+  const [boxScalePivot, setBoxScalePivot] = useState<SPoint | null>(null);
+  const boxPivotDrag = useRef(false);
+  const boxRotateDrag = useRef<{ base: SketchSeg[]; ids: number[]; pivot: SPoint; startAngle: number; angle: number } | null>(null);
+  const [boxRotateSession, setBoxRotateSession] = useState<{ base: SketchSeg[]; ids: number[]; pivot: SPoint; angle: number } | null>(null);
+  const [boxRotateBox, setBoxRotateBox] = useState<{x:number;y:number;value:string;error:string}|null>(null);
+  const boxRotateInputRef = useRef<HTMLInputElement>(null);
   const [scaleSession, setScaleSession] = useState<ScaleSession | null>(null);
   const [scaleBox, setScaleBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
   const scaleInputRef = useRef<HTMLInputElement>(null);
@@ -2879,6 +2885,21 @@ export default function ProfileEditor({
       setRotateBox(box=>box?{...box,x:Math.min(rect.width-72,Math.max(4,e.clientX-rect.left+12)),y:Math.min(rect.height-48,Math.max(4,e.clientY-rect.top-48))}:box);
       return;
     }
+    if (tool === "boxscale" && boxPivotDrag.current) {
+      setBoxScalePivot(raw);
+      return;
+    }
+    if (tool === "boxscale" && boxRotateDrag.current) {
+      const d=boxRotateDrag.current;
+      let angle=(Math.atan2(raw.r-d.pivot.r,raw.z-d.pivot.z)-d.startAngle)*180/Math.PI;
+      angle=((angle+180)%360+360)%360-180;
+      if(e.shiftKey) angle=Math.round(angle/90)*90;
+      d.angle=angle;
+      setBoxRotateSession({base:d.base,ids:d.ids,pivot:d.pivot,angle});
+      onSegs(d.base.map(s=>d.ids.includes(s.id)?rotateSegment(s,d.pivot,angle):s),false);
+      setBoxRotateBox(box=>box?{...box,value:box.value,x:Math.max(4,e.clientX-wrapRef.current!.getBoundingClientRect().left+12),y:Math.max(4,e.clientY-wrapRef.current!.getBoundingClientRect().top-48)}:box);
+      return;
+    }
     if (tool === "boxscale" && boxScaleDrag.current) {
       const d = boxScaleDrag.current, b = d.bounds;
       const w = Math.max(1e-9, b.maxZ - b.minZ), h = Math.max(1e-9, b.maxR - b.minR);
@@ -3393,6 +3414,8 @@ export default function ProfileEditor({
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (boxPivotDrag.current) { boxPivotDrag.current=false; return; }
+    if (boxRotateDrag.current) { boxRotateDrag.current=null; requestAnimationFrame(()=>{boxRotateInputRef.current?.focus();boxRotateInputRef.current?.select();}); return; }
     if (boxScaleDrag.current) {
       const handle = boxScaleDrag.current.handle;
       boxScaleDrag.current = null;
@@ -3417,7 +3440,7 @@ export default function ProfileEditor({
     if (tool === "fillet") return;
     if (tool === "rotate") { if(d?.mode==="rwait"&&!d.moved){if(rotateSession)onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");}return; }
     if (tool === "boxscale") {
-      if (d?.mode === "rwait" && !d.moved) { boxScaleDrag.current = null; chooseTool("select"); }
+      if (d?.mode === "rwait" && !d.moved) { if(boxRotateSession)onSegs(boxRotateSession.base,false);boxRotateSession&&setBoxRotateSession(null);setBoxRotateBox(null);boxScaleDrag.current = null; chooseTool("select"); }
       return;
     }
     if (tool === "scale") {
@@ -4074,6 +4097,8 @@ export default function ProfileEditor({
     : stepText;
   const closeToolOptions = () => {
     if (rotateSession) onSegs(rotateSession.base,false);
+    if (boxRotateSession) onSegs(boxRotateSession.base,false);
+    setBoxRotateSession(null); setBoxRotateBox(null); setBoxScalePivot(null);
     if (moveSession) {
       if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
       else onSegs(moveSession.base, false);
@@ -4784,6 +4809,10 @@ export default function ProfileEditor({
           <circle cx={P(rotateSession.center.z,rotateSession.center.r)[0]} cy={P(rotateSession.center.z,rotateSession.center.r)[1]} r={4} fill="#071018" stroke="#28dfc2" strokeWidth={1.5}/>
         </g>}
 
+        {tool === "boxscale" && boxScaleGhost && boxRotateSession && (
+          <g pointerEvents="none" opacity={0.25}>{boxRotateSession.base.filter(s=>boxRotateSession.ids.includes(s.id)).map(s=><path key={`box-rotate-ghost-${s.id}`} d={segPath(s,cam)} fill="none" stroke="#28dfc2" strokeWidth={2}/>)}</g>
+        )}
+
         {tool === "boxscale" && boxScaleGhost && boxScaleDrag.current && (
           <g pointerEvents="none" opacity={0.25}>
             {boxScaleDrag.current.base.filter((s) => boxScaleDrag.current!.ids.includes(s.id)).map((s) => (
@@ -4818,6 +4847,8 @@ export default function ProfileEditor({
           return <g pointerEvents="all">
             <rect x={x0} y={yTop} width={x1-x0} height={yBottom-yTop} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
             {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleLastHandle.current=h; boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
+            {[{x:x0-16,y:yTop-16},{x:x1+16,y:yTop-16},{x:x1+16,y:yBottom+16},{x:x0-16,y:yBottom+16}].map((p,i)=><circle key={`rh-${i}`} cx={p.x} cy={p.y} r={5} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:"crosshair"}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation();svgRef.current?.setPointerCapture?.(e.pointerId);const pivot=boxScalePivot??{z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2};const w=toWorld(e.clientX,e.clientY);const session={base:segs.map(s=>({...s})),ids:[...selected],pivot,angle:0};boxRotateDrag.current={...session,startAngle:Math.atan2(w.r-pivot.r,w.z-pivot.z)};setBoxRotateSession(session);const rect=wrapRef.current!.getBoundingClientRect();setBoxRotateBox({x:e.clientX-rect.left+12,y:e.clientY-rect.top-48,value:"",error:""});}}/>)}
+            {(()=>{const pivot=boxScalePivot??{z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2};const [px,py]=P(pivot.z,pivot.r);return <g style={{cursor:"move"}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation();svgRef.current?.setPointerCapture?.(e.pointerId);boxPivotDrag.current=true;}}><circle cx={px} cy={py} r={9} fill="transparent"/><path d={`M${px-6} ${py}H${px+6}M${px} ${py-6}V${py+6}`} stroke="#28dfc2" strokeWidth={1.8}/></g>;})()}
           </g>;
         })()}
 
@@ -4911,6 +4942,11 @@ export default function ProfileEditor({
         })()}
 
       </svg>
+
+      {boxRotateBox && boxRotateSession && <div className="absolute z-50" style={{left:boxRotateBox.x,top:boxRotateBox.y,width:`${Math.max(72,28+boxRotateBox.value.length*8)}px`}} dir="ltr">
+        <input ref={boxRotateInputRef} value={boxRotateBox.value} placeholder="Angle" className="h-[30px] w-full rounded-[5px] border border-[#00a9c7] bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none" onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setBoxRotateBox({...boxRotateBox,value,error:""});const n=Number(value);if(boxScaleLive&&value&&Number.isFinite(n)){onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),false);setBoxRotateSession({...boxRotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Escape"){onSegs(boxRotateSession.base,false);setBoxRotateSession(null);setBoxRotateBox(null);return;}if(e.key!=="Enter")return;const n=boxRotateBox.value?Number(boxRotateBox.value):boxRotateSession.angle;if(!Number.isFinite(n))return;onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),true);setBoxRotateSession(null);setBoxRotateBox(null);}}/>
+        <div className="mt-1 text-center font-mono text-[10px] font-bold text-[#26e6c7]">{concise(boxRotateSession.angle)}°</div>
+      </div>}
 
       {rotateBox && rotateSession && <div className="absolute z-50" style={{left:rotateBox.x,top:rotateBox.y,width:`${Math.max(72,28+rotateBox.value.length*8)}px`}} dir="ltr">
         <input ref={rotateInputRef} value={rotateBox.value} placeholder={rotateSession.mode==="angle"?"Angle":"Step"} className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none",rotateBox.error?"border-danger":"border-[#00a9c7]")} onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setRotateBox({...rotateBox,value,error:""});const n=Number(value);if(rotateLive&&rotateSession.mode==="angle"&&value&&Number.isFinite(n)){onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,n):s),false);setRotateSession({...rotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Tab"){e.preventDefault();setRotateSession({...rotateSession,mode:rotateSession.mode==="angle"?"step":"angle"});return;}if(e.key==="Escape"){onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");return;}if(e.key!=="Enter")return;let angle=rotateSession.angle;if(rotateSession.mode==="angle"&&rotateBox.value){const n=Number(rotateBox.value);if(!Number.isFinite(n)){setRotateBox({...rotateBox,error:"نامعتبر"});return;}angle=n;}onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,angle):s),true);setRotateSession(null);setRotateBox(null);chooseTool("select");}}/>
