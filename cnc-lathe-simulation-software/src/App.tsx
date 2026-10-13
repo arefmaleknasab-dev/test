@@ -182,6 +182,8 @@ export default function App() {
   const past = useRef<HistEntry[]>([]);
   const future = useRef<HistEntry[]>([]);
   const toastTimer = useRef<number | null>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
+  const projectHandleRef = useRef<{ name?: string; createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }> } | null>(null);
   const stateRef = useRef({ sketch, gcodeOvr, editBuf, editOpen, params });
   stateRef.current = { sketch, gcodeOvr, editBuf, editOpen, params };
 
@@ -751,6 +753,46 @@ export default function App() {
     showToast(`مسیر برشی ${opCount.toLocaleString("fa-IR")} عملیات با ${vertexCount.toLocaleString("fa-IR")} نقطه به DXF تبدیل شد`);
   };
 
+  const projectData = () => JSON.stringify({
+    format: "KharraatCode Project", version: SAVE_VERSION, savedAt: new Date().toISOString(),
+    sketch, params, settings, preferences, layout, activePreset, gcodeOvr,
+  }, null, 2);
+  const downloadProject = (name = "project.kharraat") => {
+    const url = URL.createObjectURL(new Blob([projectData()], { type: "application/json;charset=utf-8" }));
+    const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
+  };
+  const saveProjectAs = async () => {
+    try {
+      const picker = (window as unknown as { showSaveFilePicker?: (options: unknown) => Promise<typeof projectHandleRef.current> }).showSaveFilePicker;
+      if (picker) {
+        const handle = await picker({ suggestedName: "project.kharraat", types: [{ description: "KharraatCode Project", accept: { "application/json": [".kharraat"] } }] });
+        if (!handle) return; projectHandleRef.current = handle;
+        const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close();
+      } else downloadProject();
+      showToast("پروژه با تمام تنظیمات ذخیره شد");
+    } catch (error) { if ((error as {name?:string}).name !== "AbortError") showToast("ذخیره پروژه ممکن نشد", "warn"); }
+  };
+  const saveProject = async () => {
+    const handle = projectHandleRef.current;
+    if (!handle) { await saveProjectAs(); return; }
+    try { const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close(); showToast("پروژه ذخیره شد"); }
+    catch { showToast("ذخیره مستقیم ممکن نشد؛ از Save As استفاده کنید", "warn"); }
+  };
+  const openProjectFile = async (file: File) => {
+    try {
+      const raw = JSON.parse(await file.text()) as Saved & { format?: string };
+      if (raw.format !== "KharraatCode Project" || !raw.sketch) throw new Error("invalid-project");
+      const nextSketch = normalizeSketch(raw.sketch); if (!nextSketch) throw new Error("invalid-sketch");
+      setSketch(nextSketch); setGenerationSketch(nextSketch); setParams(normalizeParams(raw.params, false));
+      setSettings(current => ({ ...current, ...(raw.settings ?? {}) }));
+      setPreferences(current => ({ ...current, ...(raw.preferences ?? {}), shortcuts: { ...current.shortcuts, ...(raw.preferences?.shortcuts ?? {}) } }));
+      if (raw.layout) setLayout(normalizeLayout(raw.layout));
+      setActivePreset(raw.activePreset ?? null); setGcodeOvr(normGcodeOvr(raw.gcodeOvr));
+      setSelectedIds([]); setEditBuf(null); setEditOpen(false); setMode("design"); projectHandleRef.current = null;
+      past.current=[]; future.current=[]; setHistVer(v=>v+1); showToast(`پروژه «${file.name}» باز شد`);
+    } catch { showToast("این فایل پروژه معتبر خراط‌کد نیست", "warn"); }
+  };
+
   const importAi = (segments: SketchSeg[], length: number, diameter: number) => {
     /* حذف نویز ممیز شناور (مثلاً 28.000000000000004) پیش از ثبت ابعاد خام. */
     length = Math.round(length * 1e6) / 1e6;
@@ -768,6 +810,16 @@ export default function App() {
     showToast(`فایل AI با ابعاد ${length.toFixed(1)} × ${diameter.toFixed(1)} میلی‌متر وارد شد`);
   };
 
+  useEffect(() => {
+    const onProjectKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key=e.key.toLowerCase();
+      if(key==="s"){e.preventDefault();void (e.shiftKey?saveProjectAs():saveProject());}
+      if(key==="o"){e.preventDefault();projectInputRef.current?.click();}
+    };
+    window.addEventListener("keydown",onProjectKey);return()=>window.removeEventListener("keydown",onProjectKey);
+  });
+
   const editorTitle = mode === "design" ? "طراحی پروفایل" : "شبیه‌سازی تراش";
   const menuItems: WindowMenuItem[] = [
     { id: "controls", label: "تنظیمات", vis: panelVis("controls") },
@@ -776,10 +828,14 @@ export default function App() {
   ];
 
   return (
-    <div className="flex h-full flex-col @container">
+    <div className="flex h-full flex-col @container" onDragOver={e=>{if(Array.from(e.dataTransfer.items).some(i=>i.kind==="file")){e.preventDefault();e.dataTransfer.dropEffect="copy";}}} onDrop={e=>{const file=e.dataTransfer.files[0];if(file && (file.name.toLowerCase().endsWith(".kharraat")||file.type==="application/json")){e.preventDefault();void openProjectFile(file);}}}>
+      <input ref={projectInputRef} type="file" accept=".kharraat,application/json" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void openProjectFile(file);e.currentTarget.value="";}} />
       {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
       {showPreferences && <PreferencesDialog value={preferences} snapTolerance={settings.snapTolerancePx} onChange={setPreferences} onSnapTolerance={(snapTolerancePx) => setSettings((s) => ({ ...s, snapTolerancePx }))} onClose={() => setShowPreferences(false)} />}
       <DesktopMenuBar
+        onOpenProject={() => projectInputRef.current?.click()}
+        onSaveProject={() => void saveProject()}
+        onSaveProjectAs={() => void saveProjectAs()}
         onImportAi={() => setShowAiImport(true)}
         onExportGcode={downloadGCode}
         onExportDxf={downloadDxf}
@@ -974,7 +1030,8 @@ export default function App() {
   );
 }
 
-function DesktopMenuBar({ onImportAi, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
+function DesktopMenuBar({ onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
+  onOpenProject: () => void; onSaveProject: () => void; onSaveProjectAs: () => void;
   onImportAi: () => void; onExportGcode: () => void; onExportDxf: () => void; onPreferences: () => void;
   onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
 }) {
@@ -992,6 +1049,10 @@ function DesktopMenuBar({ onImportAi, onExportGcode, onExportDxf, onPreferences,
     <MenuTop label="File" active={open==="file"} onClick={()=>setOpen(open==="file"?null:"file")} />
     <MenuTop label="Edit" active={open==="edit"} onClick={()=>setOpen(open==="edit"?null:"edit")} />
     {open==="file" && <div className="absolute top-full left-1 z-50 w-52 overflow-hidden rounded-b-md border border-edge2 bg-panel/98 py-1 shadow-2xl shadow-black/60" dir="rtl">
+      <MenuItem label="بازکردن پروژه…" hint="Ctrl+O" onClick={()=>run(onOpenProject)} />
+      <MenuItem label="ذخیره" hint="Ctrl+S" onClick={()=>run(onSaveProject)} />
+      <MenuItem label="ذخیره با نام…" hint="Ctrl+Shift+S" onClick={()=>run(onSaveProjectAs)} />
+      <div className="my-1 border-t border-edge" />
       <MenuItem label="ورود فایل AI…" hint="Import" onClick={()=>run(onImportAi)} />
       <div className="my-1 border-t border-edge" />
       <MenuItem label="خروجی G-code…" hint="NC" onClick={()=>run(onExportGcode)} />
