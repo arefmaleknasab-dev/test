@@ -779,6 +779,16 @@ export default function App() {
     <div className="flex h-full flex-col @container">
       {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
       {showPreferences && <PreferencesDialog value={preferences} snapTolerance={settings.snapTolerancePx} onChange={setPreferences} onSnapTolerance={(snapTolerancePx) => setSettings((s) => ({ ...s, snapTolerancePx }))} onClose={() => setShowPreferences(false)} />}
+      <DesktopMenuBar
+        onImportAi={() => setShowAiImport(true)}
+        onExportGcode={downloadGCode}
+        onExportDxf={downloadDxf}
+        onPreferences={() => setShowPreferences(true)}
+        onUndo={undo}
+        onRedo={redo}
+        canUndo={past.current.length > 0}
+        canRedo={future.current.length > 0}
+      />
       {/* ---------- سربرگ ---------- */}
       <header className="relative z-40 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-panel/85 px-3.5 py-2 pl-14 backdrop-blur">
         <button onClick={() => setShowPreferences(true)} title="Preferences" aria-label="Preferences" className="absolute top-2.5 left-3 grid h-8 w-8 place-items-center rounded-lg border border-edge bg-panel2 text-mute shadow-lg transition-colors hover:border-brass/50 hover:text-brass2">
@@ -963,6 +973,40 @@ export default function App() {
     </div>
   );
 }
+
+function DesktopMenuBar({ onImportAi, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
+  onImportAi: () => void; onExportGcode: () => void; onExportDxf: () => void; onPreferences: () => void;
+  onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
+}) {
+  const [open, setOpen] = useState<"file" | "edit" | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(null); };
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(null); };
+    document.addEventListener("pointerdown", close); document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", key); };
+  }, [open]);
+  const run = (fn:()=>void) => { setOpen(null); fn(); };
+  return <div ref={ref} dir="ltr" className="relative z-[60] flex h-7 shrink-0 items-center border-b border-edge bg-[#0e0c09] px-2 text-[11px] text-mute shadow-sm">
+    <MenuTop label="File" active={open==="file"} onClick={()=>setOpen(open==="file"?null:"file")} />
+    <MenuTop label="Edit" active={open==="edit"} onClick={()=>setOpen(open==="edit"?null:"edit")} />
+    {open==="file" && <div className="absolute top-full left-1 z-50 w-52 overflow-hidden rounded-b-md border border-edge2 bg-panel/98 py-1 shadow-2xl shadow-black/60" dir="rtl">
+      <MenuItem label="ورود فایل AI…" hint="Import" onClick={()=>run(onImportAi)} />
+      <div className="my-1 border-t border-edge" />
+      <MenuItem label="خروجی G-code…" hint="NC" onClick={()=>run(onExportGcode)} />
+      <MenuItem label="خروجی DXF…" hint="DXF" onClick={()=>run(onExportDxf)} />
+      <div className="my-1 border-t border-edge" />
+      <MenuItem label="Preferences…" onClick={()=>run(onPreferences)} />
+    </div>}
+    {open==="edit" && <div className="absolute top-full left-[42px] z-50 w-52 overflow-hidden rounded-b-md border border-edge2 bg-panel/98 py-1 shadow-2xl shadow-black/60" dir="rtl">
+      <MenuItem label="واگرد" hint="Ctrl+Z" disabled={!canUndo} onClick={()=>run(onUndo)} />
+      <MenuItem label="بازانجام" hint="Ctrl+Y" disabled={!canRedo} onClick={()=>run(onRedo)} />
+    </div>}
+  </div>;
+}
+function MenuTop({label,active,onClick}:{label:string;active:boolean;onClick:()=>void}) { return <button onClick={onClick} className={cn("h-full px-3 transition-colors",active?"bg-panel3 text-ink":"hover:bg-panel2 hover:text-ink")}>{label}</button>; }
+function MenuItem({label,hint,onClick,disabled=false}:{label:string;hint?:string;onClick:()=>void;disabled?:boolean}) { return <button disabled={disabled} onClick={onClick} className="flex w-full items-center justify-between px-3 py-1.5 text-right text-[11px] text-ink hover:bg-panel3 disabled:opacity-35 disabled:hover:bg-transparent"><span>{label}</span>{hint&&<span dir="ltr" className="font-mono text-[9px] text-dim">{hint}</span>}</button>; }
 
 function TabBtn({ on, onClick, icon, label }: { on: boolean; onClick: () => void; icon: ReactNode; label: string }) {
   return (
