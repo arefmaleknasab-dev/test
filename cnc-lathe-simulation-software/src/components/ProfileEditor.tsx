@@ -4658,13 +4658,13 @@ export default function ProfileEditor({
         )}
         {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
             صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
-        {tool !== "select" && tool !== "move" && tool !== "rotate" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && cursor && drag.current?.mode !== "handle" &&
+        {tool !== "select" && tool !== "move" && tool !== "rotate" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && tool !== "boxscale" && cursor && drag.current?.mode !== "handle" &&
           !(straightDrawing && measuredLineEnd) && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
         {/* نشانگر اسنپ */}
-        {snapHit && !(straightDrawing && measuredLineEnd) && (
+        {snapHit && tool !== "boxscale" && !(straightDrawing && measuredLineEnd) && (
           <g>
             <rect
               x={P(snapHit.p.z, snapHit.p.r)[0] - 6}
