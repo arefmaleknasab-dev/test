@@ -49,6 +49,7 @@ import {
   IconMirror,
   IconPlus,
   IconPolyline,
+  IconRotate,
   IconScale,
   IconQuad,
   IconRedo,
@@ -80,11 +81,12 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "boxscale" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "move" | "rotate" | "boxscale" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
+  { id: "rotate", name: "چرخش (Rotate)", key: "R", icon: <IconRotate className="h-4 w-4" />, hint: "چرخش حول مرکز دلخواه" },
   { id: "boxscale", name: "مقیاس باکس", key: "B", icon: <IconScale className="h-[18px] w-[18px]" />, hint: "تغییر اندازه با اضلاع و گوشه‌های باکس" },
   { id: "scale", name: "مقیاس مرجع", key: "S", icon: <IconScale className="h-[16px] w-[16px]" />, hint: "تغییر اندازه با طول مرجع" },
   { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
@@ -98,11 +100,12 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, boxscale: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, rotate: 0, boxscale: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
   move: [],
+  rotate: [],
   boxscale: [],
   copy: [],
   mirror: [],
@@ -684,6 +687,17 @@ function arithmeticValue(source: string): number | null {
 }
 
 type MoveAxis = "free" | "x" | "y";
+type RotateSession = {
+  ids: number[]; base: SketchSeg[]; center: SPoint; startAngle: number; pointer: SPoint; angle: number;
+  mode: "angle" | "step"; step: number;
+};
+
+function rotateSegment(segment: SketchSeg, center: SPoint, degrees: number): SketchSeg {
+  const radians=degrees*Math.PI/180, c=Math.cos(radians), s=Math.sin(radians);
+  const point=(p:SPoint):SPoint=>{const z=p.z-center.z,r=p.r-center.r;return {z:center.z+z*c-r*s,r:center.r+z*s+r*c};};
+  return {...segment,a:point(segment.a),b:point(segment.b),c1:segment.c1?point(segment.c1):undefined,c2:segment.c2?point(segment.c2):undefined,via:segment.via?point(segment.via):undefined};
+}
+
 type ScaleSession = {
   ids: number[];
   base: SketchSeg[];
@@ -824,6 +838,11 @@ export default function ProfileEditor({
   const [copySession, setCopySession] = useState<CopySession | null>(null);
   const [mirrorSession, setMirrorSession] = useState<MirrorSession | null>(null);
   const [mirrorKeepCopy, setMirrorKeepCopy] = useState(true);
+  const [rotateSession, setRotateSession] = useState<RotateSession | null>(null);
+  const [rotateBox, setRotateBox] = useState<{x:number;y:number;value:string;error:string}|null>(null);
+  const [rotateLive, setRotateLive] = useState(false);
+  const [rotateGhost, setRotateGhost] = useState(true);
+  const rotateInputRef = useRef<HTMLInputElement>(null);
   const [boxScaleLocked, setBoxScaleLocked] = useState(false);
   const [boxScaleLive, setBoxScaleLive] = useState(false);
   const [boxScaleGhost, setBoxScaleGhost] = useState(true);
@@ -845,6 +864,7 @@ export default function ProfileEditor({
   useEffect(() => { if (moveBox) requestAnimationFrame(() => { moveInputRef.current?.focus(); moveInputRef.current?.select(); }); }, [!!moveBox]);
   useEffect(() => { if (copyBox) requestAnimationFrame(() => copyInputRef.current?.focus()); }, [!!copyBox]);
   useEffect(() => { if (scaleBox) requestAnimationFrame(() => scaleInputRef.current?.focus()); }, [!!scaleBox]);
+  useEffect(() => { if (rotateBox) requestAnimationFrame(() => rotateInputRef.current?.focus()); }, [!!rotateBox]);
   useEffect(() => {
     const releaseAxis = (event: KeyboardEvent) => {
       if (event.key === "Shift") setMoveSession((session) => session ? { ...session, axis: "free" } : session);
@@ -1335,6 +1355,7 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Escape") {
+        if (tool === "rotate") { if(rotateSession)onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");return; }
         if (tool === "scale") {
           if (scaleSession) onSegs(scaleSession.base, false);
           setScaleSession(null); setScaleBox(null); drag.current = null; chooseTool("select");
@@ -2398,6 +2419,20 @@ export default function ProfileEditor({
       drag.current = null;
       return;
     }
+    if (tool === "rotate" && e.button === 0 && !editOpen) {
+      if (rotateSession) {
+        onSegs(segs,true); setRotateSession(null); setRotateBox(null); chooseTool("select"); return;
+      }
+      if (!selected.length) { const hit=hitSeg(raw); if(hit) onSelected(sketchObjectIds(hit.id)); return; }
+      const source=segs.filter(s=>selected.includes(s.id)), bounds=source.map(segBounds);
+      if(!bounds.length)return;
+      const centroid={z:(Math.min(...bounds.map(b=>b.minZ))+Math.max(...bounds.map(b=>b.maxZ)))/2,r:(Math.min(...bounds.map(b=>b.minR))+Math.max(...bounds.map(b=>b.maxR)))/2};
+      const startAngle=Math.atan2(centroid.r-raw.r,centroid.z-raw.z);
+      const rect=wrapRef.current!.getBoundingClientRect();
+      setRotateSession({ids:[...selected],base:segs.map(s=>({...s})),center:raw,startAngle,pointer:centroid,angle:0,mode:"angle",step:15});
+      setRotateBox({x:Math.min(rect.width-72,Math.max(4,e.clientX-rect.left+12)),y:Math.min(rect.height-48,Math.max(4,e.clientY-rect.top-48)),value:"",error:""});
+      return;
+    }
     if (tool === "boxscale" && e.button === 0 && !editOpen) {
       if (!selected.length) {
         const hit = hitSeg(raw);
@@ -2829,6 +2864,18 @@ export default function ProfileEditor({
         drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
         setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
       }
+      return;
+    }
+    if (tool === "rotate" && rotateSession) {
+      let angle=(Math.atan2(raw.r-rotateSession.center.r,raw.z-rotateSession.center.z)-rotateSession.startAngle)*180/Math.PI;
+      angle=((angle+180)%360+360)%360-180;
+      const entered=rotateBox?.value.match(/^-?(?:\d+(?:\.\d*)?|\.\d+)$/)?Math.abs(Number(rotateBox.value)):null;
+      if(e.shiftKey) angle=Math.round(angle/90)*90;
+      else if(rotateSession.mode==="step"){const step=entered&&entered>0?entered:rotateSession.step;angle=Math.round(angle/step)*step;}
+      onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,angle):s),false);
+      setRotateSession({...rotateSession,pointer:raw,angle});
+      const rect=wrapRef.current!.getBoundingClientRect();
+      setRotateBox(box=>box?{...box,x:Math.min(rect.width-72,Math.max(4,e.clientX-rect.left+12)),y:Math.min(rect.height-48,Math.max(4,e.clientY-rect.top-48))}:box);
       return;
     }
     if (tool === "boxscale" && boxScaleDrag.current) {
@@ -3367,6 +3414,7 @@ export default function ProfileEditor({
     drag.current = null;
     setSnapHit(null);
     if (tool === "fillet") return;
+    if (tool === "rotate") { if(d?.mode==="rwait"&&!d.moved){if(rotateSession)onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");}return; }
     if (tool === "boxscale") {
       if (d?.mode === "rwait" && !d.moved) { boxScaleDrag.current = null; chooseTool("select"); }
       return;
@@ -4017,12 +4065,14 @@ export default function ProfileEditor({
   /* متن مرکزی پنجرهٔ مشترک «آپشن ابزار»؛ همهٔ گزینه‌های آیندهٔ هر ابزار
      نیز باید در همین ظرف اضافه شوند، نه در پنل‌های شناور جداگانه. */
   const toolOptionText = tool === "move" ? "جابجایی هندسه"
+    : tool === "rotate" ? (rotateSession ? "تعیین زاویه چرخش" : "انتخاب هندسه / مرکز چرخش")
     : tool === "boxscale" ? "مقیاس باکس"
     : tool === "copy" ? (copySession ? "تعیین محل کپی" : "انتخاب هندسه")
     : tool === "mirror" ? (!mirrorSession?.p1 ? "نقطه شروع محور" : "نقطه پایان محور")
     : tool === "scale" ? (!scaleSession ? "انتخاب هندسه" : !scaleSession.reference ? "نقطه دوم مرجع" : "تعیین اندازه")
     : stepText;
   const closeToolOptions = () => {
+    if (rotateSession) onSegs(rotateSession.base,false);
     if (moveSession) {
       if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
       else onSegs(moveSession.base, false);
@@ -4030,6 +4080,7 @@ export default function ProfileEditor({
     if (copySession) onSegs(copySession.base, false);
     if (mirrorSession) onSegs(mirrorSession.base, false);
     if (scaleSession) onSegs(scaleSession.base, false);
+    setRotateSession(null); setRotateBox(null);
     setMoveSession(null); setMoveBox(null);
     setCopySession(null); setCopyBox(null);
     setMirrorSession(null);
@@ -4574,7 +4625,7 @@ export default function ProfileEditor({
         )}
         {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
             صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
-        {tool !== "select" && tool !== "move" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && cursor && drag.current?.mode !== "handle" &&
+        {tool !== "select" && tool !== "move" && tool !== "rotate" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && cursor && drag.current?.mode !== "handle" &&
           !(straightDrawing && measuredLineEnd) && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
@@ -4726,6 +4777,12 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {rotateSession && <g pointerEvents="none">
+          {rotateGhost && rotateSession.base.filter(s=>rotateSession.ids.includes(s.id)).map(s=><path key={`rotate-ghost-${s.id}`} d={segPath(s,cam)} fill="none" stroke="#28dfc2" strokeWidth={2} opacity={.25}/>)}
+          <line x1={P(rotateSession.center.z,rotateSession.center.r)[0]} y1={P(rotateSession.center.z,rotateSession.center.r)[1]} x2={P(rotateSession.pointer.z,rotateSession.pointer.r)[0]} y2={P(rotateSession.pointer.z,rotateSession.pointer.r)[1]} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4"/>
+          <circle cx={P(rotateSession.center.z,rotateSession.center.r)[0]} cy={P(rotateSession.center.z,rotateSession.center.r)[1]} r={4} fill="#071018" stroke="#28dfc2" strokeWidth={1.5}/>
+        </g>}
+
         {tool === "boxscale" && boxScaleGhost && boxScaleDrag.current && (
           <g pointerEvents="none" opacity={0.25}>
             {boxScaleDrag.current.base.filter((s) => boxScaleDrag.current!.ids.includes(s.id)).map((s) => (
@@ -4752,7 +4809,12 @@ export default function ProfileEditor({
           </g>
         )}
 
-        {boxScaleBounds && (() => {
+        {rotateBox && rotateSession && <div className="absolute z-50" style={{left:rotateBox.x,top:rotateBox.y,width:`${Math.max(72,28+rotateBox.value.length*8)}px`}} dir="ltr">
+        <input ref={rotateInputRef} value={rotateBox.value} placeholder={rotateSession.mode==="angle"?"Angle":"Step"} className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none",rotateBox.error?"border-danger":"border-[#00a9c7]")} onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setRotateBox({...rotateBox,value,error:""});const n=Number(value);if(rotateLive&&rotateSession.mode==="angle"&&value&&Number.isFinite(n)){onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,n):s),false);setRotateSession({...rotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Tab"){e.preventDefault();setRotateSession({...rotateSession,mode:rotateSession.mode==="angle"?"step":"angle"});return;}if(e.key==="Escape"){onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");return;}if(e.key!=="Enter")return;let angle=rotateSession.angle;if(rotateSession.mode==="angle"&&rotateBox.value){const n=Number(rotateBox.value);if(!Number.isFinite(n)){setRotateBox({...rotateBox,error:"نامعتبر"});return;}angle=n;}onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,angle):s),true);setRotateSession(null);setRotateBox(null);chooseTool("select");}}/>
+        <div className="mt-1 whitespace-nowrap text-center font-mono text-[10px] font-bold text-[#26e6c7]">{concise(rotateSession.angle)}° · {rotateSession.mode==="angle"?"زاویه":"پله"}</div>
+      </div>}
+
+      {boxScaleBounds && (() => {
           const b = boxScaleBounds; const [x0,yTop]=P(b.minZ,b.maxR), [x1,yBottom]=P(b.maxZ,b.minR);
           const handles = [{h:"nw",x:x0,y:yTop},{h:"n",x:(x0+x1)/2,y:yTop},{h:"ne",x:x1,y:yTop},{h:"e",x:x1,y:(yTop+yBottom)/2},{h:"se",x:x1,y:yBottom},{h:"s",x:(x0+x1)/2,y:yBottom},{h:"sw",x:x0,y:yBottom},{h:"w",x:x0,y:(yTop+yBottom)/2}];
           return <g pointerEvents="all">
@@ -5222,6 +5284,7 @@ export default function ProfileEditor({
               onClick={() => {
                 /* کلیک دوباره روی Move هر نشست نیمه‌تمام/گیرکرده را پاک می‌کند؛
                    Preview ثبت‌نشده نیز به مبنای قبل از نشست برمی‌گردد. */
+                if (rotateSession && t.id !== "rotate") { onSegs(rotateSession.base,false); setRotateSession(null); setRotateBox(null); }
                 if (mirrorSession && t.id !== "mirror") {
                   onSegs(mirrorSession.base, false);
                   setMirrorSession(null);
@@ -5366,6 +5429,12 @@ export default function ProfileEditor({
             <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
           )}
           <span>{toolOptionText || TOOLS.find((item) => item.id === tool)?.name}</span>
+          {tool === "rotate" && (
+            <>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateLive} onChange={e=>setRotateLive(e.target.checked)}/>پیش‌نمایش زنده عدد</label>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateGhost} onChange={e=>setRotateGhost(e.target.checked)}/>نمایش شکل اصلی</label>
+            </>
+          )}
           {tool === "boxscale" && (
             <>
               <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2">

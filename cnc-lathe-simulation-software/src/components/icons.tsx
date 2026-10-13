@@ -120,6 +120,9 @@ export const IconMirror = (p: P) => (
   </svg>
 );
 
+export const IconRotate = (p: P) =>
+  base(p, <><path d="M20 11a8 8 0 1 1-2.3-5.7"/><path d="M20 3v8h-8"/></>);
+
 export const IconScale = (p: P) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-4 h-4"} viewBox="-1 -1 111 113" aria-hidden>
     {/* فرم مرجع: قاب بزرگِ باز در پایین چپ و مربع کوچک مقیاس‌شده */}
