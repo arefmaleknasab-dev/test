@@ -124,7 +124,12 @@ export const IconRotate = (p: P) =>
   base(p, <><path d="M20 11a8 8 0 1 1-2.3-5.7"/><path d="M20 3v8h-8"/></>);
 
 export const IconReferenceScale = (p: P) =>
-  base(p, <><path d="M5 19 19 5" /><path d="M11 5h8v8M13 19H5v-8" /></>);
+  base(p, <>
+    <rect x="4" y="4" width="16" height="16" rx="0.6" strokeWidth="1.6" />
+    {[[4,4],[12,4],[20,4],[4,12],[20,12],[4,20],[12,20],[20,20],[12,12]].map(([x,y],i) =>
+      <rect key={i} x={x-2} y={y-2} width="4" height="4" rx="0.8" fill="currentColor" stroke="none" />
+    )}
+  </>);
 
 export const IconScale = (p: P) => (
   <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-4 h-4"} viewBox="-1 -1 111 113" aria-hidden>
