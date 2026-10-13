@@ -4664,7 +4664,7 @@ export default function ProfileEditor({
         )}
 
         {/* نشانگر اسنپ */}
-        {snapHit && tool !== "boxscale" && !(straightDrawing && measuredLineEnd) && (
+        {snapHit && !(tool === "boxscale" && snapHit.type === "grid") && !(straightDrawing && measuredLineEnd) && (
           <g>
             <rect
               x={P(snapHit.p.z, snapHit.p.r)[0] - 6}
