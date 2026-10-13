@@ -5731,7 +5731,7 @@ export default function ProfileEditor({
           title="چسبندگی هوشمند به نقاط انتها، وسط، مرکز و تقاطع"
           onClick={() => onSettings({ smartSnap: !settings.smartSnap })}
         >
-          <IconGrid className="h-3.5 w-3.5" />
+          <IconCheck className="h-3.5 w-3.5" />
           اسنپ هوشمند
         </button>
         <button
