@@ -62,9 +62,9 @@ import {
 
 // Curved, double-ended rotation cursor. Each corner gets the same cursor rotated
 // to follow its two adjoining box edges (Photoshop-style transform feedback).
-const BOX_ROTATE_CURSORS = [0, 90, 180, 270].map((angle) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><g transform="rotate(${angle} 16 16)" fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 25H25V6M6 25l6-5M6 25l6 5M25 6l-5 6M25 6l5 6" stroke="#000" stroke-width="5"/><path d="M6 25H25V6M6 25l6-5M6 25l6 5M25 6l-5 6M25 6l5 6" stroke="#fff" stroke-width="2.2"/></g></svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 16 16, alias`;
+const BOX_ROTATE_CURSORS = [180, 270, 0, 90].map((angle) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g transform="rotate(${angle} 10 10)" fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="M4 16H16V4M4 16l4-3.5M4 16l4 3.5M16 4l-3.5 4M16 4l3.5 4" stroke="#000" stroke-width="3.5"/><path d="M4 16H16V4M4 16l4-3.5M4 16l4 3.5M16 4l-3.5 4M16 4l3.5 4" stroke="#fff" stroke-width="1.5"/></g></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 10 10, alias`;
 });
 
 export interface EdSettings {
