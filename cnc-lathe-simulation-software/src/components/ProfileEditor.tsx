@@ -373,9 +373,11 @@ function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings:
 function EditGridControl({
   settings,
   onSettings,
+  placement = "down",
 }: {
   settings: EdSettings;
   onSettings: (patch: Partial<EdSettings>) => void;
+  placement?: "down" | "up";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -438,7 +440,7 @@ function EditGridControl({
       </button>
 
       {open && (
-        <div className="anim-in absolute top-[calc(100%+6px)] right-0 z-40 w-60 rounded-lg border border-edge2 bg-panel/97 p-2.5 text-right shadow-2xl shadow-black/60 backdrop-blur-sm">
+        <div className={cn("anim-in absolute right-0 z-40 w-60 rounded-lg border border-edge2 bg-panel/97 p-2.5 text-right shadow-2xl shadow-black/60 backdrop-blur-sm", placement === "up" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]")}>
           <div className="mb-2 flex items-center gap-2">
             <span className="grid h-6 w-6 place-items-center rounded-md border border-teal/35 bg-teal/10 text-teal">
               <IconGrid className="h-3.5 w-3.5" />
@@ -4001,7 +4003,7 @@ export default function ProfileEditor({
   const gridR = editOpen
     ? makeGridTicks((cam.oy - size.h) / cam.s, cam.oy / cam.s, gridStep, editGridDivisions)
     : makeGridTicks(-R, R, gridStep, editGridDivisions);
-  const gridVisible = !editOpen || settings.editGridVisible;
+  const gridVisible = settings.editGridVisible;
 
   const iso = isolatedOpId != null;
   const isoOp = iso ? ops.find((o) => o.id === isolatedOpId) ?? null : null;
@@ -5726,6 +5728,7 @@ export default function ProfileEditor({
 
       {/* گیر و راهنما */}
       <div className="absolute right-2.5 bottom-2.5 flex items-center gap-2">
+        {!editOpen && <EditGridControl settings={settings} onSettings={onSettings} placement="up" />}
         <button
           className={cn("chip-toggle backdrop-blur-sm transition-all", settings.smartSnap ? "border-teal/50 bg-panel/85 text-teal" : "border-edge bg-panel/60 text-dim")}
           title="چسبندگی هوشمند به نقاط انتها، وسط، مرکز و تقاطع"
