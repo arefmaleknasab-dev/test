@@ -121,7 +121,7 @@ export const IconMirror = (p: P) => (
 );
 
 export const IconRotate = (p: P) =>
-  base(p, <><path d="M20.5 13A9 9 0 1 1 16.8 5.2" strokeWidth={1.9}/><path d="M11.3 1.4 19.7 2.3 17.2 9.7Z" fill="currentColor" stroke="none"/></>);
+  base(p, <><path d="M20.5 13A8.7 8.7 0 1 1 14 4.9" strokeWidth={4.2}/><path d="M13.7 1.8 22.2 6.5 13.7 11.2Z" fill="currentColor" stroke="currentColor" strokeWidth={1.1}/></>);
 
 export const IconReferenceScale = (p: P) =>
   base(p, <>
