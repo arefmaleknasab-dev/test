@@ -89,7 +89,7 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
   { id: "rotate", name: "چرخش (Rotate)", key: "R", icon: <IconRotate className="h-4 w-4" />, hint: "چرخش حول مرکز دلخواه" },
   { id: "boxscale", name: "مقیاس باکس", key: "B", icon: <IconReferenceScale className="h-[18px] w-[18px]" />, hint: "تغییر اندازه با اضلاع و گوشه‌های باکس" },
-  { id: "scale", name: "مقیاس مرجع", key: "S", icon: <IconScale className="h-[16px] w-[16px]" />, hint: "تغییر اندازه با طول مرجع" },
+  { id: "scale", name: "مقیاس مرجع", key: "S", icon: <IconScale className="h-[18px] w-[18px]" />, hint: "تغییر اندازه با طول مرجع" },
   { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
   { id: "mirror", name: "قرینه (Mirror)", key: "I", icon: <IconMirror className="h-[19px] w-[19px]" />, hint: "قرینه‌سازی حول محور دو نقطه‌ای" },
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
