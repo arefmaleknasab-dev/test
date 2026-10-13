@@ -63,7 +63,7 @@ import {
 // Curved, double-ended rotation cursor. Each corner gets the same cursor rotated
 // to follow its two adjoining box edges (Photoshop-style transform feedback).
 const BOX_ROTATE_CURSORS = [0, 90, 180, 270].map((angle) => {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><g transform="rotate(${angle} 16 16)" stroke-linecap="round" stroke-linejoin="round"><path d="M7 24Q24 24 24 7" fill="none" stroke="#000" stroke-width="9"/><path d="M7 24Q24 24 24 7" fill="none" stroke="#fff" stroke-width="5.5"/><path d="M2 24L10 17V31Z M24 2L17 10H31Z" fill="#fff" stroke="#000" stroke-width="2"/></g></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><g transform="rotate(${angle} 16 16)" fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="M6 25H25V6M6 25l6-5M6 25l6 5M25 6l-5 6M25 6l5 6" stroke="#000" stroke-width="5"/><path d="M6 25H25V6M6 25l6-5M6 25l6 5M25 6l-5 6M25 6l5 6" stroke="#fff" stroke-width="2.2"/></g></svg>`;
   return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 16 16, alias`;
 });
 
