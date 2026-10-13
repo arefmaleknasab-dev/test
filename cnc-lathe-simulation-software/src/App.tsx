@@ -94,7 +94,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
 export default function App() {
   const [showAiImport, setShowAiImport] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
-  const [preferences, setPreferences] = useState<AppPreferences>(() => ({ ...DEFAULT_PREFERENCES, ...(SAVED?.preferences ?? {}) }));
+  const [preferences, setPreferences] = useState<AppPreferences>(() => ({ ...DEFAULT_PREFERENCES, ...(SAVED?.preferences ?? {}), shortcuts: { ...DEFAULT_PREFERENCES.shortcuts, ...(SAVED?.preferences?.shortcuts ?? {}) } }));
   const [sketch, setSketch] = useState<SketchSeg[]>(() => {
     const fromSaved = normalizeSketch(SAVED?.sketch);
     if (fromSaved) return fromSaved;
@@ -898,6 +898,7 @@ export default function App() {
               onSplit={(split) => onParamsCb({ split })}
               settings={settings}
               onSettings={(patch) => setSettings((s) => ({ ...s, ...patch }))}
+              toolShortcuts={preferences.shortcuts}
               ops={params.ops}
               isolatedOpId={isolatedOpId}
               onClearIsolate={() => setIsolatedOpId(null)}

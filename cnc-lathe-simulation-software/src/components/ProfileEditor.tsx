@@ -140,6 +140,7 @@ interface Props {
   onSplit: (s: SplitState) => void;
   settings: EdSettings;
   onSettings: (patch: Partial<EdSettings>) => void;
+  toolShortcuts: Record<string, string>;
   ops: Op[];
   isolatedOpId: number | null;
   onClearIsolate: () => void;
@@ -812,6 +813,7 @@ export default function ProfileEditor({
   onSplit,
   settings,
   onSettings,
+  toolShortcuts,
   ops,
   isolatedOpId,
   onClearIsolate,
@@ -1453,7 +1455,7 @@ export default function ProfileEditor({
         onSegs(next, true);
         return;
       }
-      const t = TOOLS.find((x) => x.key.toLowerCase() === k);
+      const t = TOOLS.find((x) => (toolShortcuts[x.id] ?? x.key).toLowerCase() === k);
       if (t && (!editOpen || t.id === "select")) {
         chooseTool(t.id);
         cancelDraft();
@@ -5355,7 +5357,7 @@ export default function ProfileEditor({
                 chooseTool(t.id);
                 cancelDraft();
               }}
-              title={`${t.name} (${t.key}) — ${t.hint}`}
+              title={`${t.name} (${(toolShortcuts[t.id] ?? t.key).toUpperCase()}) — ${t.hint}`}
               className={cn(
                 "grid h-[27px] w-full shrink-0 place-items-center transition-colors",
                 i > 0 && "border-t border-edge",
