@@ -755,7 +755,10 @@ export default function App() {
 
   const projectData = () => JSON.stringify({
     format: "KharraatCode Project", version: SAVE_VERSION, savedAt: new Date().toISOString(),
-    sketch, params, settings, preferences, layout, activePreset, gcodeOvr,
+    /* فایل اشتراکی فقط داده‌های مهندسی پروژه را حمل می‌کند؛ تنظیمات شخصی رابط
+       کاربر (تم، رنگ، میانبر، حساسیت اسنپ، لایه‌ها و چیدمان) محلی می‌مانند. */
+    project: { sketch, params, gcodeOvr },
+    output: { postProcessor: preferences.postProcessor, gcodeUnits: preferences.gcodeUnits, sequenceNumbers: preferences.sequenceNumbers },
   }, null, 2);
   const downloadProject = (name = "project.kharraat") => {
     const url = URL.createObjectURL(new Blob([projectData()], { type: "application/json;charset=utf-8" }));
@@ -780,16 +783,21 @@ export default function App() {
   };
   const openProjectFile = async (file: File) => {
     try {
-      const raw = JSON.parse(await file.text()) as Saved & { format?: string };
-      if (raw.format !== "KharraatCode Project" || !raw.sketch) throw new Error("invalid-project");
-      const nextSketch = normalizeSketch(raw.sketch); if (!nextSketch) throw new Error("invalid-sketch");
-      setSketch(nextSketch); setGenerationSketch(nextSketch); setParams(normalizeParams(raw.params, false));
-      setSettings(current => ({ ...current, ...(raw.settings ?? {}) }));
-      setPreferences(current => ({ ...current, ...(raw.preferences ?? {}), shortcuts: { ...current.shortcuts, ...(raw.preferences?.shortcuts ?? {}) } }));
-      if (raw.layout) setLayout(normalizeLayout(raw.layout));
-      setActivePreset(raw.activePreset ?? null); setGcodeOvr(normGcodeOvr(raw.gcodeOvr));
+      const raw = JSON.parse(await file.text()) as Saved & {
+        format?: string;
+        project?: { sketch?: SketchSeg[]; params?: Partial<Params>; gcodeOvr?: Saved["gcodeOvr"] };
+        output?: { postProcessor?: string; gcodeUnits?: string; sequenceNumbers?: boolean };
+      };
+      const data = raw.project ?? raw; // پشتیبانی از فایل‌های پروژه نسخهٔ قبلی
+      if (raw.format !== "KharraatCode Project" || !data.sketch) throw new Error("invalid-project");
+      const nextSketch = normalizeSketch(data.sketch); if (!nextSketch) throw new Error("invalid-sketch");
+      setSketch(nextSketch); setGenerationSketch(nextSketch); setParams(normalizeParams(data.params, false));
+      /* settings/preferences/layout عمداً بارگذاری نمی‌شوند تا محیط شخصی گیرنده تغییر نکند. */
+      setActivePreset(null); setGcodeOvr(normGcodeOvr(data.gcodeOvr));
       setSelectedIds([]); setEditBuf(null); setEditOpen(false); setMode("design"); projectHandleRef.current = null;
-      past.current=[]; future.current=[]; setHistVer(v=>v+1); showToast(`پروژه «${file.name}» باز شد`);
+      past.current=[]; future.current=[]; setHistVer(v=>v+1);
+      const outputDiffers = !!raw.output && (raw.output.postProcessor !== preferences.postProcessor || raw.output.gcodeUnits !== preferences.gcodeUnits || raw.output.sequenceNumbers !== preferences.sequenceNumbers);
+      showToast(outputDiffers ? `پروژه باز شد؛ تنظیمات خروجی پروژه با Preferences شما متفاوت است` : `پروژه «${file.name}» باز شد`, outputDiffers ? "warn" : "ok");
     } catch { showToast("این فایل پروژه معتبر خراط‌کد نیست", "warn"); }
   };
 
