@@ -177,6 +177,7 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState(initialProjectId.current);
   const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), activePreset, savedSnapshot: null }]);
   const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
+  const [pendingEditExit, setPendingEditExit] = useState(false);
   const [saveThenCloseProject, setSaveThenCloseProject] = useState<string|null>(null);
   const [editBuf, setEditBuf] = useState<EditBuf | null>(null);
   /* باز/بسته‌بودن UI از وجود پیش‌نویس جداست تا خروج تصادفی، تغییرات تأییدنشده را پاک نکند. */
@@ -363,6 +364,10 @@ export default function App() {
     root.style.setProperty("--profile-toolbar-scale", String(preferences.toolbarScale));
   }, [preferences]);
 
+  useEffect(() => {
+    if (!preferences.keepEditDraft && !editOpen && editBuf) setEditBuf(null);
+  }, [preferences.keepEditDraft, editOpen, editBuf]);
+
   /* هنگام تغییر برنامه، هایلایت جی‌کد پاک شود */
   useEffect(() => {
     setActiveLine(-1);
@@ -455,10 +460,18 @@ export default function App() {
   };
   const closeEdit = () => {
     if (!editOpenRef.current) return;
-    /* فقط UI بسته می‌شود؛ editBuf به‌عنوان پیش‌نویس برای ورود بعدی باقی می‌ماند. */
     commitRef.current = null;
+    if (preferences.keepEditDraft) {
+      setEditOpen(false);
+      showToast("ویرایش مسیر بسته شد — پیش‌نویس تغییرات برای بازگشت بعدی حفظ شد", "warn");
+      return;
+    }
+    if (editChanges > 0) {
+      setPendingEditExit(true);
+      return;
+    }
+    setEditBuf(null);
     setEditOpen(false);
-    showToast("ویرایش مسیر بسته شد — پیش‌نویس تغییرات برای بازگشت بعدی حفظ شد", "warn");
   };
   const discardEdit = () => {
     if (!editBufRef.current) return;
@@ -887,6 +900,7 @@ export default function App() {
       <input ref={projectInputRef} type="file" accept=".kharraat,application/json" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void openProjectFile(file);e.currentTarget.value="";}} />
       {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
       {showPreferences && <PreferencesDialog value={preferences} snapTolerance={settings.snapTolerancePx} onChange={setPreferences} onSnapTolerance={(snapTolerancePx) => setSettings((s) => ({ ...s, snapTolerancePx }))} onClose={() => setShowPreferences(false)} />}
+      {pendingEditExit && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات تأییدنشده ویرایش مسیر</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییراتی در مسیر انجام شده که هنوز تأیید نشده‌اند. آیا می‌خواهید تغییرات را تأیید و سپس از حالت ویرایش مسیر خارج شوید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingEditExit(false)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>{setPendingEditExit(false);discardEdit();}} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{confirmEdit();setEditBuf(null);setEditOpen(false);setPendingEditExit(false);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       {pendingCloseProject && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات ذخیره‌نشده</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییرات پروژه «{projectTabs.find(t=>t.id===pendingCloseProject)?.name}» ذخیره نشده است. آیا می‌خواهید پیش از بستن پروژه آن را ذخیره کنید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingCloseProject(null)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>finishCloseProject(pendingCloseProject)} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{const id=pendingCloseProject;setSaveThenCloseProject(id);if(id!==activeProjectId)switchProject(id);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       <DesktopMenuBar
         projects={projectTabs.map(tab=>({id:tab.id,name:tab.name,dirty:tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr)}))}
