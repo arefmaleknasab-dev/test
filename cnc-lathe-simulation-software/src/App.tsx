@@ -268,7 +268,7 @@ export default function App() {
     if (!allProfileLayersHidden && generationSketch !== sketch) setGenerationSketch(sketch);
   }, [allProfileLayersHidden, generationSketch, sketch]);
 
-  const generationParams = useMemo<Params>(() => ({ ...params, rpm: preferences.spindleSpeed, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }), [params, preferences.operationFeeds]);
+  const generationParams = useMemo<Params>(() => ({ ...params, rpm: preferences.spindleSpeed, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }), [params, preferences.operationFeeds, preferences.spindleSpeed]);
   const genBase = useMemo(() => generate(points, generationParams, innerPoints, outerFinishPoints), [points, generationParams, innerPoints, outerFinishPoints]);
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, generationParams), [genBase, gcodeOvr, generationParams]);
