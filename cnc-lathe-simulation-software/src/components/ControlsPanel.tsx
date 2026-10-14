@@ -365,38 +365,6 @@ function ControlsPanel({
           </select>
         </div>
 
-        <div className="mt-2 space-y-1.5 border-t border-edge pt-2">
-          <div>
-            <span className="mb-1 block text-[10.5px] font-semibold text-mute">سبک خروجی جی‌کد</span>
-            <div className="flex overflow-hidden rounded-md border border-edge">
-              <button
-                onClick={() => onParams({ format: "modal" })}
-                className={cn(
-                  "flex-1 px-1 py-1.5 text-[10.5px] font-bold transition-colors",
-                  params.format === "modal" ? "bg-brass text-[#241a0c]" : "bg-panel2 text-mute hover:text-ink"
-                )}
-              >
-                فشرده Modal
-              </button>
-              <button
-                onClick={() => onParams({ format: "std" })}
-                className={cn(
-                  "flex-1 border-r border-edge px-1 py-1.5 text-[10.5px] font-bold transition-colors",
-                  params.format === "std" ? "bg-brass text-[#241a0c]" : "bg-panel2 text-mute hover:text-ink"
-                )}
-              >
-                استاندارد Fanuc
-              </button>
-            </div>
-          </div>
-          <Toggle label="شماره خط (N) — فقط Fanuc" on={params.lineNumbers} onChange={(v) => onParams({ lineNumbers: v })} />
-          <Toggle label="گسترش G0 در جی‌کد (۳mm)" on={params.spreadG0} onChange={(v) => onParams({ spreadG0: v })} />
-          {params.spreadG0 && (
-            <p className="px-0.5 text-[10.5px] leading-5 text-mute">
-              حرکت‌های سریعِ روی‌هم با گام ۳mm فقط به سمت بیرون باز می‌شوند تا در سیمکو جدا دیده شوند — فیدرها و برش عوض نمی‌شوند.
-            </p>
-          )}
-        </div>
       </Section>
 
       {/* کاسه: نقطه Split + هلدر دوم */}
@@ -671,40 +639,12 @@ function ControlsPanel({
           </p>
         </div>
 
-        {params.roughMode === "zone" && (
-          <div className="anim-in mt-2">
-            <Toggle
-              label="اتصال پیوستهٔ مسیرها (بدون G0)"
-              on={params.ramp}
-              onChange={(v) => onParams({ ramp: v })}
-            />
-            <p className="mt-1 text-[9.5px] leading-4 text-dim">
-              {params.ramp
-                ? "ابزار بین لایه‌های درون هر ناحیه مستقیم و با حرکت برشی (Ramp) به خط بعد فرور می‌رود — هیچ جابه‌جایی سریع G0 در میان نیست"
-                : "بین لایه‌های درون هر ناحیه با جابه‌جایی سریع (G0) و حداقل فاصله امن به خط بعد می‌رود"}
-            </p>
-          </div>
-        )}
-
         {params.roughMode === "zigzag" && (
           <p className="anim-in mt-2 flex items-start gap-1.5 rounded-md border border-teal/30 bg-teal/10 px-2 py-1.5 text-[9.5px] leading-4 text-teal">
             <IconCheck className="mt-0.5 h-3 w-3 shrink-0" />
             گذرهای رفت و برگشت هر دو با فیدر خشن باربرداری می‌کنند و ناحیهٔ تمام‌شده دوباره تراش نمی‌خورد؛ فقط برای پرش بین دو بازهٔ جدا، یک عبور امنِ کوتاه انجام می‌شود.
           </p>
         )}
-
-        <div className="anim-in mt-2">
-          <Toggle
-            label="فیدر بهینه (حذف F های تکراری)"
-            on={params.simpleFeed}
-            onChange={(v) => onParams({ simpleFeed: v })}
-          />
-          <p className="mt-1 text-[9.5px] leading-4 text-dim">
-            {params.simpleFeed
-              ? "همهٔ فیدرها به دو F اصلی ساده می‌شوند — F فیدر خشن و F فیدر پرداخت — و G1/F های اضافه حذف می‌شوند"
-              : "هر حرکت فیدر مخصوص خود را دارد (فرورفتن، خشن، پرداخت جدا)"}
-          </p>
-        </div>
 
         {params.roughMode === "zone" && (
           <div className="anim-in mt-2.5 border-t border-edge pt-2.5">
