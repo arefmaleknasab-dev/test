@@ -616,7 +616,6 @@ function ControlsPanel({
           <Num label="فاصله پایان داخل تراشی" unit="mm" value={params.innerEndTravel} min={300} max={500} step={10} onChange={(v) => onParams({ innerEndTravel: Math.min(500, Math.max(300, v)) })} />
           <Num label="همپوشانی خشن شعاعی و کف تراشی" unit="mm" value={params.bottomRoughOverlap} min={0} max={50} step={0.5} onChange={(v) => onParams({ bottomRoughOverlap: Math.min(50, Math.max(0, v)) })} />
 
-          <Num label="دور دوک" unit="rpm" value={params.rpm} min={200} max={4000} step={100} onChange={(v) => onParams({ rpm: v })} />
           <Num label="فاصله امن" unit="mm" value={params.safety} min={1} max={20} step={1} onChange={(v) => onParams({ safety: v })} />
         </div>
         <p className="mt-1.5 rounded-md bg-bg/50 px-2 py-1 text-[9.5px] leading-4 text-dim">

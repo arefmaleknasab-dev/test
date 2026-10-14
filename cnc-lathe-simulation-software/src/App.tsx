@@ -268,7 +268,7 @@ export default function App() {
     if (!allProfileLayersHidden && generationSketch !== sketch) setGenerationSketch(sketch);
   }, [allProfileLayersHidden, generationSketch, sketch]);
 
-  const generationParams = useMemo<Params>(() => ({ ...params, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }), [params, preferences.operationFeeds]);
+  const generationParams = useMemo<Params>(() => ({ ...params, rpm: preferences.spindleSpeed, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }), [params, preferences.operationFeeds]);
   const genBase = useMemo(() => generate(points, generationParams, innerPoints, outerFinishPoints), [points, generationParams, innerPoints, outerFinishPoints]);
 
   const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, generationParams), [genBase, gcodeOvr, generationParams]);
@@ -493,7 +493,7 @@ export default function App() {
     /* آفست H2 روی هندسهٔ ورود امن مولد نیز اثر دارد (گوشهٔ افقی→عمودی).
        مقایسه با پایهٔ قدیمی آن گوشه را اشتباهاً override می‌کرد؛ پایهٔ پیش‌نویس
        دقیقاً با آفست زنده ساخته می‌شود تا جابه‌جایی خالص، override نسازد. */
-    const draftGenBase = holder2Changed ? generate(points, { ...draftParams, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }, innerPoints, outerFinishPoints) : genBase;
+    const draftGenBase = holder2Changed ? generate(points, { ...draftParams, rpm: preferences.spindleSpeed, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }, innerPoints, outerFinishPoints) : genBase;
     const next = deriveGcodeOvr(eb.verts, eb.lines, draftGenBase.segs, gcodeOvr, draftParams);
     const sketchChanged = eb.sketch !== sketch;
     if (!sketchChanged && !holder2Changed && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
@@ -807,7 +807,7 @@ export default function App() {
     /* فایل اشتراکی فقط داده‌های مهندسی پروژه را حمل می‌کند؛ تنظیمات شخصی رابط
        کاربر (تم، رنگ، میانبر، حساسیت اسنپ، لایه‌ها و چیدمان) محلی می‌مانند. */
     project: { sketch, params, gcodeOvr },
-    output: { postProcessor: preferences.postProcessor, gcodeUnits: preferences.gcodeUnits, sequenceNumbers: preferences.sequenceNumbers },
+    output: { postProcessor: preferences.postProcessor, gcodeUnits: preferences.gcodeUnits, sequenceNumbers: preferences.sequenceNumbers, spindleSpeed: preferences.spindleSpeed, operationFeeds: preferences.operationFeeds },
   }, null, 2);
   const downloadProject = (name = "project.kharraat") => {
     const url = URL.createObjectURL(new Blob([projectData()], { type: "application/json;charset=utf-8" }));
@@ -984,7 +984,7 @@ export default function App() {
           className="order-2 w-full shrink-0 @4xl:order-1"
         >
           <ControlsPanel
-            params={params}
+            params={generationParams}
             holder2Draft={editOpen && editBuf ? editBuf.holder2 : null}
             onHolder2={onHolder2SettingsCb}
             onParams={onParamsCb}
@@ -1033,7 +1033,7 @@ export default function App() {
               keepEditDraft={preferences.keepEditDraft}
               selected={selectedIds}
               onSelected={setSelectedIds}
-              params={params}
+              params={generationParams}
               gen={gen}
               split={params.split}
               onSplit={(split) => onParamsCb({ split })}
@@ -1050,7 +1050,7 @@ export default function App() {
               canRedo={future.current.length > 0}
             />
           ) : (
-              <SimulationView gen={gen} params={params} onActiveLine={setActiveLine} />
+              <SimulationView gen={gen} params={generationParams} onActiveLine={setActiveLine} />
             )}
           </DockPanel>
         ) : (
