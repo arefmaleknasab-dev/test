@@ -961,10 +961,10 @@ export default function App() {
         <div className="flex items-center gap-1.5">
           <WindowMenu items={menuItems} onToggle={togglePanel} onReset={resetLayout} />
           <span className="mx-1 h-5 w-px bg-edge" />
-          <button className="btn !px-2 !py-1.5" onClick={undo} disabled={past.current.length === 0} title="واگرد (Ctrl+Z)">
+          <button className="btn !px-2 !py-1.5" onClick={redo} disabled={future.current.length === 0} title="بازانجام (Ctrl+Y)">
             <IconArrowLeft className="h-4 w-4" />
           </button>
-          <button className="btn !px-2 !py-1.5" onClick={redo} disabled={future.current.length === 0} title="بازانجام (Ctrl+Y)">
+          <button className="btn !px-2 !py-1.5" onClick={undo} disabled={past.current.length === 0} title="واگرد (Ctrl+Z)">
             <IconArrowRight className="h-4 w-4" />
           </button>
           <span className="mx-1 h-5 w-px bg-edge" />
