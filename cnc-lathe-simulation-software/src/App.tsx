@@ -242,9 +242,11 @@ export default function App() {
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
   const snap = (): HistEntry => ({ ...stateRef.current });
   const pushPast = (e: HistEntry) => {
+    const limit = Math.min(200, Math.max(1, Math.round(preferences.historyLimit)));
     past.current.push(e);
+    if (past.current.length > limit) past.current.splice(0, past.current.length - limit);
+    /* هر تغییر تازه شاخهٔ تاریخچه را عوض می‌کند؛ Redo قبلی دیگر معتبر نیست. */
     future.current = [];
-    if (past.current.length > 80) past.current.shift();
   };
 
   /* پروفایل نقطه‌ای برای موتور تراش — حالت عادی تخت، حالت کاسه دوشاخه (Split) */
@@ -383,6 +385,13 @@ export default function App() {
   }, [preferences]);
 
   useEffect(() => {
+    const limit=Math.min(200,Math.max(1,Math.round(preferences.historyLimit)));
+    if(past.current.length>limit)past.current.splice(0,past.current.length-limit);
+    if(future.current.length>limit)future.current.splice(0,future.current.length-limit);
+    setHistVer(v=>v+1);
+  },[preferences.historyLimit]);
+
+  useEffect(() => {
     if (!preferences.keepEditDraft && !editOpen && editBuf) setEditBuf(null);
   }, [preferences.keepEditDraft, editOpen, editBuf]);
 
@@ -457,6 +466,8 @@ export default function App() {
   const redo = () => {
     if (future.current.length === 0) return;
     past.current.push(snap());
+    const limit = Math.min(200, Math.max(1, Math.round(preferences.historyLimit)));
+    if (past.current.length > limit) past.current.splice(0, past.current.length - limit);
     commitRef.current = null;
     restore(future.current.pop()!);
   };
