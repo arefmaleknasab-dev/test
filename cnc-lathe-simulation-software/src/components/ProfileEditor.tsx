@@ -158,6 +158,7 @@ interface Props {
   onEditConfirm: () => void;
   onEditCancel: () => void;
   onEditDiscard: () => void;
+  keepEditDraft: boolean;
 }
 
 interface Cam {
@@ -829,6 +830,7 @@ export default function ProfileEditor({
   onEditConfirm,
   onEditCancel,
   onEditDiscard,
+  keepEditDraft,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -5618,18 +5620,18 @@ export default function ProfileEditor({
             <IconCheck className="h-3 w-3" />
             تأیید
           </button>
-          <button
+          {keepEditDraft && <button
             onClick={onEditDiscard}
             className="flex items-center gap-1 rounded-full border border-red-500/45 bg-red-500/10 px-2.5 py-1 text-[11px] font-bold text-red-300 transition-colors hover:bg-red-500/20 hover:text-red-200"
             title="حذف کامل پیش‌نویس و خروج از ویرایش مسیر؛ با Undo قابل بازیابی است"
           >
             <IconTrash className="h-3 w-3" />
             حذف پیش‌نویس
-          </button>
+          </button>}
           <button
             onClick={onEditCancel}
             className="rounded-full border border-edge bg-panel/70 px-2.5 py-1 text-[11px] font-bold text-mute transition-colors hover:text-ink"
-            title="خروج از ویرایش مسیر؛ پیش‌نویس تغییرات برای ورود بعدی حفظ می‌شود"
+            title={keepEditDraft ? "خروج از ویرایش مسیر؛ پیش‌نویس تغییرات برای ورود بعدی حفظ می‌شود" : "خروج از ویرایش مسیر؛ برای تغییرات تأییدنشده تصمیم‌گیری می‌شود"}
           >
             خروج
           </button>

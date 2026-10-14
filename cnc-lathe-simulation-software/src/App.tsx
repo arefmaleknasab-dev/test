@@ -1030,6 +1030,7 @@ export default function App() {
               onEditConfirm={confirmEdit}
               onEditCancel={closeEdit}
               onEditDiscard={discardEdit}
+              keepEditDraft={preferences.keepEditDraft}
               selected={selectedIds}
               onSelected={setSelectedIds}
               params={params}
