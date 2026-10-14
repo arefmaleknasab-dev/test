@@ -51,6 +51,8 @@ interface ProjectTab {
   gcodeOvr: GcodeOvrMap;
   activePreset: string | null;
   savedSnapshot: string | null;
+  past: HistEntry[];
+  future: HistEntry[];
 }
 
 const projectSnapshot = (sketch: SketchSeg[], params: Params, gcodeOvr: GcodeOvrMap) => JSON.stringify({ sketch, params, gcodeOvr });
@@ -193,7 +195,7 @@ export default function App() {
   const [gcodeOvr, setGcodeOvr] = useState<GcodeOvrMap>(() => normGcodeOvr(SAVED?.gcodeOvr));
   const initialProjectId = useRef(`project-${Date.now()}`);
   const [activeProjectId, setActiveProjectId] = useState(initialProjectId.current);
-  const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), activePreset, savedSnapshot: null }]);
+  const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), activePreset, savedSnapshot: null, past: [], future: [] }]);
   const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
   const [pendingEditExit, setPendingEditExit] = useState(false);
   const [saveThenCloseProject, setSaveThenCloseProject] = useState<string|null>(null);
@@ -227,13 +229,16 @@ export default function App() {
   }, [activeProjectId, sketch, params, gcodeOvr, activePreset]);
   const switchProject = (id: string) => {
     if(id===activeProjectId)return;const tab=projectTabs.find(t=>t.id===id);if(!tab)return;
+    /* تاریخچه تب مبدأ پیش از سوییچ ذخیره و تاریخچه مستقل مقصد بازیابی می‌شود. */
+    setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t));
     setActiveProjectId(id);setSketch(tab.sketch);setGenerationSketch(tab.sketch);setParams(tab.params);setGcodeOvr(tab.gcodeOvr);setActivePreset(tab.activePreset);
-    setSelectedIds([]);setEditBuf(null);setEditOpen(false);past.current=[];future.current=[];setHistVer(v=>v+1);
+    const limit=Math.min(200,Math.max(1,Math.round(preferences.historyLimit)));
+    setSelectedIds([]);setEditBuf(null);setEditOpen(false);past.current=tab.past.slice(-limit);future.current=tab.future.slice(-limit);setHistVer(v=>v+1);
   };
   const finishCloseProject = (id:string) => {
     const remaining=projectTabs.filter(t=>t.id!==id);projectHandlesRef.current.delete(id);
-    if(remaining.length){setProjectTabs(remaining);if(id===activeProjectId){const next=remaining[Math.max(0,projectTabs.findIndex(t=>t.id===id)-1)]??remaining[0];setActiveProjectId(next.id);setSketch(next.sketch);setGenerationSketch(next.sketch);setParams(next.params);setGcodeOvr(next.gcodeOvr);setActivePreset(next.activePreset);}}
-    else { const p=PRESETS[0], nextSketch=sketchFromPoints(presetPoints(p)), id2=`project-${Date.now()}`;const nextParams=normalizeParams({...params,blankD:p.blankD,blankL:p.blankL},false);setProjectTabs([{id:id2,name:"پروژه بدون نام",sketch:nextSketch,params:nextParams,gcodeOvr:{},activePreset:p.id,savedSnapshot:null}]);setActiveProjectId(id2);setSketch(nextSketch);setGenerationSketch(nextSketch);setParams(nextParams);setGcodeOvr({});setActivePreset(p.id);}
+    if(remaining.length){setProjectTabs(remaining);if(id===activeProjectId){const next=remaining[Math.max(0,projectTabs.findIndex(t=>t.id===id)-1)]??remaining[0];setActiveProjectId(next.id);setSketch(next.sketch);setGenerationSketch(next.sketch);setParams(next.params);setGcodeOvr(next.gcodeOvr);setActivePreset(next.activePreset);past.current=[...next.past];future.current=[...next.future];setHistVer(v=>v+1);}}
+    else { const p=PRESETS[0], nextSketch=sketchFromPoints(presetPoints(p)), id2=`project-${Date.now()}`;const nextParams=normalizeParams({...params,blankD:p.blankD,blankL:p.blankL},false);setProjectTabs([{id:id2,name:"پروژه بدون نام",sketch:nextSketch,params:nextParams,gcodeOvr:{},activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);setActiveProjectId(id2);setSketch(nextSketch);setGenerationSketch(nextSketch);setParams(nextParams);setGcodeOvr({});setActivePreset(p.id);past.current=[];future.current=[];setHistVer(v=>v+1);}
     setPendingCloseProject(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);
   };
   const requestCloseProject=(id:string)=>{const tab=projectTabs.find(t=>t.id===id);if(!tab)return;const dirty=tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr);if(dirty)setPendingCloseProject(id);else finishCloseProject(id);};
@@ -388,6 +393,7 @@ export default function App() {
     const limit=Math.min(200,Math.max(1,Math.round(preferences.historyLimit)));
     if(past.current.length>limit)past.current.splice(0,past.current.length-limit);
     if(future.current.length>limit)future.current.splice(0,future.current.length-limit);
+    setProjectTabs(tabs=>tabs.map(tab=>({...tab,past:tab.past.slice(-limit),future:tab.future.slice(-limit)})));
     setHistVer(v=>v+1);
   },[preferences.historyLimit]);
 
@@ -708,12 +714,11 @@ export default function App() {
         : sketchFromPoints(presetPoints(p));
     const hadEditDraft = !!editBufRef.current;
     const newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    setProjectTabs(tabs=>[...tabs,{id:newProjectId,name:p.name,sketch:nextSketch,params,gcodeOvr:{},activePreset:p.id,savedSnapshot:null}]);
+    setProjectTabs(tabs=>[...tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t),{id:newProjectId,name:p.name,sketch:nextSketch,params,gcodeOvr:{},activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);
     setActiveProjectId(newProjectId);
 
-    /* preset یک تغییر اتمیکِ طرح است. نگه‌داشتن verts/lines یا overrideهای طرح
-       قبلی کنار ابعاد و پروفایل جدید علت اصلی آشفتگی مسیر بود. */
-    pushPast(snap());
+    /* هر پیش‌تنظیم پروژه‌ای مستقل است و تاریخچه پروژه قبلی وارد آن نمی‌شود. */
+    past.current=[];future.current=[];
     commitRef.current = null;
     pendingParamRebaseRef.current = null;
     setSketch(nextSketch);
@@ -758,7 +763,7 @@ export default function App() {
           ? `پیش‌تنظیم «${p.name}» + استراتژی داخل/خارج فعال شد`
           : `پیش‌تنظیم «${p.name}» اعمال شد`
     );
-  }, [showToast, params]);
+  }, [showToast, params, activeProjectId]);
 
   /* قرار دادن خودکار نقطه Split روی لبه (بیشترین X زنجیره) */
   const autoSplit = useCallback(() => {
@@ -879,7 +884,7 @@ export default function App() {
       if (raw.format !== "KharraatCode Project" || !data.sketch) throw new Error("invalid-project");
       const nextSketch = normalizeSketch(data.sketch); if (!nextSketch) throw new Error("invalid-sketch");
       const nextParams=normalizeParams(data.params,false), nextOvr=normGcodeOvr(data.gcodeOvr), newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-      setProjectTabs(tabs=>[...tabs,{id:newProjectId,name:file.name.replace(/\.kharraat$/i,""),sketch:nextSketch,params:nextParams,gcodeOvr:nextOvr,activePreset:null,savedSnapshot:projectSnapshot(nextSketch,nextParams,nextOvr)}]);setActiveProjectId(newProjectId);
+      setProjectTabs(tabs=>[...tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t),{id:newProjectId,name:file.name.replace(/\.kharraat$/i,""),sketch:nextSketch,params:nextParams,gcodeOvr:nextOvr,activePreset:null,savedSnapshot:projectSnapshot(nextSketch,nextParams,nextOvr),past:[],future:[]}]);setActiveProjectId(newProjectId);
       setSketch(nextSketch); setGenerationSketch(nextSketch); setParams(nextParams);
       /* settings/preferences/layout عمداً بارگذاری نمی‌شوند تا محیط شخصی گیرنده تغییر نکند. */
       setActivePreset(null); setGcodeOvr(nextOvr);
