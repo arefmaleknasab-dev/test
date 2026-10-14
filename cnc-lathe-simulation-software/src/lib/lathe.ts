@@ -15,9 +15,9 @@ export interface PPoint {
 export type RoughMode = "classic" | "zigzag" | "zone";
 
 export const ROUGH_MODES: { id: RoughMode; name: string }[] = [
-  { id: "classic", name: "یک‌طرفه (کلاسیک)" },
-  { id: "zigzag", name: "رفت‌وبرگشتی (زیگزاگ)" },
-  { id: "zone", name: "ناحیه‌ای" },
+  { id: "classic", name: "یک طرفه" },
+  { id: "zigzag", name: "دو طرفه" },
+  { id: "zone", name: "ناحیه‌ای دو طرفه" },
 ];
 
 /* ---------------- شکل مقطع خام و پوشش دورانی ---------------- */
