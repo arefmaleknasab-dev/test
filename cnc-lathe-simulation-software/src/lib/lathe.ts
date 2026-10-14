@@ -1361,6 +1361,27 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               for (const s of F) if (s.z >= a - 0.01 && s.z <= b + 0.01 && s.r > mx) mx = s.r;
               return mx === -Infinity ? minF : mx;
             };
+            /* حذف نقاط نمونه‌برداری زائد از هر پاس. منحنی‌های ورودی برای نمایش
+               نرم با صدها Sample ساخته می‌شوند، اما تبدیل مستقیم هر Sample به G1
+               مسیر خشن زیگزاگ را بی‌دلیل به تعداد زیادی خط می‌شکست. RDP با تلرانس
+               ۰٫۰۲mm شکل عملیاتی را حفظ و بخش‌های مستقیم را یک خط می‌کند. */
+            const simplifyPass = (pts: { z: number; r: number }[]): { z: number; r: number }[] => {
+              if (pts.length <= 2) return pts;
+              const keep = new Uint8Array(pts.length); keep[0] = 1; keep[pts.length - 1] = 1;
+              const stack: [number, number][] = [[0, pts.length - 1]];
+              while (stack.length) {
+                const [a, b] = stack.pop()!; const A = pts[a], B = pts[b];
+                const dz = B.z - A.z, dr = B.r - A.r, den = dz * dz + dr * dr;
+                let best = 0, at = -1;
+                for (let i = a + 1; i < b; i++) {
+                  const t = den > 1e-18 ? Math.max(0, Math.min(1, ((pts[i].z - A.z) * dz + (pts[i].r - A.r) * dr) / den)) : 0;
+                  const ez = pts[i].z - (A.z + t * dz), er = pts[i].r - (A.r + t * dr);
+                  const d = Math.hypot(ez, er); if (d > best) { best = d; at = i; }
+                }
+                if (at >= 0 && best > 0.02) { keep[at] = 1; stack.push([a, at], [at, b]); }
+              }
+              return pts.filter((_, i) => keep[i]);
+            };
             /* جهت شروع: نزدیک‌تر به موقعیت فعلی ابزار (مثلاً پایان گرد کردن) */
             let forward = Math.abs(cur.z) <= Math.abs(radialEndZ - cur.z);
             let first = true;
@@ -1398,9 +1419,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                 const hi = Math.max(startZ, endZ);
                 const ptsIn = F.filter((s) => s.z > lo + 1e-6 && s.z < hi - 1e-6);
                 const ordered = forward ? ptsIn : [...ptsIn].reverse();
-                for (const s of ordered) mv(1, 2 * Math.max(s.r, layer), s.z, p.feedRough, "rough");
                 const cEnd = Math.max(offsetRadiusAt(endZ), layer);
-                if (Math.abs(endZ - startZ) > 0.01) mv(1, 2 * cEnd, endZ, p.feedRough, "rough");
+                const pass = simplifyPass([
+                  { z: startZ, r: cStart },
+                  ...ordered.map((s) => ({ z: s.z, r: Math.max(s.r, layer) })),
+                  { z: endZ, r: cEnd },
+                ]);
+                for (let i = 1; i < pass.length; i++) mv(1, 2 * pass[i].r, pass[i].z, p.feedRough, "rough");
                 lastEndZ = endZ;
                 lastEndR = cEnd;
               }
