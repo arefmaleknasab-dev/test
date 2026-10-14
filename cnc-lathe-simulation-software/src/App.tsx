@@ -7,7 +7,7 @@ import GCodePanel from "./components/GCodePanel";
 import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
 import PreferencesDialog, { DEFAULT_PREFERENCES, type AppPreferences } from "./components/PreferencesDialog";
-import { IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconRedo, IconSim, IconSettings, IconSpindle, IconUndo, IconWarn } from "./components/icons";
+import { IconArrowLeft, IconArrowRight, IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconSim, IconSettings, IconSpindle, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
 import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, OpType, Params, PPoint, Preset } from "./lib/lathe";
@@ -962,10 +962,10 @@ export default function App() {
           <WindowMenu items={menuItems} onToggle={togglePanel} onReset={resetLayout} />
           <span className="mx-1 h-5 w-px bg-edge" />
           <button className="btn !px-2 !py-1.5" onClick={undo} disabled={past.current.length === 0} title="واگرد (Ctrl+Z)">
-            <IconUndo className="h-4 w-4" />
+            <IconArrowLeft className="h-4 w-4" />
           </button>
           <button className="btn !px-2 !py-1.5" onClick={redo} disabled={future.current.length === 0} title="بازانجام (Ctrl+Y)">
-            <IconRedo className="h-4 w-4" />
+            <IconArrowRight className="h-4 w-4" />
           </button>
           <span className="mx-1 h-5 w-px bg-edge" />
           {preferences.showHeaderImportAi && <button className="btn !px-2.5 !py-1.5 text-[11.5px]" onClick={() => setShowAiImport(true)} title="وارد کردن فایل Adobe Illustrator با پیش‌نمایش و مقیاس">

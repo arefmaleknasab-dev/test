@@ -123,6 +123,11 @@ export const IconMirror = (p: P) => (
 export const IconSettings = (p: P) =>
   base(p, <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.18.36.4.7.6 1 .28.4.66.4 1.1.4h.1v4h-.1c-.44 0-.82 0-1.1.4-.2.3-.42.64-.6 1Z" strokeWidth="1.5"/></>);
 
+export const IconArrowLeft = (p: P) =>
+  base(p, <><path d="M20 12H5"/><path d="m11 6-6 6 6 6"/></>);
+export const IconArrowRight = (p: P) =>
+  base(p, <><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></>);
+
 export const IconRotate = (p: P) =>
   base(p, <g style={{ transform: "rotate(45deg)", transformOrigin: "12px 12px", transformBox: "view-box" }}><path d="M20.2 13A8.7 8.7 0 1 1 14 4.2" strokeWidth={2.8}/><path d="M13.7 .2 21 4.1 13.7 8Z" fill="currentColor" stroke="currentColor" strokeWidth={0.7}/></g>);
 
