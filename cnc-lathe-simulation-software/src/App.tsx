@@ -106,7 +106,25 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
 export default function App() {
   const [showAiImport, setShowAiImport] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
-  const [preferences, setPreferences] = useState<AppPreferences>(() => ({ ...DEFAULT_PREFERENCES, ...(SAVED?.preferences ?? {}), shortcuts: { ...DEFAULT_PREFERENCES.shortcuts, ...(SAVED?.preferences?.shortcuts ?? {}) }, operationFeeds: { ...DEFAULT_PREFERENCES.operationFeeds, ...(SAVED?.preferences?.operationFeeds ?? {}) } }));
+  const [preferences, setPreferences] = useState<AppPreferences>(() => {
+    const saved = SAVED?.preferences;
+    /* تنظیمات خروجی پیش‌تر در Params بودند. فقط پس از اولین ذخیره نسخه جدید،
+       مقادیر Preferences معتبرند؛ وگرنه دقیقاً با پیش‌فرض‌های تصویر آغاز شوند. */
+    const hasNewGcodePreferences = saved?.gcodeFormat === "modal" || saved?.gcodeFormat === "std";
+    return {
+      ...DEFAULT_PREFERENCES,
+      ...(saved ?? {}),
+      ...(!hasNewGcodePreferences ? {
+        gcodeFormat: "modal" as const,
+        continuousPaths: true,
+        optimizeFeeds: true,
+        sequenceNumbers: true,
+        spreadRapid: false,
+      } : {}),
+      shortcuts: { ...DEFAULT_PREFERENCES.shortcuts, ...(saved?.shortcuts ?? {}) },
+      operationFeeds: { ...DEFAULT_PREFERENCES.operationFeeds, ...(saved?.operationFeeds ?? {}) },
+    };
+  });
   const [sketch, setSketch] = useState<SketchSeg[]>(() => {
     const fromSaved = normalizeSketch(SAVED?.sketch);
     if (fromSaved) return fromSaved;
