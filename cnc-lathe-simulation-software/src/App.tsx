@@ -968,25 +968,25 @@ export default function App() {
             <IconRedo className="h-4 w-4" />
           </button>
           <span className="mx-1 h-5 w-px bg-edge" />
-          <button className="btn !px-2.5 !py-1.5 text-[11.5px]" onClick={() => setShowAiImport(true)} title="وارد کردن فایل Adobe Illustrator با پیش‌نمایش و مقیاس">
+          {preferences.showHeaderImportAi && <button className="btn !px-2.5 !py-1.5 text-[11.5px]" onClick={() => setShowAiImport(true)} title="وارد کردن فایل Adobe Illustrator با پیش‌نمایش و مقیاس">
             <IconDownload className="h-3.5 w-3.5 rotate-180" />
             ورود AI
-          </button>
-          <button
+          </button>}
+          {preferences.showHeaderExportDxf && <button
             className="btn btn-teal !px-2.5 !py-1.5 text-[11.5px]"
             onClick={downloadDxf}
             title="فقط مسیر عملیات تراش به ترتیب استراتژی — یکپارچه + لایهٔ مجزا برای هر عملیات"
           >
             <IconLayers className="h-3.5 w-3.5" />
             خروجی DXF
-          </button>
-          <button className="btn !px-2.5 !py-1.5 text-[11.5px]" onClick={copyGCode}>
+          </button>}
+          {preferences.showHeaderCopyGcode && <button className="btn !px-2.5 !py-1.5 text-[11.5px]" onClick={copyGCode}>
             کپی جی‌کد
-          </button>
-          <button className="btn btn-brass !px-2.5 !py-1.5 text-[11.5px]" onClick={downloadGCode}>
+          </button>}
+          {preferences.showHeaderDownloadNc && <button className="btn btn-brass !px-2.5 !py-1.5 text-[11.5px]" onClick={downloadGCode}>
             <IconDownload className="h-3.5 w-3.5" />
             دانلود NC
-          </button>
+          </button>}
         </div>
       </header>
 
