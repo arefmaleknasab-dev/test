@@ -129,7 +129,9 @@ export interface Params {
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   feedRough: number; // mm/min
-  feedFinish: number; // mm/min
+  feedFinish: number; // mm/min (سازگاری پروژه‌های قدیمی)
+  /** فید مستقل هر عملیات؛ تنظیم سراسری Preferences هنگام تولید تزریق می‌شود. */
+  feedByKind?: Partial<Record<Exclude<SegKind, "rapid">, number>>;
   rpm: number;
   tool: ToolSpec; // مشخصات مهندسی ابزار
   safety: number; // فاصله امن جمع‌کردن
@@ -1033,7 +1035,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
       if (Math.abs(x - cur.x) > eps) pushSeg(0, x, z, 0, "rapid");
       return;
     }
-    pushSeg(1, x, z, feed, kind);
+    const operationFeed = kind === "rapid" ? undefined : p.feedByKind?.[kind];
+    pushSeg(1, x, z, operationFeed == null ? feed : Math.min(20000, Math.max(1, operationFeed)), kind);
   };
 
   /* حرکت سریعِ مستقیم بدون تجزیهٔ امن — فقط برای جابه‌جایی‌های طولی‌ای استفاده   */
@@ -2007,6 +2010,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
 /* جی‌کد فقط دو F باقی بماند و G1/F های تکراری حذف شوند.                     */
 const FINISH_KINDS: SegKind[] = ["finish", "offset", "boreoff", "borefin"];
 function normFeed(sg: Seg, p: Params): number {
+  const operationFeed = sg.kind === "rapid" ? undefined : p.feedByKind?.[sg.kind];
+  if (operationFeed != null && !sg.feedOvr) return Math.min(20000, Math.max(1, operationFeed));
   if (sg.feedOvr || !p.simpleFeed) return sg.feed;
   return FINISH_KINDS.includes(sg.kind) ? p.feedFinish : p.feedRough;
 }

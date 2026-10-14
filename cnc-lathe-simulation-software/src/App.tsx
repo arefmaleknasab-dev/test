@@ -106,7 +106,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
 export default function App() {
   const [showAiImport, setShowAiImport] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
-  const [preferences, setPreferences] = useState<AppPreferences>(() => ({ ...DEFAULT_PREFERENCES, ...(SAVED?.preferences ?? {}), shortcuts: { ...DEFAULT_PREFERENCES.shortcuts, ...(SAVED?.preferences?.shortcuts ?? {}) } }));
+  const [preferences, setPreferences] = useState<AppPreferences>(() => ({ ...DEFAULT_PREFERENCES, ...(SAVED?.preferences ?? {}), shortcuts: { ...DEFAULT_PREFERENCES.shortcuts, ...(SAVED?.preferences?.shortcuts ?? {}) }, operationFeeds: { ...DEFAULT_PREFERENCES.operationFeeds, ...(SAVED?.preferences?.operationFeeds ?? {}) } }));
   const [sketch, setSketch] = useState<SketchSeg[]>(() => {
     const fromSaved = normalizeSketch(SAVED?.sketch);
     if (fromSaved) return fromSaved;
@@ -267,9 +267,10 @@ export default function App() {
     if (!allProfileLayersHidden && generationSketch !== sketch) setGenerationSketch(sketch);
   }, [allProfileLayersHidden, generationSketch, sketch]);
 
-  const genBase = useMemo(() => generate(points, params, innerPoints, outerFinishPoints), [points, params, innerPoints, outerFinishPoints]);
+  const generationParams = useMemo<Params>(() => ({ ...params, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }), [params, preferences.operationFeeds]);
+  const genBase = useMemo(() => generate(points, generationParams, innerPoints, outerFinishPoints), [points, generationParams, innerPoints, outerFinishPoints]);
 
-  const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, params), [genBase, gcodeOvr, params]);
+  const gen = useMemo(() => applyGcodeOvr(genBase, gcodeOvr, generationParams), [genBase, gcodeOvr, generationParams]);
 
   /* هنگام Drag هلدر دوم، اختلاف آفست به‌تنهایی برای فعال‌کردن «تأیید» کافی است؛
      در این مسیر داغ عمداً deriveGcodeOvr (پیمایش کل برنامه) اجرا نمی‌شود تا
@@ -479,7 +480,7 @@ export default function App() {
     /* آفست H2 روی هندسهٔ ورود امن مولد نیز اثر دارد (گوشهٔ افقی→عمودی).
        مقایسه با پایهٔ قدیمی آن گوشه را اشتباهاً override می‌کرد؛ پایهٔ پیش‌نویس
        دقیقاً با آفست زنده ساخته می‌شود تا جابه‌جایی خالص، override نسازد. */
-    const draftGenBase = holder2Changed ? generate(points, draftParams, innerPoints, outerFinishPoints) : genBase;
+    const draftGenBase = holder2Changed ? generate(points, { ...draftParams, feedByKind: { ...preferences.operationFeeds, roughz: preferences.operationFeeds.rough, copy: preferences.operationFeeds.rough } }, innerPoints, outerFinishPoints) : genBase;
     const next = deriveGcodeOvr(eb.verts, eb.lines, draftGenBase.segs, gcodeOvr, draftParams);
     const sketchChanged = eb.sketch !== sketch;
     if (!sketchChanged && !holder2Changed && JSON.stringify(next) === JSON.stringify(gcodeOvr)) {
