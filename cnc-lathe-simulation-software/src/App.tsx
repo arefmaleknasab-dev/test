@@ -962,10 +962,10 @@ export default function App() {
           <WindowMenu items={menuItems} onToggle={togglePanel} onReset={resetLayout} />
           <span className="mx-1 h-5 w-px bg-edge" />
           <button className="btn !px-2 !py-1.5" onClick={undo} disabled={past.current.length === 0} title="واگرد (Ctrl+Z)">
-            <IconArrowRight className="h-4 w-4" />
+            <IconArrowLeft className="h-4 w-4" />
           </button>
           <button className="btn !px-2 !py-1.5" onClick={redo} disabled={future.current.length === 0} title="بازانجام (Ctrl+Y)">
-            <IconArrowLeft className="h-4 w-4" />
+            <IconArrowRight className="h-4 w-4" />
           </button>
           <span className="mx-1 h-5 w-px bg-edge" />
           {preferences.showHeaderImportAi && <button className="btn !px-2.5 !py-1.5 text-[11.5px]" onClick={() => setShowAiImport(true)} title="وارد کردن فایل Adobe Illustrator با پیش‌نمایش و مقیاس">
