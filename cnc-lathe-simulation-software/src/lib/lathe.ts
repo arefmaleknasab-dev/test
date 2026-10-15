@@ -787,7 +787,7 @@ export function sampleProfile(points: PPoint[], blankR: number): Sample[] {
 }
 
 /** نمونه‌برداری مسیر با حفظ ترتیب زنجیره؛ برای شاخه داخلیِ برگشتی ضروری است. */
-function sampleOrderedProfile(points: PPoint[], blankR: number): Sample[] {
+export function sampleOrderedProfile(points: PPoint[], blankR: number): Sample[] {
   const clampR = (r: number) => Math.min(Math.max(r, 0), blankR);
   const pts = [...points];
   const out: Sample[] = [];

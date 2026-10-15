@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
-import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
+import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleOrderedProfile, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconTool, IconTrash } from "./icons";
 
@@ -137,10 +137,15 @@ function ControlsPanel({
     const off: Sample[] = normalOffset(samples, params.offsetDist, true).map((s) => ({ z: s.z, r: Math.min(blankR, s.r) }));
     return { zoneSamples: off, autoZones: findZones(off) };
   }, [points, params.blankD, params.offsetDist]);
+  /* برای تصویر تنظیم نواحی باید ترتیب واقعی Segmentها حفظ شود. sampleProfile
+     پوشش خشن را برحسب Z مرتب می‌کند و روی پروفایل‌های برگشتی شکل را می‌شکند. */
   const innerZoneSamples = useMemo(() => {
     if (!params.split.enabled || innerPoints.length < 2) return [];
-    return sampleProfile(innerPoints, params.blankD / 2);
+    return sampleOrderedProfile(innerPoints, params.blankD / 2);
   }, [innerPoints, params.blankD, params.split.enabled]);
+  const outerDisplaySamples = useMemo(() =>
+    points.length >= 2 ? sampleOrderedProfile(points, params.blankD / 2) : [],
+  [points, params.blankD]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pl-0.5">
@@ -681,7 +686,7 @@ function ControlsPanel({
             </button>)}
           </div>
           <p className="mt-1 text-[9.5px] leading-4 text-dim">{params.innerRoughMode==="classic"?"یک طرفه: همان روش فعلی داخل‌تراشی؛ ابزار پس از هر پاس به نقطه شروع برمی‌گردد.":params.innerRoughMode==="zigzag"?"دو طرفه: پاس‌های شعاعی رفت و برگشت هر دو باربرداری می‌کنند.":"ناحیه‌ای دو طرفه: هر ناحیه شعاعی با پاس‌های رفت و برگشت کامل و سپس ناحیه بعدی اجرا می‌شود."}</p>
-          {params.innerRoughMode==="zone"&&<InnerRadialZoneEditor key={`${params.blankD}|${params.innerZoneBounds.join(",")}|${innerZoneSamples.length}|${Math.max(0,...innerZoneSamples.map(s=>s.r)).toFixed(2)}`} blankR={params.blankD/2} samples={innerZoneSamples} outerSamples={zoneSamples} bounds={params.innerZoneBounds} order={params.innerZoneOrder} onConfirm={(bounds,order)=>{onParams({innerZoneBounds:bounds,innerZoneOrder:order});onNotify("نواحی داخل‌تراشی اعمال شد — جی‌کد به‌روز شد");}}/>}
+          {params.innerRoughMode==="zone"&&<InnerRadialZoneEditor key={`${params.blankD}|${params.innerZoneBounds.join(",")}|${innerZoneSamples.length}|${Math.max(0,...innerZoneSamples.map(s=>s.r)).toFixed(2)}`} blankR={params.blankD/2} samples={innerZoneSamples} outerSamples={outerDisplaySamples} bounds={params.innerZoneBounds} order={params.innerZoneOrder} onConfirm={(bounds,order)=>{onParams({innerZoneBounds:bounds,innerZoneOrder:order});onNotify("نواحی داخل‌تراشی اعمال شد — جی‌کد به‌روز شد");}}/>}
         </div>
       </Section>
 
