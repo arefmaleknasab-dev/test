@@ -1345,15 +1345,17 @@ function InnerRadialZoneEditor({blankR,samples,outerSamples,bounds:committed,ord
   const [bounds,setBounds]=useState<number[]>(initial);
   const [order,setOrder]=useState<number[]>([...committedOrder]);
   const [drag,setDrag]=useState<number|null>(null),[hover,setHover]=useState<number|null>(null);
-  const svgRef=useRef<SVGSVGElement>(null),W=240,P=8,TOP=12,BOT=24;
+  const svgRef=useRef<SVGSVGElement>(null),W=240,H=240,P=12;
   const minZ=profileSamples.length?Math.min(...profileSamples.map(s=>s.z)):0,maxZ=profileSamples.length?Math.max(...profileSamples.map(s=>s.z)):1;
   const zSpan=Math.max(.001,maxZ-minZ);
-  /* یک Scale مشترک برای X و شعاع؛ ارتفاع viewBox از نسبت واقعی خط داخلی
-     محاسبه می‌شود تا پروفایل برای جا شدن در کادر کشیده یا فشرده نشود. */
-  const DRAW_H=(W-2*P)*(displayMaxR/zSpan),H=TOP+BOT+DRAW_H;
-  const X=(z:number)=>P+((z-minZ)/zSpan)*(W-2*P);
-  const Y=(r:number)=>H-BOT-(r/displayMaxR)*DRAW_H;
-  const radial=(e:React.PointerEvent|React.MouseEvent)=>{const q=svgRef.current!.getBoundingClientRect();const shown=((H-BOT-((e.clientY-q.top)/q.height)*H)/DRAW_H)*displayMaxR;return Math.max(.5,Math.min(radialMax-.5,shown));};
+  /* کادر همیشه مربع است، اما Scale هر دو محور دقیقاً یکسان می‌ماند. شکل مانند
+     پنجره طراحی با contain در مرکز کادر جا می‌شود و هیچ کشیدگی ندارد. */
+  const SCALE=Math.min((W-2*P)/zSpan,(H-2*P)/displayMaxR);
+  const DRAW_W=zSpan*SCALE,DRAW_H=displayMaxR*SCALE;
+  const LEFT=(W-DRAW_W)/2,BASE_Y=(H+DRAW_H)/2;
+  const X=(z:number)=>LEFT+(z-minZ)*SCALE;
+  const Y=(r:number)=>BASE_Y-r*SCALE;
+  const radial=(e:React.PointerEvent|React.MouseEvent)=>{const q=svgRef.current!.getBoundingClientRect();const py=((e.clientY-q.top)/q.height)*H;const shown=(BASE_Y-py)/SCALE;return Math.max(.5,Math.min(radialMax-.5,shown));};
   const zones=useMemo(()=>{const e=[0,...bounds.filter(v=>v<radialMax).slice().sort((a,b)=>a-b),radialMax];return e.slice(0,-1).map((a,i)=>({a,b:e[i+1]}));},[bounds,radialMax]);
   useEffect(()=>setOrder(o=>o.filter(i=>i<zones.length)),[zones.length]);
   const toggle=(i:number)=>setOrder(o=>o.includes(i)?o.filter(x=>x!==i):[...o,i]);
@@ -1366,7 +1368,7 @@ function InnerRadialZoneEditor({blankR,samples,outerSamples,bounds:committed,ord
   const add=(e:React.MouseEvent<SVGSVGElement>)=>{if(drag!==null)return;const v=Math.round(radial(e));if(!bounds.some(x=>Math.abs(x-v)<2)){setBounds([...bounds,v].sort((a,b)=>a-b));setOrder([]);}};
   return <div className="anim-in mt-2.5 border-t border-edge pt-2.5">
     <div className="mb-1.5 flex items-center justify-between"><span className="text-[10.5px] font-semibold text-mute">نواحی + ترتیب (دستی)</span><span className="rounded-full border border-edge px-2 py-0.5 text-[9px] font-bold text-mute">{faNum(zones.length)} ناحیه</span></div>
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full select-none touch-none rounded-md border border-edge bg-[#120e09]" style={{cursor:drag!==null?'ns-resize':'crosshair'}} onClick={add} onPointerMove={e=>{if(drag!==null){const raw=Math.round(radial(e));setBounds(bs=>{const lo=drag>0?bs[drag-1]+1:.5,hi=drag<bs.length-1?bs[drag+1]-1:radialMax-.5,v=Math.max(lo,Math.min(hi,raw));return bs.map((b,i)=>i===drag?v:b)});}}} onPointerUp={()=>{setBounds(bs=>[...bs].sort((a,b)=>a-b));setDrag(null)}} onPointerLeave={()=>{setDrag(null);setHover(null)}}>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="aspect-square w-full select-none touch-none rounded-md border border-edge bg-[#120e09]" style={{cursor:drag!==null?'ns-resize':'crosshair'}} onClick={add} onPointerMove={e=>{if(drag!==null){const raw=Math.round(radial(e));setBounds(bs=>{const lo=drag>0?bs[drag-1]+1:.5,hi=drag<bs.length-1?bs[drag+1]-1:radialMax-.5,v=Math.max(lo,Math.min(hi,raw));return bs.map((b,i)=>i===drag?v:b)});}}} onPointerUp={()=>{setBounds(bs=>[...bs].sort((a,b)=>a-b));setDrag(null)}} onPointerLeave={()=>{setDrag(null);setHover(null)}}>
       {innerPath?<><path d={materialPath} fill="rgba(201,149,90,.18)" stroke="none"/><path d={outerPath} fill="none" stroke="rgba(227,169,78,.7)" strokeWidth="1.2"/><path d={innerPath} fill="none" stroke="#45b394" strokeWidth="1.5"/></>:<text x={W/2} y={H/2} textAnchor="middle" fill="#8b7c5f" fontSize="10">خط داخل‌تراشی موجود نیست</text>}
       {zones.map((z,i)=>{const pos=order.indexOf(i),cy=(Y(z.a)+Y(z.b))/2;return <g key={i}><rect x={P} y={Math.min(Y(z.a),Y(z.b))} width={W-2*P} height={Math.abs(Y(z.a)-Y(z.b))} fill={pos>=0?'rgba(69,179,148,.14)':'transparent'}/><g className="cursor-pointer" onClick={e=>{e.stopPropagation();toggle(i)}}><circle cx={W/2} cy={cy} r={pos>=0?9:8.5} fill={pos>=0?'#e0703c':'#120e09'} stroke={pos>=0?'#120e09':'#6f6047'} strokeDasharray={pos>=0?undefined:'2.5 2'}/><text x={W/2} y={cy+3.5} textAnchor="middle" fontSize="10" fontWeight="800" fill={pos>=0?'#fff7ec':'#8b7c5f'}>{faNum(pos>=0?pos+1:i+1)}</text></g></g>})}
       {bounds.map((v,i)=>{const y=Y(v),on=drag===i||hover===i;return <g key={i} className="cursor-ns-resize" onPointerDown={e=>{e.stopPropagation();(e.target as Element).setPointerCapture?.(e.pointerId);setDrag(i)}} onPointerEnter={()=>setHover(i)} onPointerLeave={()=>setHover(null)}><rect x={P-2} y={y-6} width={W-2*P+4} height="12" fill="transparent"/><line x1={P} x2={W-P} y1={y} y2={y} stroke={on?'#f3c26b':'#45b394'} strokeWidth="1.6" strokeDasharray="4 3"/><circle cx={P} cy={y} r={on?5:4} fill={on?'#f3c26b':'#45b394'} stroke="#120e09" strokeWidth="1.5"/><text x={P+8} y={y-5} fontSize="8" fill={on?'#f3c26b':'#45b394'}>R{Math.round(v)}</text>{on&&<g className="cursor-pointer" onClick={e=>{e.stopPropagation();setBounds(bs=>bs.filter((_,j)=>j!==i));setOrder([])}}><circle cx={P+10} cy={y+7} r="5.5" fill="#d95848" stroke="#120e09"/><text x={P+10} y={y+10} textAnchor="middle" fontSize="9" fontWeight="900" fill="#fff">×</text></g>}</g>})}
@@ -1487,7 +1489,7 @@ function ZoneOrderEditor({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        className="w-full select-none touch-none rounded-md border border-edge bg-[#120e09]"
+className="w-full select-none touch-none rounded-md border border-edge bg-[#120e09]"
         style={{ cursor: dragIdx != null ? "ew-resize" : "crosshair" }}
         onPointerDown={(e) => {
           (e.target as Element).setPointerCapture?.(e.pointerId);
