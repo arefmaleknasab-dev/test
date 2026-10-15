@@ -950,9 +950,10 @@ export default function ProfileEditor({
       }
     }
     if (moveSession.mode === "absolute") {
-      const editAnchor = moveSession.editBase?.find((v) => moveSession.editVertexIds?.includes(v.id));
-      const sketchAnchor = moveSession.base.find((s) => moveSession.ids.includes(s.id))?.a;
-      const anchor = editAnchor ? { z: editAnchor.z, r: editAnchor.x / 2 } : sketchAnchor!;
+      /* مبدأ ABS همان نقطه‌ای است که کاربر برای برداشتن Move کلیک کرده است؛
+         نه ابتدای اولین Segment انتخاب‌شده. بنابراین خود نقطهٔ کلیک‌شده دقیقاً
+         روی مختصات واردشده قرار می‌گیرد و کل Selection به همان اندازه منتقل می‌شود. */
+      const anchor = moveSession.origin;
       if (values.length === 2) { dz -= anchor.z; dr -= anchor.r; }
       else if (dz) dz = Math.abs(dz) - anchor.z; else dr = Math.abs(dr) - anchor.r;
     }
@@ -5307,9 +5308,8 @@ export default function ProfileEditor({
       }
     }
               if (moveSession.mode === "absolute") {
-      const editAnchor = moveSession.editBase?.find((v) => moveSession.editVertexIds?.includes(v.id));
-      const sketchAnchor = moveSession.base.find((s) => moveSession.ids.includes(s.id))?.a;
-      const anchor = editAnchor ? { z: editAnchor.z, r: editAnchor.x / 2 } : sketchAnchor!;
+      /* Commit باید دقیقاً از همان Anchor پیش‌نمایش، یعنی محل کلیک، استفاده کند. */
+      const anchor = moveSession.origin;
       if (values.length === 2) { dz -= anchor.z; dr -= anchor.r; }
       else if (dz) dz = Math.abs(dz) - anchor.z; else dr = Math.abs(dr) - anchor.r;
     }
