@@ -41,6 +41,7 @@ function ControlsPanel({
   onHolder2,
   onParams,
   points,
+  innerPoints,
   activePreset,
   onApplyPreset,
   onStrategy,
@@ -136,6 +137,10 @@ function ControlsPanel({
     const off: Sample[] = normalOffset(samples, params.offsetDist, true).map((s) => ({ z: s.z, r: Math.min(blankR, s.r) }));
     return { zoneSamples: off, autoZones: findZones(off) };
   }, [points, params.blankD, params.offsetDist]);
+  const innerZoneSamples = useMemo(() => {
+    if (!params.split.enabled || innerPoints.length < 2) return [];
+    return sampleProfile(innerPoints, params.blankD / 2);
+  }, [innerPoints, params.blankD, params.split.enabled]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pl-0.5">
@@ -676,7 +681,7 @@ function ControlsPanel({
             </button>)}
           </div>
           <p className="mt-1 text-[9.5px] leading-4 text-dim">{params.innerRoughMode==="classic"?"یک طرفه: همان روش فعلی داخل‌تراشی؛ ابزار پس از هر پاس به نقطه شروع برمی‌گردد.":params.innerRoughMode==="zigzag"?"دو طرفه: پاس‌های شعاعی رفت و برگشت هر دو باربرداری می‌کنند.":"ناحیه‌ای دو طرفه: هر ناحیه شعاعی با پاس‌های رفت و برگشت کامل و سپس ناحیه بعدی اجرا می‌شود."}</p>
-          {params.innerRoughMode==="zone"&&<InnerRadialZoneEditor key={`${params.blankD}|${params.innerZoneBounds.join(",")}`} blankR={params.blankD/2} samples={zoneSamples} bounds={params.innerZoneBounds} order={params.innerZoneOrder} onConfirm={(bounds,order)=>{onParams({innerZoneBounds:bounds,innerZoneOrder:order});onNotify("نواحی داخل‌تراشی اعمال شد — جی‌کد به‌روز شد");}}/>}
+          {params.innerRoughMode==="zone"&&<InnerRadialZoneEditor key={`${params.blankD}|${params.innerZoneBounds.join(",")}`} blankR={params.blankD/2} samples={innerZoneSamples} bounds={params.innerZoneBounds} order={params.innerZoneOrder} onConfirm={(bounds,order)=>{onParams({innerZoneBounds:bounds,innerZoneOrder:order});onNotify("نواحی داخل‌تراشی اعمال شد — جی‌کد به‌روز شد");}}/>}
         </div>
       </Section>
 
@@ -1333,24 +1338,29 @@ function zonesFromBounds(bounds: number[], blankL: number): { a: number; b: numb
 /* ویرایش نواحی داخل‌تراشی: مرزها شعاعی‌اند، بنابراین برخلاف خشن بیرونی
    جداکننده‌ها به‌صورت افقی روی نمای قطعه نمایش داده می‌شوند. */
 function InnerRadialZoneEditor({blankR,samples,bounds:committed,order:committedOrder,onConfirm}:{blankR:number;samples:Sample[];bounds:number[];order:number[];onConfirm:(b:number[],o:number[])=>void}){
-  const [bounds,setBounds]=useState<number[]>(()=>committed.length?[...committed]:[blankR/2]);
-  const [order,setOrder]=useState<number[]>(()=>[...committedOrder]);
-  const svgRef=useRef<SVGSVGElement>(null), W=240,H=110,P=8;
-  const Y=(r:number)=>H-P-(r/Math.max(.001,blankR))*(H-2*P);
-  const X=(z:number)=>P+(z/Math.max(.001,Math.max(...samples.map(s=>s.z),1)))*(W-2*P);
+  const initial=committed.length?[...committed]:[blankR/2];
+  const [bounds,setBounds]=useState<number[]>(initial);
+  const [order,setOrder]=useState<number[]>([...committedOrder]);
+  const [drag,setDrag]=useState<number|null>(null),[hover,setHover]=useState<number|null>(null);
+  const svgRef=useRef<SVGSVGElement>(null),W=240,H=120,P=8,TOP=12,BOT=24;
+  const minZ=Math.min(...samples.map(s=>s.z),0),maxZ=Math.max(...samples.map(s=>s.z),1);
+  const X=(z:number)=>P+((z-minZ)/Math.max(.001,maxZ-minZ))*(W-2*P);
+  const Y=(r:number)=>H-BOT-(r/Math.max(.001,blankR))*(H-TOP-BOT);
+  const radial=(e:React.PointerEvent|React.MouseEvent)=>{const q=svgRef.current!.getBoundingClientRect();return Math.max(.5,Math.min(blankR-.5,((H-BOT-((e.clientY-q.top)/q.height)*H)/(H-TOP-BOT))*blankR));};
   const zones=useMemo(()=>{const e=[0,...bounds.slice().sort((a,b)=>a-b),blankR];return e.slice(0,-1).map((a,i)=>({a,b:e[i+1]}));},[bounds,blankR]);
-  const add=(e:React.MouseEvent<SVGSVGElement>)=>{const r=e.currentTarget.getBoundingClientRect();const y=(e.clientY-r.top)/r.height*H;const v=Math.round(((H-P-y)/(H-2*P))*blankR);if(v>.5&&v<blankR-.5&&!bounds.some(b=>Math.abs(b-v)<2))setBounds([...bounds,v].sort((a,b)=>a-b));};
+  useEffect(()=>setOrder(o=>o.filter(i=>i<zones.length)),[zones.length]);
   const toggle=(i:number)=>setOrder(o=>o.includes(i)?o.filter(x=>x!==i):[...o,i]);
-  const path=samples.length?`M ${samples.map(s=>`${X(s.z).toFixed(1)} ${Y(s.r).toFixed(1)}`).join(" L ")}`:"";
   const valid=order.length===zones.length&&new Set(order).size===zones.length;
+  const silhouette=samples.length?`M ${X(samples[0].z)} ${Y(0)} L ${samples.map(s=>`${X(s.z).toFixed(1)} ${Y(s.r).toFixed(1)}`).join(' L ')} L ${X(samples[samples.length-1].z)} ${Y(0)} Z`:'';
+  const add=(e:React.MouseEvent<SVGSVGElement>)=>{if(drag!==null)return;const v=Math.round(radial(e));if(!bounds.some(x=>Math.abs(x-v)<2)){setBounds([...bounds,v].sort((a,b)=>a-b));setOrder([]);}};
   return <div className="anim-in mt-2.5 border-t border-edge pt-2.5">
-    <div className="mb-1.5 flex justify-between text-[10.5px] font-semibold text-mute"><span>نواحی شعاعی داخل + ترتیب</span><span>{faNum(zones.length)} ناحیه</span></div>
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} onClick={add} className="w-full cursor-crosshair rounded-md border border-edge bg-[#120e09]">
-      <path d={path} fill="none" stroke="rgba(227,169,78,.65)" strokeWidth="1.2"/>
-      {bounds.map((b,i)=><g key={i} onClick={e=>{e.stopPropagation();setBounds(bounds.filter((_,j)=>j!==i));setOrder([]);}} className="cursor-pointer"><line x1={P} x2={W-P} y1={Y(b)} y2={Y(b)} stroke="#45b394" strokeWidth="1.6" strokeDasharray="4 3"/><text x={W-P-2} y={Y(b)-4} textAnchor="end" fontSize="8" fill="#45b394">R{Math.round(b)}</text></g>)}
+    <div className="mb-1.5 flex items-center justify-between"><span className="text-[10.5px] font-semibold text-mute">نواحی + ترتیب (دستی)</span><span className="rounded-full border border-edge px-2 py-0.5 text-[9px] font-bold text-mute">{faNum(zones.length)} ناحیه</span></div>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="w-full select-none touch-none rounded-md border border-edge bg-[#120e09]" style={{cursor:drag!==null?'ns-resize':'crosshair'}} onClick={add} onPointerMove={e=>{if(drag!==null){const raw=Math.round(radial(e));setBounds(bs=>{const lo=drag>0?bs[drag-1]+1:.5,hi=drag<bs.length-1?bs[drag+1]-1:blankR-.5,v=Math.max(lo,Math.min(hi,raw));return bs.map((b,i)=>i===drag?v:b)});}}} onPointerUp={()=>{setBounds(bs=>[...bs].sort((a,b)=>a-b));setDrag(null)}} onPointerLeave={()=>{setDrag(null);setHover(null)}}>
+      {silhouette?<path d={silhouette} fill="rgba(201,149,90,.18)" stroke="rgba(227,169,78,.65)" strokeWidth="1.2"/>:<text x={W/2} y={H/2} textAnchor="middle" fill="#8b7c5f" fontSize="10">خط داخل‌تراشی موجود نیست</text>}
+      {zones.map((z,i)=>{const pos=order.indexOf(i),cy=(Y(z.a)+Y(z.b))/2;return <g key={i}><rect x={P} y={Math.min(Y(z.a),Y(z.b))} width={W-2*P} height={Math.abs(Y(z.a)-Y(z.b))} fill={pos>=0?'rgba(69,179,148,.14)':'transparent'}/><g className="cursor-pointer" onClick={e=>{e.stopPropagation();toggle(i)}}><circle cx={W/2} cy={cy} r={pos>=0?9:8.5} fill={pos>=0?'#e0703c':'#120e09'} stroke={pos>=0?'#120e09':'#6f6047'} strokeDasharray={pos>=0?undefined:'2.5 2'}/><text x={W/2} y={cy+3.5} textAnchor="middle" fontSize="10" fontWeight="800" fill={pos>=0?'#fff7ec':'#8b7c5f'}>{faNum(pos>=0?pos+1:i+1)}</text></g></g>})}
+      {bounds.map((v,i)=>{const y=Y(v),on=drag===i||hover===i;return <g key={i} className="cursor-ns-resize" onPointerDown={e=>{e.stopPropagation();(e.target as Element).setPointerCapture?.(e.pointerId);setDrag(i)}} onPointerEnter={()=>setHover(i)} onPointerLeave={()=>setHover(null)}><rect x={P-2} y={y-6} width={W-2*P+4} height="12" fill="transparent"/><line x1={P} x2={W-P} y1={y} y2={y} stroke={on?'#f3c26b':'#45b394'} strokeWidth="1.6" strokeDasharray="4 3"/><circle cx={P} cy={y} r={on?5:4} fill={on?'#f3c26b':'#45b394'} stroke="#120e09" strokeWidth="1.5"/><text x={P+8} y={y-5} fontSize="8" fill={on?'#f3c26b':'#45b394'}>R{Math.round(v)}</text>{on&&<g className="cursor-pointer" onClick={e=>{e.stopPropagation();setBounds(bs=>bs.filter((_,j)=>j!==i));setOrder([])}}><circle cx={P+10} cy={y+7} r="5.5" fill="#d95848" stroke="#120e09"/><text x={P+10} y={y+10} textAnchor="middle" fontSize="9" fontWeight="900" fill="#fff">×</text></g>}</g>})}
     </svg>
-    <p className="mt-1 text-[9.5px] text-dim"><span className="text-teal">برای افزودن مرز افقی روی تصویر کلیک کنید؛ برای حذف روی خط کلیک کنید.</span> ترتیب نواحی را انتخاب و تأیید کنید.</p>
-    <div className="mt-1.5 flex flex-wrap gap-1">{zones.map((_,i)=>{const p=order.indexOf(i);return <button key={i} onClick={()=>toggle(i)} className={cn("rounded border px-2 py-1 text-[9px]",p>=0?"border-copper bg-copper/20 text-copper":"border-edge text-mute")}>ناحیه {faNum(i+1)}{p>=0?` ← ${faNum(p+1)}`:""}</button>})}</div>
+    <p className="mt-1 text-[9.5px] leading-4 text-dim"><span className="text-teal">مرزهای افقی را بکشید یا روی پس‌زمینه کلیک کنید تا جداکننده جدید شود</span>؛ برای حذف روی مرز بروید و × را بزنید. سپس دایره‌های شماره را به ترتیب اجرا انتخاب کنید.</p>
     <button onClick={()=>onConfirm([...bounds].sort((a,b)=>a-b),valid?order:zones.map((_,i)=>i))} className="btn btn-brass mt-2 w-full justify-center !py-2 text-[11px] font-bold"><IconCheck className="h-4 w-4"/>تأیید و ساخت جی‌کد</button>
   </div>;
 }

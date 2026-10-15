@@ -1723,17 +1723,27 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             }
           } else cuts=layerPlans.flatMap(plan=>plan.intervals.map(iv=>({layerZ:plan.layerZ,a:iv.a,b:iv.b})));
           let forward=true;
-          for(const cut of cuts){
-            const a=Math.max(0,cut.a),b=Math.max(a,cut.b),startR=forward?a:b,endR=forward?b:a;
-            const cutZ=Math.max(cut.layerZ,maxWallZBetween(a,b)+roughOffsetClearance);
-            /* هر جابه‌جایی بین پاس‌ها پشت راست‌ترین مرز دیواره انجام می‌شود؛
-               بنابراین تغییر جهت هیچ عبور سریعی از داخل ماده ایجاد نمی‌کند. */
-            const safeZ=Math.max(mouthX,maxWallZBetween(Math.min(startR,endR),Math.max(startR,endR))+p.safety);
-            rawRapid(2*Math.max(0,cur.x/2),safeZ);
-            rawRapid(2*startR,safeZ);
-            mv(1,2*startR,cutZ,p.feedRough*0.7,"bore");
-            if(Math.abs(endR-startR)>0.05)mv(1,2*endR,cutZ,p.feedRough,"bore");
-            forward=!forward;
+          const directed=cuts.map(cut=>{
+            const a=Math.max(0,cut.a),b=Math.max(a,cut.b);
+            const d={a,b,startR:forward?a:b,endR:forward?b:a,cutZ:Math.max(cut.layerZ,maxWallZBetween(a,b)+roughOffsetClearance)};
+            forward=!forward;return d;
+          });
+          let connected=false;
+          for(let i=0;i<directed.length;i++){
+            const cut=directed[i];
+            if(!connected){
+              /* شروع زنجیره یا پرش میان دو بازهٔ جدا فقط در صفحه امن است. */
+              const safeZ=Math.max(mouthX,maxWallZBetween(cut.a,cut.b)+p.safety);
+              rawRapid(cur.x,safeZ);rawRapid(2*cut.startR,safeZ);
+              mv(1,2*cut.startR,cut.cutZ,p.feedRough*0.7,"bore");
+            }
+            if(Math.abs(cut.endR-cut.startR)>0.05)mv(1,2*cut.endR,cut.cutZ,p.feedRough,"bore");
+            const next=directed[i+1];
+            connected=!!next&&Math.abs(next.startR-cut.endR)<0.06;
+            if(connected){
+              /* اتصال برشی محوری، سپس پاس شعاعی در جهت مخالف: زیگزاگ واقعی. */
+              mv(1,2*cut.endR,next.cutZ,p.feedRough,"bore");
+            }
           }
           innerCleared=true;
           rawRapid(2*Math.max(0,cur.x/2),mouthX);rawRapid(0,mouthX);
