@@ -135,7 +135,10 @@ export interface Params {
   rpm: number;
   tool: ToolSpec; // مشخصات مهندسی ابزار
   safety: number; // فاصله امن جمع‌کردن
-  roughMode: RoughMode; // روش خشن‌تراشی
+  roughMode: RoughMode; // روش خشن‌تراشی بیرونی
+  innerRoughMode: RoughMode; // روش خشن‌تراشی داخل؛ classic همان رفتار قبلی است
+  innerZoneOrder: number[]; // ترتیب نواحی شعاعی داخل
+  innerZoneBounds: number[]; // مرزهای شعاعی داخل (R)
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن (بدون G0 — فرورفتن مستقیم برشی)
   simpleFeed: boolean; // فیدر بهینه: همهٔ فیدرها به دو F اصلی (خشن/پرداخت) ساده شوند
   zoneOrder: number[]; // ترتیب دستی نواحی (اندیس ناحیه‌ها) — آرایه خالی = ترتیب خودکار
@@ -359,6 +362,9 @@ export const DEFAULT_PARAMS: Params = {
   tool: { ...DEFAULT_TOOL },
   safety: 2,
   roughMode: "zone",
+  innerRoughMode: "classic",
+  innerZoneOrder: [],
+  innerZoneBounds: [],
   ramp: true,
   simpleFeed: true,
   zoneOrder: [],
@@ -404,6 +410,7 @@ export function normalizeParams(
   /* روش خشن‌تراشی + مهاجرت سوئیچ زیگزاگ قدیمی */
   if (raw.roughMode === "classic" || raw.roughMode === "zigzag" || raw.roughMode === "zone") base.roughMode = raw.roughMode;
   else if (typeof raw.zigzag === "boolean") base.roughMode = raw.zigzag ? "zigzag" : "classic";
+  if (raw.innerRoughMode === "classic" || raw.innerRoughMode === "zigzag" || raw.innerRoughMode === "zone") base.innerRoughMode = raw.innerRoughMode;
   /* شکل مقطع خام */
   if (raw.blankShape === "circle" || raw.blankShape === "square" || raw.blankShape === "hex" || raw.blankShape === "octagon") {
     base.blankShape = raw.blankShape;
@@ -416,6 +423,8 @@ export function normalizeParams(
   if (Array.isArray(raw.zoneBounds) && raw.zoneBounds.every((v) => typeof v === "number" && Number.isFinite(v))) {
     base.zoneBounds = [...raw.zoneBounds].sort((a, b) => a - b);
   }
+  if (Array.isArray(raw.innerZoneOrder) && raw.innerZoneOrder.every((v) => typeof v === "number" && Number.isInteger(v) && v >= 0)) base.innerZoneOrder = [...raw.innerZoneOrder];
+  if (Array.isArray(raw.innerZoneBounds) && raw.innerZoneBounds.every((v) => typeof v === "number" && Number.isFinite(v))) base.innerZoneBounds = [...raw.innerZoneBounds].sort((a,b)=>a-b);
   const ops = normalizeOps(raw.ops, legacy);
   if (ops) base.ops = ops;
   if (raw.format === "modal" || raw.format === "std") base.format = raw.format;
@@ -1695,6 +1704,42 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const mouthX = zOuter + p.innerStartClearance;
         enterFirstInner(2 * rEntry, mouthX);
         const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
+
+        /* روش‌های دوطرفهٔ داخل: ترانهادهٔ خشن‌تراشی بیرونی. پاس‌ها در راستای
+           شعاع اجرا می‌شوند و جهت باربرداری در هر پاس عوض می‌شود. در حالت
+           ناحیه‌ای، بازه‌های شعاعی ابتدا بریده و طبق ترتیب انتخابی تکمیل می‌شوند. */
+        if (p.innerRoughMode !== "classic") {
+          type InnerCut = { layerZ:number; a:number; b:number };
+          let cuts: InnerCut[] = [];
+          if (p.innerRoughMode === "zone") {
+            const maxR=Math.max(...mergedWall.map(q=>q.r));
+            const bs=p.innerZoneBounds.filter(v=>v>0.05&&v<maxR-0.05).sort((a,b)=>a-b);
+            const edges=[0,...bs,maxR];
+            const zones=edges.slice(0,-1).map((a,i)=>({a,b:edges[i+1]}));
+            const ord=p.innerZoneOrder.length===zones.length&&new Set(p.innerZoneOrder).size===zones.length&&p.innerZoneOrder.every(i=>i>=0&&i<zones.length)?p.innerZoneOrder:zones.map((_,i)=>i);
+            for(const zi of ord) for(const plan of layerPlans) for(const iv of plan.intervals){
+              const a=Math.max(iv.a,zones[zi].a),b=Math.min(iv.b,zones[zi].b);
+              if(b-a>0.05)cuts.push({layerZ:plan.layerZ,a,b});
+            }
+          } else cuts=layerPlans.flatMap(plan=>plan.intervals.map(iv=>({layerZ:plan.layerZ,a:iv.a,b:iv.b})));
+          let forward=true;
+          for(const cut of cuts){
+            const a=Math.max(0,cut.a),b=Math.max(a,cut.b),startR=forward?a:b,endR=forward?b:a;
+            const cutZ=Math.max(cut.layerZ,maxWallZBetween(a,b)+roughOffsetClearance);
+            /* هر جابه‌جایی بین پاس‌ها پشت راست‌ترین مرز دیواره انجام می‌شود؛
+               بنابراین تغییر جهت هیچ عبور سریعی از داخل ماده ایجاد نمی‌کند. */
+            const safeZ=Math.max(mouthX,maxWallZBetween(Math.min(startR,endR),Math.max(startR,endR))+p.safety);
+            rawRapid(2*Math.max(0,cur.x/2),safeZ);
+            rawRapid(2*startR,safeZ);
+            mv(1,2*startR,cutZ,p.feedRough*0.7,"bore");
+            if(Math.abs(endR-startR)>0.05)mv(1,2*endR,cutZ,p.feedRough,"bore");
+            forward=!forward;
+          }
+          innerCleared=true;
+          rawRapid(2*Math.max(0,cur.x/2),mouthX);rawRapid(0,mouthX);
+          if(!finishLastInner(op.id))mv(0,retractX,mouthX,0,"rapid");
+          break;
+        }
         let preparedForNextLayer = false;
         for (let layerIndex = 0; layerIndex < layerPlans.length; layerIndex++) {
           const { layerZ, intervals: layerIntervals } = layerPlans[layerIndex];

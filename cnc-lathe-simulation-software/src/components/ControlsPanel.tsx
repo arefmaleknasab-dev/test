@@ -666,6 +666,18 @@ function ControlsPanel({
             />
           </div>
         )}
+
+        <div className="mt-4 border-t border-edge pt-3">
+          <span className="mb-1 block text-[10.5px] font-semibold text-mute">روش خشن تراشی داخل</span>
+          <div className="flex overflow-hidden rounded-md border border-edge" dir="ltr">
+            {ROUGH_MODES.map((m,i)=><button key={m.id} onClick={()=>onParams({innerRoughMode:m.id})} className={cn("flex flex-1 flex-col items-center gap-1 px-1 py-2",i>0&&"border-l border-edge",params.innerRoughMode===m.id?m.id==="zone"?"bg-copper text-[#2a150a]":m.id==="zigzag"?"bg-teal text-[#0d201a]":"bg-brass text-[#241a0c]":"bg-panel2 text-mute")}>
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8}>{m.id==="classic"?<path d="M4 8h13l-3-3M20 16H7l3 3"/>:m.id==="zigzag"?<path d="M3 7h15l-2.5-2.5M21 12H6l2.5-2.5M3 17h15l-2.5-2.5"/>:<><rect x="3" y="6" width="7" height="12" rx="1"/><rect x="14" y="6" width="7" height="12" rx="1"/></>}</svg>
+              <span className="text-[9px] font-bold">{m.name}</span>
+            </button>)}
+          </div>
+          <p className="mt-1 text-[9.5px] leading-4 text-dim">{params.innerRoughMode==="classic"?"یک طرفه: همان روش فعلی داخل‌تراشی؛ ابزار پس از هر پاس به نقطه شروع برمی‌گردد.":params.innerRoughMode==="zigzag"?"دو طرفه: پاس‌های شعاعی رفت و برگشت هر دو باربرداری می‌کنند.":"ناحیه‌ای دو طرفه: هر ناحیه شعاعی با پاس‌های رفت و برگشت کامل و سپس ناحیه بعدی اجرا می‌شود."}</p>
+          {params.innerRoughMode==="zone"&&<InnerRadialZoneEditor key={`${params.blankD}|${params.innerZoneBounds.join(",")}`} blankR={params.blankD/2} samples={zoneSamples} bounds={params.innerZoneBounds} order={params.innerZoneOrder} onConfirm={(bounds,order)=>{onParams({innerZoneBounds:bounds,innerZoneOrder:order});onNotify("نواحی داخل‌تراشی اعمال شد — جی‌کد به‌روز شد");}}/>}
+        </div>
       </Section>
 
       <p className="px-1 pb-2 text-[10.5px] leading-5 text-dim">
@@ -1316,6 +1328,31 @@ function zonesFromBounds(bounds: number[], blankL: number): { a: number; b: numb
     if (all[i + 1] - all[i] > 0.3) zones.push({ a: all[i], b: all[i + 1] });
   }
   return zones.length ? zones : [{ a: 0, b: blankL }];
+}
+
+/* ویرایش نواحی داخل‌تراشی: مرزها شعاعی‌اند، بنابراین برخلاف خشن بیرونی
+   جداکننده‌ها به‌صورت افقی روی نمای قطعه نمایش داده می‌شوند. */
+function InnerRadialZoneEditor({blankR,samples,bounds:committed,order:committedOrder,onConfirm}:{blankR:number;samples:Sample[];bounds:number[];order:number[];onConfirm:(b:number[],o:number[])=>void}){
+  const [bounds,setBounds]=useState<number[]>(()=>committed.length?[...committed]:[blankR/2]);
+  const [order,setOrder]=useState<number[]>(()=>[...committedOrder]);
+  const svgRef=useRef<SVGSVGElement>(null), W=240,H=110,P=8;
+  const Y=(r:number)=>H-P-(r/Math.max(.001,blankR))*(H-2*P);
+  const X=(z:number)=>P+(z/Math.max(.001,Math.max(...samples.map(s=>s.z),1)))*(W-2*P);
+  const zones=useMemo(()=>{const e=[0,...bounds.slice().sort((a,b)=>a-b),blankR];return e.slice(0,-1).map((a,i)=>({a,b:e[i+1]}));},[bounds,blankR]);
+  const add=(e:React.MouseEvent<SVGSVGElement>)=>{const r=e.currentTarget.getBoundingClientRect();const y=(e.clientY-r.top)/r.height*H;const v=Math.round(((H-P-y)/(H-2*P))*blankR);if(v>.5&&v<blankR-.5&&!bounds.some(b=>Math.abs(b-v)<2))setBounds([...bounds,v].sort((a,b)=>a-b));};
+  const toggle=(i:number)=>setOrder(o=>o.includes(i)?o.filter(x=>x!==i):[...o,i]);
+  const path=samples.length?`M ${samples.map(s=>`${X(s.z).toFixed(1)} ${Y(s.r).toFixed(1)}`).join(" L ")}`:"";
+  const valid=order.length===zones.length&&new Set(order).size===zones.length;
+  return <div className="anim-in mt-2.5 border-t border-edge pt-2.5">
+    <div className="mb-1.5 flex justify-between text-[10.5px] font-semibold text-mute"><span>نواحی شعاعی داخل + ترتیب</span><span>{faNum(zones.length)} ناحیه</span></div>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} onClick={add} className="w-full cursor-crosshair rounded-md border border-edge bg-[#120e09]">
+      <path d={path} fill="none" stroke="rgba(227,169,78,.65)" strokeWidth="1.2"/>
+      {bounds.map((b,i)=><g key={i} onClick={e=>{e.stopPropagation();setBounds(bounds.filter((_,j)=>j!==i));setOrder([]);}} className="cursor-pointer"><line x1={P} x2={W-P} y1={Y(b)} y2={Y(b)} stroke="#45b394" strokeWidth="1.6" strokeDasharray="4 3"/><text x={W-P-2} y={Y(b)-4} textAnchor="end" fontSize="8" fill="#45b394">R{Math.round(b)}</text></g>)}
+    </svg>
+    <p className="mt-1 text-[9.5px] text-dim"><span className="text-teal">برای افزودن مرز افقی روی تصویر کلیک کنید؛ برای حذف روی خط کلیک کنید.</span> ترتیب نواحی را انتخاب و تأیید کنید.</p>
+    <div className="mt-1.5 flex flex-wrap gap-1">{zones.map((_,i)=>{const p=order.indexOf(i);return <button key={i} onClick={()=>toggle(i)} className={cn("rounded border px-2 py-1 text-[9px]",p>=0?"border-copper bg-copper/20 text-copper":"border-edge text-mute")}>ناحیه {faNum(i+1)}{p>=0?` ← ${faNum(p+1)}`:""}</button>})}</div>
+    <button onClick={()=>onConfirm([...bounds].sort((a,b)=>a-b),valid?order:zones.map((_,i)=>i))} className="btn btn-brass mt-2 w-full justify-center !py-2 text-[11px] font-bold"><IconCheck className="h-4 w-4"/>تأیید و ساخت جی‌کد</button>
+  </div>;
 }
 
 /* چیدمان کتروگرافی — ناحیهٔ محدود/محدود */
