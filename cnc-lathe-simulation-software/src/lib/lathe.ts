@@ -1728,21 +1728,21 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const d={a,b,startR:forward?a:b,endR:forward?b:a,cutZ:Math.max(cut.layerZ,maxWallZBetween(a,b)+roughOffsetClearance)};
             forward=!forward;return d;
           });
-          let connected=false;
           for(let i=0;i<directed.length;i++){
             const cut=directed[i];
-            if(!connected){
-              /* شروع زنجیره یا پرش میان دو بازهٔ جدا فقط در صفحه امن است. */
+            if(i===0){
+              /* فقط ورود نخستین پاس از صفحه امن انجام می‌شود. پس از آن کل مسیر
+                 دوطرفه یک زنجیرهٔ برشی پیوسته است و به +X جمع نمی‌کند. */
               const safeZ=Math.max(mouthX,maxWallZBetween(cut.a,cut.b)+p.safety);
               rawRapid(cur.x,safeZ);rawRapid(2*cut.startR,safeZ);
               mv(1,2*cut.startR,cut.cutZ,p.feedRough*0.7,"bore");
             }
             if(Math.abs(cut.endR-cut.startR)>0.05)mv(1,2*cut.endR,cut.cutZ,p.feedRough,"bore");
             const next=directed[i+1];
-            connected=!!next&&Math.abs(next.startR-cut.endR)<0.06;
-            if(connected){
-              /* اتصال برشی محوری، سپس پاس شعاعی در جهت مخالف: زیگزاگ واقعی. */
-              mv(1,2*cut.endR,next.cutZ,p.feedRough,"bore");
+            if(next){
+              /* کوتاه‌ترین اتصال مستقیم از انتهای پاس فعلی به ابتدای پاس بعدی؛
+                 اختلاف جزئی شعاع بازه‌ها نیز در همین حرکت برشی جبران می‌شود. */
+              mv(1,2*next.startR,next.cutZ,p.feedRough,"bore");
             }
           }
           innerCleared=true;
