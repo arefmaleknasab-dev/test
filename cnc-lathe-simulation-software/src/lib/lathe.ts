@@ -1709,7 +1709,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            شعاع اجرا می‌شوند و جهت باربرداری در هر پاس عوض می‌شود. در حالت
            ناحیه‌ای، بازه‌های شعاعی ابتدا بریده و طبق ترتیب انتخابی تکمیل می‌شوند. */
         if (p.innerRoughMode !== "classic") {
-          type InnerCut = { layerZ:number; a:number; b:number };
+          type InnerCut = { layerZ:number; a:number; b:number; group:number };
           let cuts: InnerCut[] = [];
           if (p.innerRoughMode === "zone") {
             const maxR=Math.max(...mergedWall.map(q=>q.r));
@@ -1719,13 +1719,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const ord=p.innerZoneOrder.length===zones.length&&new Set(p.innerZoneOrder).size===zones.length&&p.innerZoneOrder.every(i=>i>=0&&i<zones.length)?p.innerZoneOrder:zones.map((_,i)=>i);
             for(const zi of ord) for(const plan of layerPlans) for(const iv of plan.intervals){
               const a=Math.max(iv.a,zones[zi].a),b=Math.min(iv.b,zones[zi].b);
-              if(b-a>0.05)cuts.push({layerZ:plan.layerZ,a,b});
+              if(b-a>0.05)cuts.push({layerZ:plan.layerZ,a,b,group:zi});
             }
-          } else cuts=layerPlans.flatMap(plan=>plan.intervals.map(iv=>({layerZ:plan.layerZ,a:iv.a,b:iv.b})));
+          } else cuts=layerPlans.flatMap(plan=>plan.intervals.map(iv=>({layerZ:plan.layerZ,a:iv.a,b:iv.b,group:0})));
           let forward=true;
           const directed=cuts.map(cut=>{
             const a=Math.max(0,cut.a),b=Math.max(a,cut.b);
-            const d={a,b,startR:forward?a:b,endR:forward?b:a,cutZ:Math.max(cut.layerZ,maxWallZBetween(a,b)+roughOffsetClearance)};
+            const d={a,b,group:cut.group,startR:forward?a:b,endR:forward?b:a,cutZ:Math.max(cut.layerZ,maxWallZBetween(a,b)+roughOffsetClearance)};
             forward=!forward;return d;
           });
           for(let i=0;i<directed.length;i++){
@@ -1740,9 +1740,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(Math.abs(cut.endR-cut.startR)>0.05)mv(1,2*cut.endR,cut.cutZ,p.feedRough,"bore");
             const next=directed[i+1];
             if(next){
-              /* کوتاه‌ترین اتصال مستقیم از انتهای پاس فعلی به ابتدای پاس بعدی؛
-                 اختلاف جزئی شعاع بازه‌ها نیز در همین حرکت برشی جبران می‌شود. */
-              mv(1,2*next.startR,next.cutZ,p.feedRough,"bore");
+              if(p.innerRoughMode==="zone"&&next.group!==cut.group){
+                /* پایان ناحیه: خروج افقی (+X) تا صفحه امن، جابه‌جایی شعاعی فقط
+                   روی همان صفحه، سپس ورود افقی به ابتدای ناحیه بعدی. */
+                const safeZ=Math.max(mouthX,maxWallZBetween(Math.min(cut.endR,next.startR),Math.max(cut.endR,next.startR))+p.safety);
+                rawRapid(2*cut.endR,safeZ);
+                rawRapid(2*next.startR,safeZ);
+                mv(1,2*next.startR,next.cutZ,p.feedRough*0.7,"bore");
+              }else{
+                /* درون یک ناحیه کوتاه‌ترین اتصال مستقیم زیگزاگ حفظ می‌شود. */
+                mv(1,2*next.startR,next.cutZ,p.feedRough,"bore");
+              }
             }
           }
           innerCleared=true;
