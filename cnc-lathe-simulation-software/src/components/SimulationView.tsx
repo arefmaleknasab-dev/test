@@ -80,6 +80,9 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
   /* ماسک دوبعدی لازم است: مدل تک‌شعاعی، پاس از بیرون به محور را همان لحظه در
      کل شعاع خالی نشان می‌داد و برای قله/دره شکل را خراب می‌کرد. */
   const cavMaskRef = useRef<Uint8Array>(new Uint8Array((GRID + 1) * (CAV_R_GRID + 1)));
+  const cavSeenRef = useRef<Uint8Array>(new Uint8Array((GRID + 1) * (CAV_R_GRID + 1)));
+  const cavQueueRef = useRef<Int32Array>(new Int32Array((GRID + 1) * (CAV_R_GRID + 1)));
+  const visibleCavRef = useRef<Float64Array>(new Float64Array(GRID + 1));
   const progRef = useRef(0);
   const cursorRef = useRef(0); // سگمنت‌هایی که کاملاً اعمال شده‌اند
   const appliedTRef = useRef(0); // پیشروی اعمال‌شده روی شعاع‌ها
@@ -497,35 +500,33 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      /* حفره داخل کاسه — مرز ماسک به نوارهای برداری پیوسته تبدیل می‌شود.
-         اتصال خطی مرز ستون‌های مجاور، لبه‌ای تیز و antialias شده می‌سازد؛ نه
-         بلوک‌های پیکسلی و نه blur حاصل از بزرگ‌کردن bitmap. */
-      const mask=cavMaskRef.current,cellZ=p.blankL/GRID,cellR=(p.blankD/2)/CAV_R_GRID;
-      const runsAt=(iz:number)=>{
-        const runs:{lo:number;hi:number}[]=[];let ir=0;
-        while(ir<=CAV_R_GRID){
-          while(ir<=CAV_R_GRID&&!mask[iz*(CAV_R_GRID+1)+ir])ir++;
-          if(ir>CAV_R_GRID)break;
-          const lo=ir;while(ir<=CAV_R_GRID&&mask[iz*(CAV_R_GRID+1)+ir])ir++;
-          runs.push({lo:lo*cellR,hi:ir*cellR});
+      /* نمایش حفره با همان مدل برداریِ پوسته بیرونی: ابتدا فقط بخش متصل به
+         محور دوران از ماسک دوبعدی استخراج می‌شود، سپس شعاع مرزی هر X به یک
+         Polygon پیوسته تبدیل می‌شود. در نتیجه رفت و برگشت درست شبیه‌سازی می‌شود
+         ولی لبه داخلی و خارجی دقیقاً با یک روش رندر و کیفیت یکسان دیده می‌شوند. */
+      const mask=cavMaskRef.current,stride=CAV_R_GRID+1;
+      const seen=cavSeenRef.current,queue=cavQueueRef.current;seen.fill(0);let qh=0,qt=0;
+      for(let iz=0;iz<=GRID;iz++){const q=iz*stride;if(mask[q]){seen[q]=1;queue[qt++]=q;}}
+      while(qh<qt){
+        const q=queue[qh++],iz=Math.floor(q/stride),ir=q-iz*stride;
+        for(let dz=-1;dz<=1;dz++)for(let dr=-1;dr<=1;dr++){
+          if((dz===0&&dr===0)||iz+dz<0||iz+dz>GRID||ir+dr<0||ir+dr>CAV_R_GRID)continue;
+          const n=(iz+dz)*stride+ir+dr;if(mask[n]&&!seen[n]){seen[n]=1;queue[qt++]=n;}
         }
-        return runs;
-      };
-      ctx.beginPath();
-      let leftRuns=runsAt(0);
-      for(let iz=0;iz<GRID;iz++){
-        const rightRuns=runsAt(iz+1),count=Math.max(leftRuns.length,rightRuns.length);
-        const z0=iz*cellZ,z1=(iz+1)*cellZ;
-        for(let k=0;k<count;k++){
-          const L=leftRuns[k],R=rightRuns[k];if(!L&&!R)continue;
-          const l=L??{lo:(R!.lo+R!.hi)/2,hi:(R!.lo+R!.hi)/2};
-          const r=R??{lo:(L!.lo+L!.hi)/2,hi:(L!.lo+L!.hi)/2};
-          ctx.moveTo(X(z0),Y(l.hi));ctx.lineTo(X(z1),Y(r.hi));ctx.lineTo(X(z1),Y(r.lo));ctx.lineTo(X(z0),Y(l.lo));ctx.closePath();
-          ctx.moveTo(X(z0),Y(-l.hi));ctx.lineTo(X(z0),Y(-l.lo));ctx.lineTo(X(z1),Y(-r.lo));ctx.lineTo(X(z1),Y(-r.hi));ctx.closePath();
-        }
-        leftRuns=rightRuns;
       }
-      ctx.fillStyle="#120e09";ctx.fill();
+      const visibleCavity=visibleCavRef.current;visibleCavity.fill(0);
+      const cellR=(p.blankD/2)/CAV_R_GRID;
+      let hasVisibleCavity=false;
+      for(let iz=0;iz<=GRID;iz++)for(let ir=CAV_R_GRID;ir>=0;ir--)if(seen[iz*stride+ir]){
+        visibleCavity[iz]=(ir+.5)*cellR;hasVisibleCavity=true;break;
+      }
+      if(hasVisibleCavity){
+        ctx.beginPath();ctx.moveTo(X(0),Y(visibleCavity[0]));
+        for(let iz=1;iz<=GRID;iz++)ctx.lineTo(X((iz/GRID)*p.blankL),Y(visibleCavity[iz]));
+        for(let iz=GRID;iz>=0;iz--)ctx.lineTo(X((iz/GRID)*p.blankL),Y(-visibleCavity[iz]));
+        ctx.closePath();ctx.fillStyle="#120e09";ctx.fill();
+        ctx.strokeStyle="rgba(0,0,0,.4)";ctx.lineWidth=1;ctx.stroke();
+      }
 
       /* خط‌چین صورتی قبلی innerSamples مسیر G-code نبود و روی پروفایل‌های
          برگشتی به شکل خطوط متقاطع دیده می‌شد؛ حذف شد تا فقط حرکت واقعی ابزار
