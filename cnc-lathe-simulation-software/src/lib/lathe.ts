@@ -1775,6 +1775,20 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             };
           }).filter(c=>c.points.length>=2);
 
+          /* اتصال مستقیم فقط وقتی مجاز است که تمام پاره‌خط در سمت خالیِ خط
+             آفست بماند. این آزمون معادل rampIsSafe بیرونی در دستگاه مختصات
+             ترانهادهٔ داخل است و از جمع‌شدن بی‌دلیل به +X جلوگیری می‌کند. */
+          const innerLinkIsSafe=(from:{r:number;z:number},to:{r:number;z:number})=>{
+            const dr=to.r-from.r;
+            const checks=[from.r,to.r,...mergedWall.filter(q=>q.r>Math.min(from.r,to.r)&&q.r<Math.max(from.r,to.r)).map(q=>q.r)];
+            for(let i=1;i<16;i++)checks.push(from.r+dr*i/16);
+            for(const r of checks){
+              const t=Math.abs(dr)>1e-9?(r-from.r)/dr:0;
+              const linkZ=from.z+(to.z-from.z)*Math.max(0,Math.min(1,t));
+              if(linkZ<wallZAtR(r)+roughOffsetClearance-1e-5)return false;
+            }
+            return true;
+          };
           let alreadyAtNextStart=false;
           for(let i=0;i<contours.length;i++){
             const contour=contours[i],start=contour.points[0],end=contour.points[contour.points.length-1];
@@ -1793,14 +1807,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             alreadyAtNextStart=false;
             if(next){
               const ns=next.points[0];
-              const sameEdge=Math.abs(ns.r-end.r)<0.06;
-              /* فقط وقتی دو پاس روی همان مرز به هم می‌رسند اتصال برشی مستقیم
-                 امن است. اختلاف مرز یا عبور به ناحیهٔ بعد از روی صفحه‌ای انجام
-                 می‌شود که بالاتر از تمام قله‌های بین دو شعاع است. */
-              if(sameEdge&&next.group===contour.group){
+              const sameZone=next.group===contour.group;
+              /* داخل یک ناحیه، حتی اگر دو سر پاس دقیقاً هم‌شعاع نباشند، در صورت
+                 آزادبودن پاره‌خط مستقیماً از نزدیک‌ترین مسیر وصل می‌شوند. */
+              if(sameZone&&innerLinkIsSafe(end,ns)){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
-                const safeZ=Math.max(mouthX,maxWallZBetween(Math.min(end.r,ns.r),Math.max(end.r,ns.r))+p.safety,end.z);
+                /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
+                   جمع می‌شود؛ بازگشت کامل به صفحه دهانه انجام نمی‌شود. */
+                const safeZ=Math.max(maxWallZBetween(Math.min(end.r,ns.r),Math.max(end.r,ns.r))+p.safety,end.z,ns.z);
                 if(safeZ>end.z+1e-7)rawRapid(2*end.r,safeZ);
                 rawRapid(2*ns.r,safeZ);
                 mv(1,2*ns.r,ns.z,p.feedRough*0.7,"bore");
