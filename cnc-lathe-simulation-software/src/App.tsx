@@ -311,7 +311,10 @@ export default function App() {
       const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
       if (JSON.stringify(next) !== JSON.stringify(gcodeOvr)) n++;
     }
-    if (editBuf.sketch !== sketch) n++;
+    /* ProfileEditor ممکن است حتی بدون تغییر هندسی، آرایهٔ Sketch را با مرجع
+       تازه بازگرداند. مقایسهٔ مرجع باعث هشدار خروج کاذب می‌شد؛ فقط اختلاف
+       واقعی محتوا باید پیش‌نویس را Dirty کند. */
+    if (JSON.stringify(editBuf.sketch) !== JSON.stringify(sketch)) n++;
     return n;
   }, [editOpen, editBuf, params, genBase.segs, gcodeOvr, sketch]);
 
