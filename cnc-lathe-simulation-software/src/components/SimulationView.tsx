@@ -66,6 +66,7 @@ const KIND_CLS: Record<string, string> = {
 function SimulationView({ gen, params, onActiveLine }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cavityCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [playing, setPlaying] = useState(false);
@@ -497,45 +498,36 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      /* حفره داخل کاسه — ماسک دوبعدی، نه envelope تک‌شعاعی. به این ترتیب
-         پاس شعاعی از بیرون به محور دقیقاً به‌ترتیب حرکت ابزار آشکار می‌شود و
-         قله/دره‌های داخلی به فضای خالیِ کاذب تبدیل نمی‌شوند. */
+      /* حفره داخل کاسه — ماسک دوبعدی ابتدا روی Canvas کوچک رسم و سپس با
+         interpolation مرورگر Scale می‌شود. این کار لبه‌های پله‌ای سلول‌ها را
+         حذف می‌کند، بدون آن‌که دقت برداشت رفت/برگشت از بین برود. */
       const mask=cavMaskRef.current;
-      let hasCav=false;
-      ctx.beginPath();
-      const cellZ=p.blankL/GRID,cellR=(p.blankD/2)/CAV_R_GRID;
-      for(let iz=0;iz<=GRID;iz++){
-        let ir=0;
-        while(ir<=CAV_R_GRID){
-          while(ir<=CAV_R_GRID&&!mask[iz*(CAV_R_GRID+1)+ir])ir++;
-          if(ir>CAV_R_GRID)break;
-          const r0=ir;
-          while(ir<=CAV_R_GRID&&mask[iz*(CAV_R_GRID+1)+ir])ir++;
-          const r1=ir;
-          hasCav=true;
-          const x0=X(iz*cellZ),x1=X(Math.min(p.blankL,(iz+1)*cellZ));
-          const yTop=Y(r1*cellR),yBot=Y(-r1*cellR);
-          /* هر run از ماسک روی نیمه بالا و پایین قطعه قرینه می‌شود. */
-          const innerTop=Y(r0*cellR),innerBot=Y(-r0*cellR);
-          ctx.rect(x0,yTop,Math.max(1,x1-x0+.5),Math.max(.5,innerTop-yTop));
-          ctx.rect(x0,innerBot,Math.max(1,x1-x0+.5),Math.max(.5,yBot-innerBot));
+      let cavityCanvas=cavityCanvasRef.current;
+      if(!cavityCanvas){cavityCanvas=document.createElement("canvas");cavityCanvasRef.current=cavityCanvas;}
+      const mw=GRID+1,mh=2*CAV_R_GRID+1;
+      if(cavityCanvas.width!==mw)cavityCanvas.width=mw;
+      if(cavityCanvas.height!==mh)cavityCanvas.height=mh;
+      const cavityCtx=cavityCanvas.getContext("2d");
+      if(cavityCtx){
+        const image=cavityCtx.createImageData(mw,mh),data=image.data;
+        for(let iz=0;iz<=GRID;iz++)for(let ir=0;ir<=CAV_R_GRID;ir++){
+          if(!mask[iz*(CAV_R_GRID+1)+ir])continue;
+          const y1=CAV_R_GRID-ir,y2=CAV_R_GRID+ir;
+          for(const y of y1===y2?[y1]:[y1,y2]){
+            const q=(y*mw+iz)*4;data[q]=18;data[q+1]=14;data[q+2]=9;data[q+3]=255;
+          }
         }
+        cavityCtx.putImageData(image,0,0);
+        ctx.save();
+        ctx.imageSmoothingEnabled=true;
+        ctx.imageSmoothingQuality="high";
+        ctx.drawImage(cavityCanvas,X(0),Y(p.blankD/2),p.blankL*s,p.blankD*s);
+        ctx.restore();
       }
-      if(hasCav){ctx.fillStyle="#120e09";ctx.fill();}
 
-      /* سیلوئت هدف دیواره داخلی */
-      if (g.innerSamples.length > 1) {
-        ctx.strokeStyle = "rgba(247,37,133,0.5)";
-        ctx.setLineDash([5, 4]);
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(X(g.innerSamples[0].z), Y(g.innerSamples[0].r));
-        for (const sm of g.innerSamples) ctx.lineTo(X(sm.z), Y(sm.r));
-        for (let i = g.innerSamples.length - 1; i >= 0; i--) ctx.lineTo(X(g.innerSamples[i].z), Y(-g.innerSamples[i].r));
-        ctx.closePath();
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      /* خط‌چین صورتی قبلی innerSamples مسیر G-code نبود و روی پروفایل‌های
+         برگشتی به شکل خطوط متقاطع دیده می‌شد؛ حذف شد تا فقط حرکت واقعی ابزار
+         و برداشت متناظر با segmentهای برنامه نمایش داده شود. */
 
       /* ابزار و موقعیت */
       const tx = X(tool.z);
