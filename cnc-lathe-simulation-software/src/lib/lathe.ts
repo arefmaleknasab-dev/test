@@ -1244,6 +1244,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   let radialRoughEndR: number | null = null;
   /* اگر کف‌تراشی زودتر اجرا شود، خشن شعاعی فقط تا مرز آن به‌علاوه همپوشانی می‌رود. */
   let bottomCoveredFromZ: number | null = null;
+  /* وضعیت اتصال مرحله‌ای کف به خشن داخل: +X امن انجام شده و Y/−X باقی است. */
+  let bottomToInnerRoughReady = false;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1347,12 +1349,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if (isSplitPlane && hasInner) splitPlaneAlreadyCut = true;
           }
           if (!finishLastInner(op.id)) {
-            if (nextIsInnerPath(op.id)) {
-              /* اتصال مستقیم کف‌تراشی به خشن داخل: از انتهای آخرین پاس فقط تا
-                 نزدیک‌ترین X امن بالای قله‌های آفست جمع می‌شود، سپس در همان
-                 صفحه امن به محور می‌رود؛ بازگشت کامل به retractX حذف می‌شود. */
-              moveInnerToAxisSafely();
-            } else mv(0, retractX, bottomEndZ, 0, "rapid");
+            if (nextEnabledOp(op.id)?.type === "inner-rough") {
+              /* مرحله اول اتصال: دقیقاً به‌اندازه Safety در +X. دو مرحله بعدی
+                 در آغاز خشن داخل، ابتدا Y و سپس −X، تولید می‌شوند. */
+              rawRapid(cur.x, cur.z + p.safety);
+              bottomToInnerRoughReady = true;
+            } else if (nextIsInnerPath(op.id)) moveInnerToAxisSafely();
+            else mv(0, retractX, bottomEndZ, 0, "rapid");
           }
           physCut(bottomEndZ, p.blankL, 0); // طول اضافی کاملاً برداشته شد
           bottomCoveredFromZ = bottomEndZ;
@@ -1740,7 +1743,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         note(`INNER VERTICAL LAYERS ${layers.length} x ${f2(step)} MM`);
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zOuter + p.innerStartClearance;
-        enterFirstInner(2 * rEntry, mouthX);
+        if (!bottomToInnerRoughReady) enterFirstInner(2 * rEntry, mouthX);
         const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
 
         /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
@@ -1753,9 +1756,16 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* جهت در سطح «پاس» تعیین می‌شود، نه برای هر بازه. اگر یک لایه به‌علت
              چند قله به چند Active Region شکسته شود، ابزار همه آن‌ها را در همان
              جهت Y طی می‌کند و تا آخرین دره جهت را معکوس نمی‌کند. */
+          const firstDirectionByGroup=new Map<number,boolean>();
           const appendPass=(plan:{layerZ:number;intervals:{a:number;b:number}[]},group:number,pass:number,lo:number,hi:number)=>{
-            const forward=pass%2===0;
             const clipped=plan.intervals.map(iv=>({a:Math.max(iv.a,lo),b:Math.min(iv.b,hi)})).filter(iv=>iv.b-iv.a>0.05);
+            if(!clipped.length)return;
+            if(!firstDirectionByGroup.has(group)){
+              const currentR=Math.max(0,cur.x/2),nearLow=clipped[0].a,nearHigh=clipped[clipped.length-1].b;
+              firstDirectionByGroup.set(group,!bottomToInnerRoughReady||Math.abs(currentR-nearLow)<=Math.abs(currentR-nearHigh));
+            }
+            const baseForward=firstDirectionByGroup.get(group)!;
+            const forward=pass%2===0?baseForward:!baseForward;
             const ordered=forward?clipped:[...clipped].reverse();
             for(const iv of ordered)cuts.push({layerZ:plan.layerZ,a:iv.a,b:iv.b,group,forward,pass});
           };
@@ -1817,10 +1827,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           for(let i=0;i<contours.length;i++){
             const contour=contours[i],start=contour.points[0],end=contour.points[contour.points.length-1];
             if(!alreadyAtNextStart){
-              const safeZ=Math.max(mouthX,maxWallZBetween(0,start.r)+p.safety);
-              if(cur.z<safeZ-1e-7)rawRapid(cur.x,safeZ);
-              rawRapid(2*start.r,safeZ);
-              mv(1,2*start.r,start.z,p.feedRough*0.7,"bore");
+              if(bottomToInnerRoughReady){
+                /* مرحله دوم فقط Y تا نزدیک‌ترین سر پاس؛ مرحله سوم فقط −X. */
+                rawRapid(2*start.r,cur.z);
+                mv(1,2*start.r,start.z,p.feedRough*0.7,"bore");
+                bottomToInnerRoughReady=false;
+              }else{
+                const safeZ=Math.max(mouthX,maxWallZBetween(0,start.r)+p.safety);
+                if(cur.z<safeZ-1e-7)rawRapid(cur.x,safeZ);
+                rawRapid(2*start.r,safeZ);
+                mv(1,2*start.r,start.z,p.feedRough*0.7,"bore");
+              }
             }
             for(let k=1;k<contour.points.length;k++){
               const q=contour.points[k];
@@ -1875,7 +1892,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                    بعدی اگر ابزار به محور برگشته باشد، همان‌جا در X امن قرار دارد
                    و باید مستقیم در −X وارد پاس بعدی شود؛ بازگشت دوباره به mouthX
                    یک حرکت +X کاملاً اضافی می‌ساخت. */
-                rawRapid(2 * startR, mouthX);
+                if (bottomToInnerRoughReady) {
+                  rawRapid(2 * startR, cur.z); // فقط Y
+                  bottomToInnerRoughReady = false;
+                } else rawRapid(2 * startR, mouthX);
               }
               preparedForNextLayer = false;
             }
