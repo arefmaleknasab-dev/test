@@ -1724,9 +1724,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         enterFirstInner(2 * rEntry, mouthX);
         const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
 
-        /* روش‌های دوطرفهٔ داخل: ترانهادهٔ خشن‌تراشی بیرونی. پاس‌ها در راستای
-           شعاع اجرا می‌شوند و جهت باربرداری در هر پاس عوض می‌شود. در حالت
-           ناحیه‌ای، بازه‌های شعاعی ابتدا بریده و طبق ترتیب انتخابی تکمیل می‌شوند. */
+        /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
+           ترانهادهٔ X/R. هر پاس به‌جای یک خط تخت، C(R)=max(دیواره+کلیرنس،
+           لایه) را دنبال می‌کند؛ بنابراین قله، دره و خطوط زیگزاگی بدون ورود
+           به خط آفست حفظ می‌شوند. */
         if (p.innerRoughMode !== "classic") {
           type InnerCut = { layerZ:number; a:number; b:number; group:number };
           let cuts: InnerCut[] = [];
@@ -1735,41 +1736,76 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const bs=p.innerZoneBounds.filter(v=>v>0.05&&v<maxR-0.05).sort((a,b)=>a-b);
             const edges=[0,...bs,maxR];
             const zones=edges.slice(0,-1).map((a,i)=>({a,b:edges[i+1]}));
-            const ord=p.innerZoneOrder.length===zones.length&&new Set(p.innerZoneOrder).size===zones.length&&p.innerZoneOrder.every(i=>i>=0&&i<zones.length)?p.innerZoneOrder:zones.map((_,i)=>i);
+            const validOrder=p.innerZoneOrder.length===zones.length&&new Set(p.innerZoneOrder).size===zones.length&&p.innerZoneOrder.every(i=>i>=0&&i<zones.length);
+            const ord=validOrder?p.innerZoneOrder:zones.map((_,i)=>i);
             for(const zi of ord) for(const plan of layerPlans) for(const iv of plan.intervals){
               const a=Math.max(iv.a,zones[zi].a),b=Math.min(iv.b,zones[zi].b);
               if(b-a>0.05)cuts.push({layerZ:plan.layerZ,a,b,group:zi});
             }
-          } else cuts=layerPlans.flatMap(plan=>plan.intervals.map(iv=>({layerZ:plan.layerZ,a:iv.a,b:iv.b,group:0})));
-          let forward=true;
-          const directed=cuts.map(cut=>{
-            const a=Math.max(0,cut.a),b=Math.max(a,cut.b);
-            const d={a,b,group:cut.group,startR:forward?a:b,endR:forward?b:a,cutZ:Math.max(cut.layerZ,maxWallZBetween(a,b)+roughOffsetClearance)};
-            forward=!forward;return d;
-          });
-          for(let i=0;i<directed.length;i++){
-            const cut=directed[i];
-            if(i===0){
-              /* فقط ورود نخستین پاس از صفحه امن انجام می‌شود. پس از آن کل مسیر
-                 دوطرفه یک زنجیرهٔ برشی پیوسته است و به +X جمع نمی‌کند. */
-              const safeZ=Math.max(mouthX,maxWallZBetween(cut.a,cut.b)+p.safety);
-              rawRapid(cur.x,safeZ);rawRapid(2*cut.startR,safeZ);
-              mv(1,2*cut.startR,cut.cutZ,p.feedRough*0.7,"bore");
-            }
-            if(Math.abs(cut.endR-cut.startR)>0.05)mv(1,2*cut.endR,cut.cutZ,p.feedRough,"bore");
-            const next=directed[i+1];
-            if(next){
-              if(p.innerRoughMode==="zone"&&next.group!==cut.group){
-                /* پایان ناحیه: خروج افقی (+X) تا صفحه امن، جابه‌جایی شعاعی فقط
-                   روی همان صفحه، سپس ورود افقی به ابتدای ناحیه بعدی. */
-                const safeZ=Math.max(mouthX,maxWallZBetween(Math.min(cut.endR,next.startR),Math.max(cut.endR,next.startR))+p.safety);
-                rawRapid(2*cut.endR,safeZ);
-                rawRapid(2*next.startR,safeZ);
-                mv(1,2*next.startR,next.cutZ,p.feedRough*0.7,"bore");
-              }else{
-                /* درون یک ناحیه کوتاه‌ترین اتصال مستقیم زیگزاگ حفظ می‌شود. */
-                mv(1,2*next.startR,next.cutZ,p.feedRough,"bore");
+          } else {
+            cuts=layerPlans.flatMap(plan=>plan.intervals.map(iv=>({layerZ:plan.layerZ,a:iv.a,b:iv.b,group:0})));
+          }
+
+          const simplifyInnerContour=(pts:{r:number;z:number}[])=>{
+            if(pts.length<=2)return pts;
+            const keep=new Uint8Array(pts.length);keep[0]=keep[pts.length-1]=1;
+            const stack:[number,number][]=[[0,pts.length-1]];
+            while(stack.length){
+              const [a,b]=stack.pop()!,A=pts[a],B=pts[b],dr=B.r-A.r,dz=B.z-A.z,den=dr*dr+dz*dz;
+              let far=0,at=-1;
+              for(let i=a+1;i<b;i++){
+                const t=den>1e-18?Math.max(0,Math.min(1,((pts[i].r-A.r)*dr+(pts[i].z-A.z)*dz)/den)):0;
+                const d=Math.hypot(pts[i].r-(A.r+t*dr),pts[i].z-(A.z+t*dz));
+                if(d>far){far=d;at=i;}
               }
+              if(at>=0&&far>0.02){keep[at]=1;stack.push([a,at],[at,b]);}
+            }
+            return pts.filter((_,i)=>keep[i]);
+          };
+          let forward=true;
+          const contours=cuts.map(cut=>{
+            const a=Math.max(0,cut.a),b=Math.max(a,cut.b);
+            const middle=mergedWall.filter(q=>q.r>a+1e-6&&q.r<b-1e-6);
+            const radial=[{r:a,z:wallZAtR(a)},...middle.map(q=>({r:q.r,z:q.z})),{r:b,z:wallZAtR(b)}];
+            const ordered=forward?radial:[...radial].reverse();
+            forward=!forward;
+            return {
+              group:cut.group,a,b,
+              points:simplifyInnerContour(ordered.map(q=>({r:q.r,z:Math.max(cut.layerZ,q.z+roughOffsetClearance)}))),
+            };
+          }).filter(c=>c.points.length>=2);
+
+          let alreadyAtNextStart=false;
+          for(let i=0;i<contours.length;i++){
+            const contour=contours[i],start=contour.points[0],end=contour.points[contour.points.length-1];
+            if(!alreadyAtNextStart){
+              const safeZ=Math.max(mouthX,maxWallZBetween(0,start.r)+p.safety);
+              if(cur.z<safeZ-1e-7)rawRapid(cur.x,safeZ);
+              rawRapid(2*start.r,safeZ);
+              mv(1,2*start.r,start.z,p.feedRough*0.7,"bore");
+            }
+            for(let k=1;k<contour.points.length;k++){
+              const q=contour.points[k];
+              mv(1,2*q.r,q.z,p.feedRough,"bore");
+            }
+
+            const next=contours[i+1];
+            alreadyAtNextStart=false;
+            if(next){
+              const ns=next.points[0];
+              const sameEdge=Math.abs(ns.r-end.r)<0.06;
+              /* فقط وقتی دو پاس روی همان مرز به هم می‌رسند اتصال برشی مستقیم
+                 امن است. اختلاف مرز یا عبور به ناحیهٔ بعد از روی صفحه‌ای انجام
+                 می‌شود که بالاتر از تمام قله‌های بین دو شعاع است. */
+              if(sameEdge&&next.group===contour.group){
+                mv(1,2*ns.r,ns.z,p.feedRough,"bore");
+              }else{
+                const safeZ=Math.max(mouthX,maxWallZBetween(Math.min(end.r,ns.r),Math.max(end.r,ns.r))+p.safety,end.z);
+                if(safeZ>end.z+1e-7)rawRapid(2*end.r,safeZ);
+                rawRapid(2*ns.r,safeZ);
+                mv(1,2*ns.r,ns.z,p.feedRough*0.7,"bore");
+              }
+              alreadyAtNextStart=true;
             }
           }
           innerCleared=true;
