@@ -1683,7 +1683,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const roughInnerZ = zInner + roughOffsetClearance;
         const step = Math.max(0.5, p.innerDoc);
         const layers: number[] = [];
-        const firstLayer = splitPlaneAlreadyCut ? zOuter - step : zOuter;
+        /* اگر کف‌تراشی پیش از خشن داخل اجرا شده، سطح واقعی آخرین پاس کف مبنای
+           اولین عمق است. بنابراین فاصلهٔ قابل تنظیم کف تا آفست به لایه‌های DOC
+           تقسیم و کاملاً توسط خشن داخل پر می‌شود؛ شروع همیشه از zOuter باعث
+           باقی‌ماندن این فاصله به‌صورت مادهٔ تراش‌نخورده می‌شد. */
+        const firstLayer = bottomCoveredFromZ != null
+          ? bottomCoveredFromZ - step
+          : splitPlaneAlreadyCut ? zOuter - step : zOuter;
         for (let z = firstLayer; z > roughInnerZ + 0.05; z -= step) layers.push(z);
         if (!layers.length || Math.abs(layers[layers.length - 1] - roughInnerZ) > 0.05) layers.push(roughInnerZ);
         if (!splitPlaneAlreadyCut && Math.abs(layers[0] - zOuter) < 0.05) splitPlaneAlreadyCut = true;
