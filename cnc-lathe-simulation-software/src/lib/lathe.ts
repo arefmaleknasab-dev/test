@@ -1325,33 +1325,25 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const centerD = 0; // کف‌تراشی دقیقاً از خط محور (X/قطر صفر) آغاز می‌شود
           const N = Math.max(1, Math.ceil(excess / p.innerDoc - 1e-9));
           const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? bottomEndZ : p.blankL - (i + 1) * p.innerDoc));
-          const machiningDepths = depths.filter(zk => !(Math.abs(zk - bottomEndZ) < 0.05 && splitPlaneAlreadyCut));
-          /* اگر فقط پاس نهایی باقی مانده، ورود اولیه مستقیماً روی شعاع بیرونی
-             انجام می‌شود تا حرکت Y رفت‌وبرگشتی حتی برای تک‌پاس هم ساخته نشود. */
-          const firstBottomD = machiningDepths.length === 1 ? outsideD : centerD;
-          enterFirstInner(firstBottomD, (machiningDepths[0] ?? depths[0]) + p.innerStartClearance);
-          for (let k = 0; k < machiningDepths.length; k++) {
-            const zk = machiningDepths[k];
-            const isFinalPass = k === machiningDepths.length - 1;
+          /* اگر کف‌تراشی وجود دارد، اولین صفحه آن مبنای فاصله شروع داخل‌تراشی است. */
+          enterFirstInner(centerD, depths[0] + p.innerStartClearance);
+          for (let k = 0; k < depths.length; k++) {
+            const zk = depths[k];
             const isSplitPlane = Math.abs(zk - bottomEndZ) < 0.05;
-            if (isFinalPass) {
-              /* پاس آخر برعکس اجرا می‌شود: ابتدا در X امن روی شعاع بیرونی قرار
-                 می‌گیریم، سپس فقط −X و بعد −Y تا محور. بنابراین رفت‌وبرگشت Y
-                 حذف و اتصال به خشن داخل دقیقاً Y سپس X خواهد بود. */
-              const safeZ = k === 0 ? zk + p.innerStartClearance : machiningDepths[k - 1] + 0.5;
-              rawRapid(outsideD, safeZ);            // فقط Y روی صفحه امن
-              mv(1, outsideD, zk, p.feedRough * 0.7, "bottom"); // سپس −X
-              mv(1, centerD, zk, p.feedRough * 0.8, "bottom");  // برداشت نهایی −Y تا محور
+            if (isSplitPlane && splitPlaneAlreadyCut) continue;
+            if (k === 0) {
+              if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
             } else {
-              if (k === 0) {
-                if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
-              } else {
-                const prevZ = machiningDepths[k - 1];
-                rawRapid(centerD, prevZ + 0.5);
-                mv(1, centerD, zk, p.feedRough * 0.7, "bottom");
-              }
-              mv(1, outsideD, zk, p.feedRough * 0.8, "bottom");
+              const prevZ = depths[k - 1];
+              /* بازگشت مورب سریع: −Y تا مرکز و هم‌زمان +X به‌اندازه ۰٫۵mm */
+              rawRapid(centerD, prevZ + 0.5);
+              mv(1, centerD, zk, p.feedRough * 0.7, "bottom"); // شیرجه −X به عمق بار بعدی
             }
+            /* در کاسه، کف‌تراشی دقیقاً روی مرز آفست داخلی متوقف می‌شود و
+               هرگز از دیوارهٔ رزروشده برای پاس آفست/پرداخت عبور نمی‌کند. */
+            /* کف‌تراشی تا مرز همپوشانی خشن شعاعی ادامه دارد؛ مرز X عملیات
+               با خشن داخل مشترک است، اما محدوده شعاعی آن کوتاه نمی‌شود. */
+            mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → همپوشانی خشن شعاعی
             if (isSplitPlane && hasInner) splitPlaneAlreadyCut = true;
           }
           if (!finishLastInner(op.id)) {
