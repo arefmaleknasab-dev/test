@@ -1346,7 +1346,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → همپوشانی خشن شعاعی
             if (isSplitPlane && hasInner) splitPlaneAlreadyCut = true;
           }
-          if (!finishLastInner(op.id)) mv(0, retractX, bottomEndZ, 0, "rapid"); // جمع‌کردن پایانی
+          if (!finishLastInner(op.id)) {
+            if (nextIsInnerPath(op.id)) {
+              /* اتصال مستقیم کف‌تراشی به خشن داخل: از انتهای آخرین پاس فقط تا
+                 نزدیک‌ترین X امن بالای قله‌های آفست جمع می‌شود، سپس در همان
+                 صفحه امن به محور می‌رود؛ بازگشت کامل به retractX حذف می‌شود. */
+              moveInnerToAxisSafely();
+            } else mv(0, retractX, bottomEndZ, 0, "rapid");
+          }
           physCut(bottomEndZ, p.blankL, 0); // طول اضافی کاملاً برداشته شد
           bottomCoveredFromZ = bottomEndZ;
         }
