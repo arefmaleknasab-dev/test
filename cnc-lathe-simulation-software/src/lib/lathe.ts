@@ -1729,8 +1729,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            لایه) را دنبال می‌کند؛ بنابراین قله، دره و خطوط زیگزاگی بدون ورود
            به خط آفست حفظ می‌شوند. */
         if (p.innerRoughMode !== "classic") {
-          type InnerCut = { layerZ:number; a:number; b:number; group:number };
-          let cuts: InnerCut[] = [];
+          type InnerCut = { layerZ:number; a:number; b:number; group:number; forward:boolean; pass:number };
+          const cuts: InnerCut[] = [];
+          /* جهت در سطح «پاس» تعیین می‌شود، نه برای هر بازه. اگر یک لایه به‌علت
+             چند قله به چند Active Region شکسته شود، ابزار همه آن‌ها را در همان
+             جهت Y طی می‌کند و تا آخرین دره جهت را معکوس نمی‌کند. */
+          const appendPass=(plan:{layerZ:number;intervals:{a:number;b:number}[]},group:number,pass:number,lo:number,hi:number)=>{
+            const forward=pass%2===0;
+            const clipped=plan.intervals.map(iv=>({a:Math.max(iv.a,lo),b:Math.min(iv.b,hi)})).filter(iv=>iv.b-iv.a>0.05);
+            const ordered=forward?clipped:[...clipped].reverse();
+            for(const iv of ordered)cuts.push({layerZ:plan.layerZ,a:iv.a,b:iv.b,group,forward,pass});
+          };
           if (p.innerRoughMode === "zone") {
             const maxR=Math.max(...mergedWall.map(q=>q.r));
             const bs=p.innerZoneBounds.filter(v=>v>0.05&&v<maxR-0.05).sort((a,b)=>a-b);
@@ -1738,12 +1747,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const zones=edges.slice(0,-1).map((a,i)=>({a,b:edges[i+1]}));
             const validOrder=p.innerZoneOrder.length===zones.length&&new Set(p.innerZoneOrder).size===zones.length&&p.innerZoneOrder.every(i=>i>=0&&i<zones.length);
             const ord=validOrder?p.innerZoneOrder:zones.map((_,i)=>i);
-            for(const zi of ord) for(const plan of layerPlans) for(const iv of plan.intervals){
-              const a=Math.max(iv.a,zones[zi].a),b=Math.min(iv.b,zones[zi].b);
-              if(b-a>0.05)cuts.push({layerZ:plan.layerZ,a,b,group:zi});
-            }
+            for(const zi of ord)layerPlans.forEach((plan,pass)=>appendPass(plan,zi,pass,zones[zi].a,zones[zi].b));
           } else {
-            cuts=layerPlans.flatMap(plan=>plan.intervals.map(iv=>({layerZ:plan.layerZ,a:iv.a,b:iv.b,group:0})));
+            const maxR=Math.max(...mergedWall.map(q=>q.r));
+            layerPlans.forEach((plan,pass)=>appendPass(plan,0,pass,0,maxR));
           }
 
           const simplifyInnerContour=(pts:{r:number;z:number}[])=>{
@@ -1762,15 +1769,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             }
             return pts.filter((_,i)=>keep[i]);
           };
-          let forward=true;
           const contours=cuts.map(cut=>{
             const a=Math.max(0,cut.a),b=Math.max(a,cut.b);
             const middle=mergedWall.filter(q=>q.r>a+1e-6&&q.r<b-1e-6);
             const radial=[{r:a,z:wallZAtR(a)},...middle.map(q=>({r:q.r,z:q.z})),{r:b,z:wallZAtR(b)}];
-            const ordered=forward?radial:[...radial].reverse();
-            forward=!forward;
+            const ordered=cut.forward?radial:[...radial].reverse();
             return {
-              group:cut.group,a,b,
+              group:cut.group,pass:cut.pass,a,b,
               points:simplifyInnerContour(ordered.map(q=>({r:q.r,z:Math.max(cut.layerZ,q.z+roughOffsetClearance)}))),
             };
           }).filter(c=>c.points.length>=2);
