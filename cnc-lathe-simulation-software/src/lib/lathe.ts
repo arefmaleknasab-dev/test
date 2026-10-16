@@ -128,6 +128,7 @@ export interface Params {
   innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
+  bottomOffsetClearance: number; // فاصله کف‌تراشی در +X از بلندترین قله آفست داخل
   feedRough: number; // mm/min
   feedFinish: number; // mm/min (سازگاری پروژه‌های قدیمی)
   /** فید مستقل هر عملیات؛ تنظیم سراسری Preferences هنگام تولید تزریق می‌شود. */
@@ -356,6 +357,7 @@ export const DEFAULT_PARAMS: Params = {
   innerStartClearance: 2,
   innerEndTravel: 300,
   bottomRoughOverlap: 3,
+  bottomOffsetClearance: 0,
   feedRough: 220,
   feedFinish: 110,
   rpm: 1500,
@@ -390,7 +392,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -405,6 +407,7 @@ export function normalizeParams(
   base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
+  base.bottomOffsetClearance = Math.min(100, Math.max(0, base.bottomOffsetClearance));
   /* مهاجرت «اضافه پرداخت» قدیمی به «فاصله آفست» */
   if (typeof raw.finAllow === "number" && Number.isFinite(raw.finAllow)) base.offsetDist = raw.finAllow;
   /* روش خشن‌تراشی + مهاجرت سوئیچ زیگزاگ قدیمی */
@@ -1103,12 +1106,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   const innerOperationBoundaryZ = innerFinishOffSamples.length
     ? Math.max(...innerFinishOffSamples.map((point) => point.z))
     : zEnd;
+  /* کف‌تراشی در سمت +X قله آفست قرار دارد. افزایش فاصله، صفحه نهایی کف را
+     از بلندترین قله دورتر می‌کند و هرگز اجازه عبور از انتهای خام را نمی‌دهد. */
+  const bottomOperationEndZ = Math.min(p.blankL, innerOperationBoundaryZ + p.bottomOffsetClearance);
 
   /* آخرین عملیات داخل‌تراشیِ واقعاً قابل اجرا؛ عملیات بی‌اثر (مثلاً کف‌تراشی
      بدون طول اضافه یا آفست صفر) نقطه پایان برنامه محسوب نمی‌شود. */
   const lastRunnableInnerOpId = [...p.ops].reverse().find((o) => {
     if (!o.on) return false;
-    if (o.type === "bottom") return hasOuter && p.blankL - innerOperationBoundaryZ > 0.05;
+    if (o.type === "bottom") return hasOuter && p.blankL - bottomOperationEndZ > 0.05;
     if (o.type === "inner-offset") return hasInner && IOD > 0.01;
     return hasInner && (o.type === "inner-rough" || o.type === "inner-finish");
   })?.id;
@@ -1304,7 +1310,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
       case "bottom": {
         curOp = "bottom";
         if (!hasOuter) break;
-        const bottomEndZ = innerOperationBoundaryZ;
+        const bottomEndZ = bottomOperationEndZ;
         const excess = p.blankL - bottomEndZ;
         if (excess > 0.05) {
           note(`BOTTOM FACING - EXCESS ${f2(excess)} (HOLDER ${op.holder})`);
@@ -2315,7 +2321,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
   lines.push("O1001 (KHARRATKOD - 2 AXIS WOOD LATHE)");
   lines.push(`(STOCK D${p.blankD} x L${p.blankL} MM)`);
   lines.push(`(TOOL: ${toolDesc(p.tool)})`);
-  lines.push(`(DOC OUT ${p.doc} MM - DOC INNER ${p.innerDoc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM - INNER END +X ${p.innerEndTravel} MM - BOTTOM/ROUGH OVERLAP ${p.bottomRoughOverlap} MM)`);
+  lines.push(`(DOC OUT ${p.doc} MM - DOC INNER ${p.innerDoc} MM - OFFSET OUT ${p.offsetDist} MM - INNER ${p.innerOffsetDist} MM - INNER START ${p.innerStartClearance} MM - INNER END +X ${p.innerEndTravel} MM - BOTTOM/ROUGH OVERLAP ${p.bottomRoughOverlap} MM - BOTTOM/OFFSET CLEARANCE ${p.bottomOffsetClearance} MM)`);
   const usesH2 = segs.some((s) => s.motion === 1 && s.holder === 2);
   if (usesH2) {
     lines.push(`(HOLDER2: XOFF ${p.holder2.xOff} YOFF ${p.holder2.yOff} ROT ${HOLDER2_ROT})`);
