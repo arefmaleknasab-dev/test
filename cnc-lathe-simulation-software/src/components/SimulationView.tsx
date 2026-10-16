@@ -66,6 +66,7 @@ const KIND_CLS: Record<string, string> = {
 function SimulationView({ gen, params, onActiveLine }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cavityCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [playing, setPlaying] = useState(false);
@@ -497,35 +498,32 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      /* حفره داخل کاسه — مرز ماسک به نوارهای برداری پیوسته تبدیل می‌شود.
-         اتصال خطی مرز ستون‌های مجاور، لبه‌ای تیز و antialias شده می‌سازد؛ نه
-         بلوک‌های پیکسلی و نه blur حاصل از بزرگ‌کردن bitmap. */
-      const mask=cavMaskRef.current,cellZ=p.blankL/GRID,cellR=(p.blankD/2)/CAV_R_GRID;
-      const runsAt=(iz:number)=>{
-        const runs:{lo:number;hi:number}[]=[];let ir=0;
-        while(ir<=CAV_R_GRID){
-          while(ir<=CAV_R_GRID&&!mask[iz*(CAV_R_GRID+1)+ir])ir++;
-          if(ir>CAV_R_GRID)break;
-          const lo=ir;while(ir<=CAV_R_GRID&&mask[iz*(CAV_R_GRID+1)+ir])ir++;
-          runs.push({lo:lo*cellR,hi:ir*cellR});
+      /* حفره داخل کاسه — ماسک دوبعدی ابتدا روی Canvas کوچک رسم و سپس با
+         interpolation مرورگر Scale می‌شود. این کار لبه‌های پله‌ای سلول‌ها را
+         حذف می‌کند، بدون آن‌که دقت برداشت رفت/برگشت از بین برود. */
+      const mask=cavMaskRef.current;
+      let cavityCanvas=cavityCanvasRef.current;
+      if(!cavityCanvas){cavityCanvas=document.createElement("canvas");cavityCanvasRef.current=cavityCanvas;}
+      const mw=GRID+1,mh=2*CAV_R_GRID+1;
+      if(cavityCanvas.width!==mw)cavityCanvas.width=mw;
+      if(cavityCanvas.height!==mh)cavityCanvas.height=mh;
+      const cavityCtx=cavityCanvas.getContext("2d");
+      if(cavityCtx){
+        const image=cavityCtx.createImageData(mw,mh),data=image.data;
+        for(let iz=0;iz<=GRID;iz++)for(let ir=0;ir<=CAV_R_GRID;ir++){
+          if(!mask[iz*(CAV_R_GRID+1)+ir])continue;
+          const y1=CAV_R_GRID-ir,y2=CAV_R_GRID+ir;
+          for(const y of y1===y2?[y1]:[y1,y2]){
+            const q=(y*mw+iz)*4;data[q]=18;data[q+1]=14;data[q+2]=9;data[q+3]=255;
+          }
         }
-        return runs;
-      };
-      ctx.beginPath();
-      let leftRuns=runsAt(0);
-      for(let iz=0;iz<GRID;iz++){
-        const rightRuns=runsAt(iz+1),count=Math.max(leftRuns.length,rightRuns.length);
-        const z0=iz*cellZ,z1=(iz+1)*cellZ;
-        for(let k=0;k<count;k++){
-          const L=leftRuns[k],R=rightRuns[k];if(!L&&!R)continue;
-          const l=L??{lo:(R!.lo+R!.hi)/2,hi:(R!.lo+R!.hi)/2};
-          const r=R??{lo:(L!.lo+L!.hi)/2,hi:(L!.lo+L!.hi)/2};
-          ctx.moveTo(X(z0),Y(l.hi));ctx.lineTo(X(z1),Y(r.hi));ctx.lineTo(X(z1),Y(r.lo));ctx.lineTo(X(z0),Y(l.lo));ctx.closePath();
-          ctx.moveTo(X(z0),Y(-l.hi));ctx.lineTo(X(z0),Y(-l.lo));ctx.lineTo(X(z1),Y(-r.lo));ctx.lineTo(X(z1),Y(-r.hi));ctx.closePath();
-        }
-        leftRuns=rightRuns;
+        cavityCtx.putImageData(image,0,0);
+        ctx.save();
+        ctx.imageSmoothingEnabled=true;
+        ctx.imageSmoothingQuality="high";
+        ctx.drawImage(cavityCanvas,X(0),Y(p.blankD/2),p.blankL*s,p.blankD*s);
+        ctx.restore();
       }
-      ctx.fillStyle="#120e09";ctx.fill();
 
       /* خط‌چین صورتی قبلی innerSamples مسیر G-code نبود و روی پروفایل‌های
          برگشتی به شکل خطوط متقاطع دیده می‌شد؛ حذف شد تا فقط حرکت واقعی ابزار
