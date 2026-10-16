@@ -1112,6 +1112,25 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     if (o.type === "inner-offset") return hasInner && IOD > 0.01;
     return hasInner && (o.type === "inner-rough" || o.type === "inner-finish");
   })?.id;
+  const nextEnabledOp = (opId: number) => {
+    const at=p.ops.findIndex(o=>o.id===opId);
+    return at<0?undefined:p.ops.slice(at+1).find(o=>o.on);
+  };
+  const nextIsInnerPath = (opId:number) => {
+    const type=nextEnabledOp(opId)?.type;
+    return type==="inner-offset"||type==="inner-finish"||type==="inner-rough";
+  };
+  /* کوتاه‌ترین خروج امن به محور: ابتدا فقط به‌اندازه‌ای در +X حرکت می‌کنیم که
+     از بلندترین قله میان شعاع فعلی و محور، به‌علاوه Safety، عبور کنیم؛ سپس در
+     همان X امن مستقیماً به R=0 می‌رویم. */
+  const moveInnerToAxisSafely = () => {
+    const currentR=Math.max(0,cur.x/2);
+    let peak=-Infinity;
+    for(const point of innerFinishOffSamples) if(point.r<=currentR+1e-6) peak=Math.max(peak,point.z);
+    const safeZ=Math.max(cur.z,Number.isFinite(peak)?peak+p.safety:cur.z);
+    if(safeZ>cur.z+1e-7) rawRapid(cur.x,safeZ);
+    if(currentR>1e-7) rawRapid(0,safeZ);
+  };
   let endedAtInnerEndpoint = false;
   const finishLastInner = (opId: number): boolean => {
     if (opId !== lastRunnableInnerOpId) return false;
@@ -1754,8 +1773,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             }
           }
           innerCleared=true;
-          rawRapid(2*Math.max(0,cur.x/2),mouthX);rawRapid(0,mouthX);
-          if(!finishLastInner(op.id))mv(0,retractX,mouthX,0,"rapid");
+          if(!finishLastInner(op.id)){
+            if(nextIsInnerPath(op.id)) moveInnerToAxisSafely();
+            else { moveInnerToAxisSafely(); rawRapid(0,mouthX); mv(0,retractX,mouthX,0,"rapid"); }
+          }
           break;
         }
         let preparedForNextLayer = false;
@@ -1831,8 +1852,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         innerCleared = true;
         /* اگر این آخرین عملیات داخل است، بدون هیچ حرکت واسط مستقیماً +X می‌رود. */
         if (!finishLastInner(op.id)) {
-          rawRapid(2 * rEntry, mouthX);
-          mv(0, retractX, mouthX, 0, "rapid");
+          moveInnerToAxisSafely();
+          if (!nextIsInnerPath(op.id)) {
+            rawRapid(2 * rEntry, mouthX);
+            mv(0, retractX, mouthX, 0, "rapid");
+          }
         }
         break;
       }
@@ -1847,12 +1871,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const zRimF = innerOff[innerOff.length - 1].z;
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zRimF + p.innerStartClearance;
-        enterFirstInner(2 * rEntry, mouthX);
+        if (!innerCleared || curHolder !== 2) enterFirstInner(2 * rEntry, mouthX);
         if (innerCleared) {
-          /* ورود سریع مستقیماً به ابتدای هندسی آفست؛ خط اتصال از محور نباید
-             با رنگ بنفش جزئی از Offset دیده شود یا در نوک آن بیرون‌زدگی بسازد. */
-          rawRapid(2 * innerOff[0].r, mouthX);
-          rawRapid(2 * innerOff[0].r, zBot);
+          /* از پایان خشن، با کوتاه‌ترین مسیر امن از قله‌ها به محور می‌رسیم؛ سپس
+             روی محور تا کف می‌رویم و از همان‌جا پاس آفست را آغاز می‌کنیم. */
+          moveInnerToAxisSafely();
+          rawRapid(0, zBot);
+          mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
         } else {
           mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "bore");
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
@@ -1864,8 +1889,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         }
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
-            rawRapid(2 * rEntry, zRimF);
-            rawRapid(2 * rEntry, mouthX);
+            moveInnerToAxisSafely();
+            if (!nextIsInnerPath(op.id)) rawRapid(2 * rEntry, mouthX);
           } else {
             /* برگشت روی مسیر تراش‌خورده سریع است و جزء هندسهٔ بنفش آفست نیست. */
             for (let i = innerOff.length - 2; i >= 0; i--) {
@@ -1874,7 +1899,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             rawRapid(2 * rEntry, zBot);
             rawRapid(2 * rEntry, mouthX);
           }
-          mv(0, retractX, mouthX, 0, "rapid");
+          if (!nextIsInnerPath(op.id)) mv(0, retractX, mouthX, 0, "rapid");
         }
         break;
       }
@@ -1889,9 +1914,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
         const mouthX = zRimF + p.innerStartClearance;
-        enterFirstInner(2 * rEntry, mouthX); // پشت دهانه، بیرون خط داخلی
-        if (innerCleared) rawRapid(2 * rEntry, zBot); // حفره خالی است — ورود سریع
-        else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
+        if (!innerCleared || curHolder !== 2) enterFirstInner(2 * rEntry, mouthX);
+        if (innerCleared) {
+          /* مانند آفست: ابتدا از نزدیک‌ترین مسیر امن به محور، سپس روی محور تا کف. */
+          moveInnerToAxisSafely();
+          rawRapid(2 * rEntry, zBot);
+        } else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
         for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
