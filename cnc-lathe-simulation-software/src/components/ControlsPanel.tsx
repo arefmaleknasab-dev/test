@@ -107,6 +107,7 @@ function ControlsPanel({
     setOps(ops);
   };
   const toggleOp = (id: number) => setOps(params.ops.map((o) => (o.id === id ? { ...o, on: !o.on } : o)));
+  const toggleOpDirection = (id: number) => setOps(params.ops.map((o) => (o.id === id ? { ...o, reverse: !o.reverse } : o)));
   const removeOp = (id: number) => setOps(params.ops.filter((o) => o.id !== id));
   const addOp = (type: OpType) => {
     const op = makeOps([type])[0];
@@ -297,6 +298,17 @@ function ControlsPanel({
                   )}
                 >
                   {isolated ? <IconEyeOff className="h-3.5 w-3.5" /> : <IconEye className="h-3.5 w-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleOpDirection(op.id)}
+                  title={op.reverse ? "بازگرداندن جهت شروع پیش‌فرض" : "معکوس کردن جهت شروع عملیات"}
+                  className={cn("grid h-6 w-6 shrink-0 place-items-center rounded border transition-all",op.reverse?"border-copper/60 bg-copper/15 text-copper":"border-edge text-dim hover:border-edge2 hover:text-ink")}
+                >
+                  <svg viewBox="0 0 450 469" aria-hidden="true" className={cn("h-[18px] w-[18px] transition-transform",op.reverse&&"scale-x-[-1]")}>
+                    <path d="M136 76 H310 C344 76 372 102 372 137 C372 172 347 202 312 202 H142 C108 202 78 229 78 264 C78 299 105 330 141 330 H254" fill="none" stroke="currentColor" strokeWidth="32" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M253 267 L360 330 L253 391 Z" fill="currentColor"/>
+                  </svg>
                 </button>
                 <button
                   onClick={() => toggleHolder(op.id)}

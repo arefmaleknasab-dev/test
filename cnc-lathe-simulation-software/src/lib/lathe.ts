@@ -610,6 +610,7 @@ export interface Op {
   id: number;
   type: OpType;
   on: boolean;
+  reverse?: boolean; // معکوس‌کردن جهت شروع عملیات
   holder: 1 | 2; // هلدر مجری عملیات: ۱ = هلدر اصلی (خارج) ، ۲ = هلدر چرخیده (داخل)
 }
 
@@ -643,7 +644,7 @@ export const STRATEGIES: Strategy[] = [
 ];
 
 export function makeOps(types: OpType[]): Op[] {
-  const ops = types.map((t) => ({ id: opUid++, type: t, on: true, holder: DEFAULT_HOLDER[t] }));
+  const ops = types.map((t) => ({ id: opUid++, type: t, on: true, reverse: false, holder: DEFAULT_HOLDER[t] }));
   /* پیش‌فرض: همیشه عملیات خارج‌تراشی اول و داخل‌تراشی بعد از آن (جابه‌جایی دستی با درگ/فلش آزاد است) */
   return outerFirstOps(ops);
 }
@@ -684,6 +685,7 @@ export function normalizeOps(raw: unknown, legacy = false): Op[] | null {
         id: typeof o.id === "number" ? o.id : opUid++,
         type: t as OpType,
         on: o.on !== false,
+        reverse: (o as { reverse?: unknown }).reverse === true,
         holder: hh === 2 ? 2 : hh === 1 ? 1 : DEFAULT_HOLDER[t as OpType],
       });
     }
@@ -1229,8 +1231,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     return true;
   };
 
-  const profilePath = (kind: SegKind, feed: number) => {
-    const path = kind === "finish" ? outerFinishPath : samples;
+  const profilePath = (kind: SegKind, feed: number, reverse=false) => {
+    const source = kind === "finish" ? outerFinishPath : samples;
+    const path = reverse ? [...source].reverse() : source;
     if (!path.length) return;
     mv(1, 2 * path[0].r, path[0].z, feed, kind);
     for (let i = 1; i < path.length; i++) mv(1, 2 * path[i].r, path[i].z, feed, kind);
@@ -1276,7 +1279,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           roundLayers.push(R); // لایه پایانی دقیقاً روی قطر واقعی
 
-          let dir: 1 | -1 = 1;
+          let dir: 1 | -1 = op.reverse ? -1 : 1;
           let atZ = 0;
           for (let i = 0; i < roundLayers.length; i++) {
             const r = roundLayers[i];
@@ -1335,9 +1338,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           if(zigzagBottom)note(`BOTTOM SERPENTINE ${machiningDepths.length} PASSES - CUTS BOTH Y DIRECTIONS`);
           /* ورود نخستین پاس روی محور است؛ در حالت دوطرفه، انتهای هر پاس دقیقاً
              ابتدای پاس بعدی است و فقط با +X امن و سپس −X به عمق بعد می‌رود. */
-          enterFirstInner(centerD,(machiningDepths[0]??depths[0])+p.innerStartClearance);
+          const firstBottomForward=!op.reverse;
+          const firstBottomD=firstBottomForward?centerD:outsideD;
+          enterFirstInner(firstBottomD,(machiningDepths[0]??depths[0])+p.innerStartClearance);
           for(let k=0;k<machiningDepths.length;k++){
-            const zk=machiningDepths[k],forward=!zigzagBottom||k%2===0;
+            const zk=machiningDepths[k],forward=zigzagBottom?(k%2===0?firstBottomForward:!firstBottomForward):firstBottomForward;
             const startD=forward?centerD:outsideD,endD=forward?outsideD:centerD;
             const isSplitPlane=Math.abs(zk-bottomEndZ)<0.05;
             if(k===0){
@@ -1349,8 +1354,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               mv(1,startD,zk,p.feedRough*.7,"bottom");
             }else{
               const prevZ=machiningDepths[k-1];
-              rawRapid(centerD,prevZ+.5);
-              mv(1,centerD,zk,p.feedRough*.7,"bottom");
+              const resetD=firstBottomForward?centerD:outsideD;
+              rawRapid(resetD,prevZ+.5);
+              mv(1,resetD,zk,p.feedRough*.7,"bottom");
             }
             mv(1,endD,zk,p.feedRough*.8,"bottom");
             if(isSplitPlane&&hasInner)splitPlaneAlreadyCut=true;
@@ -1439,7 +1445,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               return pts.filter((_, i) => keep[i]);
             };
             /* جهت شروع: نزدیک‌تر به موقعیت فعلی ابزار (مثلاً پایان گرد کردن) */
-            let forward = Math.abs(cur.z) <= Math.abs(radialEndZ - cur.z);
+            let forward = op.reverse ? Math.abs(cur.z) > Math.abs(radialEndZ - cur.z) : Math.abs(cur.z) <= Math.abs(radialEndZ - cur.z);
             let first = true;
             let lastEndZ = NaN;
             let lastEndR = 0;
@@ -1564,10 +1570,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               note(`LAYER ${nL} - X${f2(c.r)}`);
               lastR = c.r;
             }
-            mv(0, retractX, c.a, 0, "rapid");
-            mv(1, 2 * c.r, c.a, p.feedRough * 0.7, "rough");
-            if (c.b - c.a > 0.01) mv(1, 2 * c.r, c.b, p.feedRough, "rough");
-            mv(0, retractX, c.b, 0, "rapid");
+            const startZ=op.reverse?c.b:c.a,endZ=op.reverse?c.a:c.b;
+            mv(0, retractX, startZ, 0, "rapid");
+            mv(1, 2 * c.r, startZ, p.feedRough * 0.7, "rough");
+            if (c.b - c.a > 0.01) mv(1, 2 * c.r, endZ, p.feedRough, "rough");
+            mv(0, retractX, endZ, 0, "rapid");
           }
           break;
         }
@@ -1589,8 +1596,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* واقعی ابزار (cur.z) مرجع است؛ اگر عملیات قبلی (مثل گرد کردن گوشه‌ها)   */
           /* ابزار را در انتهای خاصی رها کرده باشد، از همان‌جا ادامه می‌یابد و به   */
           /* نقطهٔ خانه بازنمی‌گردد. در ابتدای برنامه cur همان نقطهٔ خانه است.      */
-          const refZ = Number.isNaN(curZ) ? cur.z : curZ;
-          const startZ = Math.abs(c.a - refZ) <= Math.abs(c.b - refZ) ? c.a : c.b;
+          const firstCut=Number.isNaN(curZ);
+          const refZ = firstCut ? cur.z : curZ;
+          const nearA=Math.abs(c.a-refZ)<=Math.abs(c.b-refZ);
+          const startZ = firstCut&&op.reverse ? (nearA?c.b:c.a) : (nearA?c.a:c.b);
           const endZ = startZ === c.a ? c.b : c.a;
 
           /* ایمنی اتصال مورب: اگر خط مستقیمِ بین انتهای مسیر قبل و ابتدای خط بعد   */
@@ -1629,7 +1638,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         note("ROUGHING - AXIAL PEEL");
         const stepZ = Math.max(0.5, p.doc);
         let nP = 0;
-        for (let z = z0; z <= zEnd + 1e-6; z += stepZ) {
+        const axialPositions:number[]=[];
+        for(let z=z0;z<=zEnd+1e-6;z+=stepZ)axialPositions.push(z);
+        if(op.reverse)axialPositions.reverse();
+        for (const z of axialPositions) {
           const target = offsetRadiusAt(z);
           if (target < R - 0.02) {
             if (nP === 0) note(`AXIAL STEP ${f2(stepZ)} MM`);
@@ -1656,7 +1668,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const span = samples.filter((s) => s.z >= iv.a - 1e-6 && s.z <= iv.b + 1e-6);
             if (span.length < 2) continue;
             const stride = Math.max(1, Math.floor(span.length / 42));
-            const pts = span.filter((_, i) => i % stride === 0 || i === span.length - 1);
+            const sampled = span.filter((_, i) => i % stride === 0 || i === span.length - 1);
+            const pts = op.reverse ? [...sampled].reverse() : sampled;
             mv(0, retractX, pts[0].z, 0, "rapid");
             mv(1, 2 * (pts[0].r + d), pts[0].z, p.feedRough * 0.7, "copy");
             for (let i = 1; i < pts.length; i++) mv(1, 2 * (pts[i].r + d), pts[i].z, p.feedRough, "copy");
@@ -1774,7 +1787,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(!clipped.length)return;
             if(!firstDirectionByGroup.has(group)){
               const currentR=Math.max(0,cur.x/2),nearLow=clipped[0].a,nearHigh=clipped[clipped.length-1].b;
-              firstDirectionByGroup.set(group,(!bottomToInnerRoughReady&&!bottomToInnerRoughDirect)||Math.abs(currentR-nearLow)<=Math.abs(currentR-nearHigh));
+              let initial=(!bottomToInnerRoughReady&&!bottomToInnerRoughDirect)||Math.abs(currentR-nearLow)<=Math.abs(currentR-nearHigh);
+              if(op.reverse)initial=!initial;
+              firstDirectionByGroup.set(group,initial);
             }
             const baseForward=firstDirectionByGroup.get(group)!;
             const forward=pass%2===0?baseForward:!baseForward;
@@ -1891,8 +1906,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const { layerZ, intervals: layerIntervals } = layerPlans[layerIndex];
           for (let intervalIndex = 0; intervalIndex < layerIntervals.length; intervalIndex++) {
             const interval = layerIntervals[intervalIndex];
-            const startR = Math.max(rEntry, interval.a);
-            const endR = Math.max(startR, interval.b);
+            const lowR = Math.max(rEntry, interval.a);
+            const highR = Math.max(lowR, interval.b);
+            const startR = op.reverse ? highR : lowR;
+            const endR = op.reverse ? lowR : highR;
             /* تضمین نهایی مستقل از تشخیص بازه: کل خط برش عمودی باید در سمت
                حفرهٔ آفست بماند، پس X پاس از راست‌ترین نقطه آفست در همان بازه
                کمتر نمی‌شود. */
@@ -1918,15 +1935,16 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               preparedForNextLayer = false;
             }
             mv(1, 2 * startR, cutZ, p.feedRough * 0.7, "bore");
-            if (endR > startR + 0.05) mv(1, 2 * endR, cutZ, p.feedRough, "bore");
+            if (Math.abs(endR-startR) > 0.05) mv(1, 2 * endR, cutZ, p.feedRough, "bore");
 
             if (nextInterval) {
-              const nextStartR = Math.max(endR, nextInterval.a);
+              const nextStartR = op.reverse ? Math.max(nextInterval.a,nextInterval.b) : Math.max(endR, nextInterval.a);
               /* اگر در ادامهٔ +Y باربرداری دیگری وجود دارد، بازگشت به محور ممنوع
                  است: ابتدا پشت راست‌ترین نقطهٔ قله ۰٫۵mm در +X فاصله می‌گیریم،
                  سپس در +Y از روی قله عبور می‌کنیم و از همان‌جا در −X وارد می‌شویم. */
+              const peakLo=Math.min(endR,nextStartR),peakHi=Math.max(endR,nextStartR);
               const peakPoints = mergedWall.filter((point) =>
-                point.r >= endR - 1e-7 && point.r <= nextStartR + 1e-7
+                point.r >= peakLo - 1e-7 && point.r <= peakHi + 1e-7
               );
               const peakZ = peakPoints.length ? Math.max(...peakPoints.map((point) => point.z)) : layerZ;
               const safePeakZ = Math.max(cutZ + 0.5, peakZ + 0.5);
@@ -1978,10 +1996,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         curOp = "inner-offset";
         if (!hasInner || IOD <= 0.01) break;
         note(`INNER OFFSET PASS ${f2(IOD)} MM (HOLDER ${op.holder})`);
-        const innerOff = innerFinishOffSamples;
-        if (innerOff.length < 2) break;
-        const zBot = innerOff[0].z;
-        const zRimF = innerOff[innerOff.length - 1].z;
+        const innerOffBase = innerFinishOffSamples;
+        if (innerOffBase.length < 2) break;
+        const zBot = innerOffBase[0].z;
+        const zRimF = innerOffBase[innerOffBase.length - 1].z;
+        const innerOff=op.reverse?[...innerOffBase].reverse():innerOffBase;
+        const startInnerZ=innerOff[0].z;
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zRimF + p.innerStartClearance;
         if (!innerCleared || curHolder !== 2) enterFirstInner(2 * rEntry, mouthX);
@@ -1989,10 +2009,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* از پایان خشن، با کوتاه‌ترین مسیر امن از قله‌ها به محور می‌رسیم؛ سپس
              روی محور تا کف می‌رویم و از همان‌جا پاس آفست را آغاز می‌کنیم. */
           moveInnerToAxisSafely();
-          rawRapid(0, zBot);
+          rawRapid(0, startInnerZ);
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
         } else {
-          mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "bore");
+          mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "bore");
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
         }
         /* خط بنفش فقط خود مسیر آفست دقیق است. */
@@ -2021,9 +2041,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         curOp = "inner-finish";
         if (!hasInner) break;
         note(`INNER FINISH - BOWL WALL (HOLDER ${op.holder})`);
-        const IW = innerFinishPath;
-        const zBot = IW[0].z;
-        const zRimF = IW[IW.length - 1].z;
+        const IWBase = innerFinishPath;
+        const zBot = IWBase[0].z;
+        const zRimF = IWBase[IWBase.length - 1].z;
+        const IW=op.reverse?[...IWBase].reverse():IWBase;
+        const startInnerZ=IW[0].z;
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
         const mouthX = zRimF + p.innerStartClearance;
@@ -2031,8 +2053,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (innerCleared) {
           /* مانند آفست: ابتدا از نزدیک‌ترین مسیر امن به محور، سپس روی محور تا کف. */
           moveInnerToAxisSafely();
-          rawRapid(2 * rEntry, zBot);
-        } else mv(1, 2 * rEntry, zBot, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
+          rawRapid(2 * rEntry, startInnerZ);
+        } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
         for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
@@ -2058,11 +2080,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            خط آفست با فاصله امن کامل)، سپس فرورفتن مورب کوتاه با فیدر.
            با گسترش G0 صفحه ورود ۳mm جلوتر است تا روی ورود آفست نیفتد. */
         {
-          const apX = Math.min(z0 + p.safety + (p.spreadG0 ? 3 : 0), zEnd);
+          const apX = op.reverse ? Math.max(zEnd-p.safety-(p.spreadG0?3:0),z0) : Math.min(z0 + p.safety + (p.spreadG0 ? 3 : 0), zEnd);
           const apR = Math.max(r0, radiusAt(apX)) + OD + p.safety;
           mv(0, 2 * apR, apX, 0, "rapid");
         }
-        profilePath("finish", p.feedFinish);
+        profilePath("finish", p.feedFinish, !!op.reverse);
         break;
       }
       /* آفست — خط موازی با طرح؛ مرجع مراحل خشن و نیمه‌پرداخت قبل از پرداخت */
@@ -2073,13 +2095,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           note(`OFFSET PASS +${f2(OD)} MM (PARALLEL TO PROFILE)`);
           /* ورود کوتاه: سریع تا بالای نقطه شروع (جلوتر از صفحه پیشانی)، سپس
              فرورفتن مورب کوتاه با فیدر — بدون فیدر طولانی روی صفحه تراش‌خورده */
+          const offsetPath=op.reverse?[...offSamples].reverse():offSamples;
           {
-            const apX = Math.min(z0 + p.safety, zEnd);
-            const apR = Math.max(offSamples[0].r, offsetRadiusAt(apX)) + p.safety;
+            const apX = op.reverse ? Math.max(zEnd-p.safety,z0) : Math.min(z0 + p.safety, zEnd);
+            const apR = Math.max(offsetPath[0].r, offsetRadiusAt(apX)) + p.safety;
             mv(0, 2 * apR, apX, 0, "rapid");
           }
-          mv(1, 2 * offSamples[0].r, offSamples[0].z, p.feedFinish, "offset");
-          for (let i = 1; i < offSamples.length; i++) mv(1, 2 * offSamples[i].r, offSamples[i].z, p.feedFinish, "offset");
+          mv(1, 2 * offsetPath[0].r, offsetPath[0].z, p.feedFinish, "offset");
+          for (let i = 1; i < offsetPath.length; i++) mv(1, 2 * offsetPath[i].r, offsetPath[i].z, p.feedFinish, "offset");
           mv(0, retractX, zEnd, 0, "rapid");
         }
         break;
