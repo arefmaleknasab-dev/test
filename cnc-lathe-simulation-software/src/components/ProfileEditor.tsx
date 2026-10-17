@@ -860,12 +860,27 @@ export default function ProfileEditor({
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
   const [selectedPaint,setSelectedPaint]=useState<number[]>([]);
   const [selectedPaintPoints,setSelectedPaintPoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
+  const [paintMarqueeHits,setPaintMarqueeHits]=useState<number[]>([]);
+  const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[]}|null>(null);
   useEffect(()=>{localStorage.setItem("kharraat-canvas-paint-v1",JSON.stringify(paintEdges));},[paintEdges]);
   const addPaintDraft=(points:SPoint[])=>{
     if(points.length<2)return;
     const stamp=Date.now();
-    setPaintEdges(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#45b394",text:"",arrowSize:8,dashed:false}))]);
+    setPaintEdges(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#ef4444",text:"",arrowSize:17,dashed:false}))]);
+  };
+  const paintHitsInRect=(rectW:{z0:number;z1:number;r0:number;r1:number},mode:"window"|"crossing")=>{
+    const inside=(p:SPoint)=>p.z>=rectW.z0&&p.z<=rectW.z1&&p.r>=rectW.r0&&p.r<=rectW.r1;
+    const orient=(a:SPoint,b:SPoint,c:SPoint)=>(b.z-a.z)*(c.r-a.r)-(b.r-a.r)*(c.z-a.z);
+    const crosses=(a:SPoint,b:SPoint)=>{
+      if(inside(a)||inside(b))return true;
+      const corners:SPoint[]=[{z:rectW.z0,r:rectW.r0},{z:rectW.z1,r:rectW.r0},{z:rectW.z1,r:rectW.r1},{z:rectW.z0,r:rectW.r1}];
+      return corners.some((c,i)=>{const q=corners[(i+1)%4];return orient(a,b,c)*orient(a,b,q)<=0&&orient(c,q,a)*orient(c,q,b)<=0;});
+    };
+    return {
+      ids:paintEdges.filter(edge=>mode==="window"?(inside(edge.a)&&inside(edge.b)):crosses(edge.a,edge.b)).map(edge=>edge.id),
+      points:paintEdges.flatMap(edge=>(["a","b"] as const).filter(part=>inside(edge[part])).map(point=>({id:edge.id,point}))),
+    };
   };
   useEffect(()=>{
     const move=(e:PointerEvent)=>{
@@ -3280,6 +3295,8 @@ export default function ProfileEditor({
         setMarqueeHits(marqueeHitIds(rectW, mode));
         setMarqueePointHits(marqueeHitPoints(rectW));
         setMarqueeSplitHit(marqueeHitsSplit(rectW));
+        const paintPreview=paintHitsInRect(rectW,mode);
+        setPaintMarqueeHits(paintPreview.ids);setPaintMarqueePoints(paintPreview.points);
       }
       return;
     }
@@ -3639,6 +3656,7 @@ export default function ProfileEditor({
       setMarqueeHits([]);
       setMarqueePointHits([]);
       setMarqueeSplitHit(false);
+      setPaintMarqueeHits([]);setPaintMarqueePoints([]);
       if (wasClick) {
         /* کلیک روی فضای خالی: بدون اصلاح‌کننده پاک‌کردن انتخاب المان‌ها و نقاط */
         if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -4323,6 +4341,7 @@ export default function ProfileEditor({
         }}
       >
         <defs>
+          <marker id="paintPreviewArrow" markerWidth="17" markerHeight="17" refX="15" refY="8.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L16 8.5L1 16Z" fill="#ef4444" /></marker>
           {/* userSpaceOnUse مانع صفرشدن محدوده فیلتر برای خطوط کاملاً افقی/عمودی می‌شود. */}
           <filter id="curveGlow" filterUnits="userSpaceOnUse" x="-10000" y="-10000" width="20000" height="20000">
             <feGaussianBlur stdDeviation="3" result="b" />
@@ -4701,45 +4720,19 @@ export default function ProfileEditor({
         {/* پیش‌نمایش ترسیم */}
         {previewSeg && (
           <g>
-            {(tool === "polyline" || tool === "paint") && draft.length > 1 && (
-              <path
-                d={draft.map((point, index) => `${index ? "L" : "M"}${P(point.z, point.r)[0]},${P(point.z, point.r)[1]}`).join(" ")}
-                fill="none"
-                stroke="#45b394"
-                strokeWidth={2.2}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                pointerEvents="none"
-              />
-            )}
-            {straightDrawing && measuredLineEnd && lineCursor ? (
+            {tool==="paint"&&draft.length>1
+              ? draft.slice(1).map((point,index)=><line key={index} x1={P(draft[index].z,draft[index].r)[0]} y1={P(draft[index].z,draft[index].r)[1]} x2={P(point.z,point.r)[0]} y2={P(point.z,point.r)[1]} stroke="#ef4444" strokeWidth={profileLineWidth} markerEnd="url(#paintPreviewArrow)" pointerEvents="none" />)
+              : tool==="polyline"&&draft.length>1&&<path d={draft.map((point,index)=>`${index?"L":"M"}${P(point.z,point.r)[0]},${P(point.z,point.r)[1]}`).join(" ")} fill="none" stroke="#45b394" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
+            }
+            {tool==="paint" ? (
+              <path d={segPath(previewSeg,cam)} fill="none" stroke="#ef4444" strokeWidth={profileLineWidth} markerEnd="url(#paintPreviewArrow)" pointerEvents="none" />
+            ) : straightDrawing && measuredLineEnd && lineCursor ? (
               <>
                 <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeLinecap="round" opacity={0.95} />
-                {/* نقطه دوم روی انتهای واقعیِ طول عددی قرار می‌گیرد. */}
-                <circle
-                  cx={P(measuredLineEnd.z, measuredLineEnd.r)[0]}
-                  cy={P(measuredLineEnd.z, measuredLineEnd.r)[1]}
-                  r={4.5}
-                  fill="#0f2a22"
-                  stroke="#45b394"
-                  strokeWidth={2}
-                  pointerEvents="none"
-                />
-                <line
-                  x1={P(measuredLineEnd.z, measuredLineEnd.r)[0]}
-                  y1={P(measuredLineEnd.z, measuredLineEnd.r)[1]}
-                  x2={P(lineCursor.z, lineCursor.r)[0]}
-                  y2={P(lineCursor.z, lineCursor.r)[1]}
-                  stroke="#6ab0d8"
-                  strokeWidth={1.5}
-                  strokeDasharray="5 4"
-                  strokeLinecap="round"
-                  pointerEvents="none"
-                />
+                <circle cx={P(measuredLineEnd.z, measuredLineEnd.r)[0]} cy={P(measuredLineEnd.z, measuredLineEnd.r)[1]} r={4.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2} pointerEvents="none" />
+                <line x1={P(measuredLineEnd.z, measuredLineEnd.r)[0]} y1={P(measuredLineEnd.z, measuredLineEnd.r)[1]} x2={P(lineCursor.z,lineCursor.r)[0]} y2={P(lineCursor.z,lineCursor.r)[1]} stroke="#6ab0d8" strokeWidth={1.5} strokeDasharray="5 4" strokeLinecap="round" pointerEvents="none" />
               </>
-            ) : (
-              <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeDasharray="6 4" strokeLinecap="round" opacity={0.95} />
-            )}
+            ) : <path d={segPath(previewSeg,cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeDasharray="6 4" strokeLinecap="round" opacity={0.95} />}
             {previewSeg.kind === "cubic" && previewSeg.c1 && previewSeg.c2 ? (
               <>
                 {/* خطوط اتصال دسته‌ها به نقاط انتهایی */}
@@ -4752,22 +4745,22 @@ export default function ProfileEditor({
                 <circle cx={P(previewSeg.c1.z, previewSeg.c1.r)[0]} cy={P(previewSeg.c1.z, previewSeg.c1.r)[1]} r={draftSecondSet.current ? 6 : 4} fill="#1b2a33" stroke={draftSecondSet.current ? "#f3c26b" : "#6ab0d8"} strokeWidth={2} />
                 <circle cx={P(previewSeg.c2.z, previewSeg.c2.r)[0]} cy={P(previewSeg.c2.z, previewSeg.c2.r)[1]} r={!draftSecondSet.current ? 6 : 4} fill="#1b2a33" stroke={!draftSecondSet.current ? "#f3c26b" : "#6ab0d8"} strokeWidth={2} />
               </>
-            ) : (
+            ) : tool!=="paint" ? (
               draft.map((p, i) => (
                 <circle key={i} cx={P(p.z, p.r)[0]} cy={P(p.z, p.r)[1]} r={4.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2} />
               ))
-            )}
+            ) : null}
           </g>
         )}
         {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
             صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
-        {tool !== "select" && tool !== "move" && tool !== "rotate" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && tool !== "boxscale" && cursor && drag.current?.mode !== "handle" &&
+        {tool !== "paint" && tool !== "select" && tool !== "move" && tool !== "rotate" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && tool !== "boxscale" && cursor && drag.current?.mode !== "handle" &&
           !(straightDrawing && measuredLineEnd) && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
         {/* نشانگر اسنپ */}
-        {snapHit && !(tool === "boxscale" && snapHit.type === "grid") && !(straightDrawing && measuredLineEnd) && (
+        {tool!=="paint" && snapHit && !(tool === "boxscale" && snapHit.type === "grid") && !(straightDrawing && measuredLineEnd) && (
           <g>
             <rect
               x={P(snapHit.p.z, snapHit.p.r)[0] - 6}
@@ -5054,7 +5047,7 @@ export default function ProfileEditor({
         {/* بالاترین لایه بوم: خطوط نمایشی جهت‌دار، انتخاب و Handle نقاط. */}
         {showCanvasPaintTool&&paintEdges.map(edge=>{
           const ax=cam.ox+edge.a.z*cam.s,ay=cam.oy-edge.a.r*cam.s,bx=cam.ox+edge.b.z*cam.s,by=cam.oy-edge.b.r*cam.s;
-          const angle=Math.atan2(by-ay,bx-ax),size=edge.arrowSize,active=selectedPaint.includes(edge.id),pointActive=selectedPaintPoints.some(p=>p.id===edge.id);
+          const angle=Math.atan2(by-ay,bx-ax),size=edge.arrowSize,active=selectedPaint.includes(edge.id),highlighted=active||paintMarqueeHits.includes(edge.id),pointActive=selectedPaintPoints.some(p=>p.id===edge.id)||paintMarqueePoints.some(p=>p.id===edge.id);
           const points=`${bx},${by} ${bx-Math.cos(angle-.55)*size},${by-Math.sin(angle-.55)*size} ${bx-Math.cos(angle+.55)*size},${by-Math.sin(angle+.55)*size}`;
           const canManipulate=tool==="select"||tool==="move"||tool==="paint";
           const begin=(e:ReactPointerEvent<SVGElement>,point?:"a"|"b")=>{
@@ -5065,12 +5058,12 @@ export default function ProfileEditor({
             paintDrag.current={ids,point,pointId:point?edge.id:undefined,start:{z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s},base:paintEdges.map(x=>({...x,a:{...x.a},b:{...x.b}}))};
           };
           return <g key={edge.id}>
-            {active&&<line x1={ax} y1={ay} x2={bx} y2={by} stroke="#fff" strokeOpacity={.9} strokeWidth={profileLineWidth+5} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />}
+            {highlighted&&<line x1={ax} y1={ay} x2={bx} y2={by} stroke="#fff" strokeOpacity={.9} strokeWidth={profileLineWidth+5} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />}
             <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />
-            <polygon points={points} fill={edge.color} stroke={active?"#fff":"none"} strokeWidth={active?1.5:0} pointerEvents="none" />
+            <polygon points={points} fill={edge.color} stroke={highlighted?"#fff":"none"} strokeWidth={highlighted?1.5:0} pointerEvents="none" />
             {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={12} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={3} pointerEvents="none">{edge.text}</text>}
             <line data-paint-hit="true" x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setSelectedPaintPoints([]);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
-            {(active||pointActive)&&<><circle data-paint-hit="true" cx={ax} cy={ay} r={5} fill={selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="a")?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle data-paint-hit="true" cx={bx} cy={by} r={5} fill={selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="b")?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
+            {(active||pointActive)&&<><circle data-paint-hit="true" cx={ax} cy={ay} r={5} fill={(selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="a")||paintMarqueePoints.some(p=>p.id===edge.id&&p.point==="a"))?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle data-paint-hit="true" cx={bx} cy={by} r={5} fill={(selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="b")||paintMarqueePoints.some(p=>p.id===edge.id&&p.point==="b"))?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
           </g>;
         })}
 
