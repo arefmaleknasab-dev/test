@@ -1769,6 +1769,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           return maximum;
         };
+        /* برای عبور امن خشن داخل، سمت آزاد پروفایل در جهت −X است. کمترین X
+           واقعی شاخه آفست در بازه شعاعی مبنای صفحه عبور قرار می‌گیرد. */
+        const minWallZBetween = (a:number,b:number):number => {
+          const lo=Math.min(a,b),hi=Math.max(a,b);
+          let minimum=Infinity;
+          for(const point of innerFinishOffSamples)if(point.r>=lo-1e-7&&point.r<=hi+1e-7)minimum=Math.min(minimum,point.z);
+          if(!Number.isFinite(minimum))minimum=Math.min(wallZAtR(lo),wallZAtR(hi));
+          return minimum;
+        };
 
         note(`INNER VERTICAL LAYERS ${layers.length} x ${f2(step)} MM`);
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
@@ -1890,10 +1899,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               if(nextPass||(sameZone&&innerLinkIsSafe(end,ns))){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
-                /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
-                   جمع می‌شود؛ بازگشت کامل به صفحه دهانه انجام نمی‌شود. */
-                const safeZ=Math.max(maxWallZBetween(Math.min(end.r,ns.r),Math.max(end.r,ns.r))+p.safety,end.z,ns.z);
-                if(safeZ>end.z+1e-7)rawRapid(2*end.r,safeZ);
+                /* اتصال امن باید در سمت −X آفست انجام شود: ابتدا در همان Y به
+                   صفحه‌ای پایین‌تر از عمیق‌ترین قله می‌رویم، سپس Y و در پایان
+                   به X پاس بعدی وارد می‌شویم. این مسیر از داخل پروفایل نمی‌گذرد. */
+                const safeZ=Math.min(end.z,ns.z,minWallZBetween(end.r,ns.r)-p.safety);
+                if(safeZ<end.z-1e-7)rawRapid(2*end.r,safeZ);
                 rawRapid(2*ns.r,safeZ);
                 mv(1,2*ns.r,ns.z,p.feedRough*0.7,"bore");
               }
@@ -1945,41 +1955,26 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
 
             if (nextInterval) {
               const nextStartR = op.reverse ? Math.max(nextInterval.a,nextInterval.b) : Math.max(endR, nextInterval.a);
-              /* اگر در ادامهٔ +Y باربرداری دیگری وجود دارد، بازگشت به محور ممنوع
-                 است: ابتدا پشت راست‌ترین نقطهٔ قله ۰٫۵mm در +X فاصله می‌گیریم،
-                 سپس در +Y از روی قله عبور می‌کنیم و از همان‌جا در −X وارد می‌شویم. */
-              const peakLo=Math.min(endR,nextStartR),peakHi=Math.max(endR,nextStartR);
-              const peakPoints = mergedWall.filter((point) =>
-                point.r >= peakLo - 1e-7 && point.r <= peakHi + 1e-7
-              );
-              const peakZ = peakPoints.length ? Math.max(...peakPoints.map((point) => point.z)) : layerZ;
-              const safePeakZ = Math.max(cutZ + 0.5, peakZ + 0.5);
-              rawRapid(2 * endR, safePeakZ);       // +X تا پشت قله
-              rawRapid(2 * nextStartR, safePeakZ); // +Y با حفظ فاصله امن
+              /* بین بازه‌های جدا ابتدا در −X از عمیق‌ترین قله فاصله امن می‌گیریم،
+                 سپس در Y جابه‌جا می‌شویم؛ بنابراین خط عبور وارد پروفایل نمی‌شود. */
+              const safePeakZ = Math.min(cutZ - p.safety, minWallZBetween(endR,nextStartR) - p.safety);
+              rawRapid(2 * endR, safePeakZ);       // −X تا صفحه امن
+              rawRapid(2 * nextStartR, safePeakZ); // Y با حفظ فاصله امن
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
               const nextLayerFirst = layerPlans[layerIndex + 1]?.intervals[0];
               const nextLayerStartR = nextLayerFirst ? Math.max(rEntry, nextLayerFirst.a) : 0;
               if (nextLayerFirst && nextLayerStartR > 1e-7) {
-                /* اگر پاس بعدی از محور فاصله دارد، برگشت کامل تا R=0 حذف می‌شود.
-                   ابزار پشت موانع در +X امن می‌شود، فقط در −Y تا شعاع شروع پاس
-                   بعدی می‌آید و از همان نقطه مستقیماً در −X باربرداری می‌کند. */
-                const loR = Math.min(endR, nextLayerStartR);
-                const hiR = Math.max(endR, nextLayerStartR);
-                const blockers = mergedWall.filter((point) =>
-                  point.r >= loR - 1e-7 && point.r <= hiR + 1e-7
-                );
-                const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-                const safeReturnZ = Math.max(cutZ + 0.5, blockingZ + 0.5);
+                /* اگر پاس بعدی از محور فاصله دارد، ابزار در سمت امن −X فقط تا
+                   شعاع شروع پاس بعدی جابه‌جا می‌شود و به محور برنمی‌گردد. */
+                const safeReturnZ = Math.min(cutZ-p.safety,minWallZBetween(endR,nextLayerStartR)-p.safety);
                 rawRapid(2 * endR, safeReturnZ);
-                rawRapid(2 * nextLayerStartR, safeReturnZ); // −Y فقط تا سر شروع پاس بعدی
+                rawRapid(2 * nextLayerStartR, safeReturnZ); // Y روی صفحه امن −X
                 preparedForNextLayer = true;
               } else {
                 /* فقط وقتی پاس بعدی از محور شروع می‌شود (یا پاس دیگری نیست)،
                    بازگشت کامل به محور دوران انجام می‌گیرد. */
-                const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
-                const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-                const safeReturnZ = Math.max(cutZ + 0.5, blockingZ + 0.5);
+                const safeReturnZ = Math.min(cutZ-p.safety,minWallZBetween(0,endR)-p.safety);
                 rawRapid(2 * endR, safeReturnZ);
                 rawRapid(0, safeReturnZ);
               }
