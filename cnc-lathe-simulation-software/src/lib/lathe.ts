@@ -1878,9 +1878,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(next){
               const ns=next.points[0];
               const sameZone=next.group===contour.group;
-              /* داخل یک ناحیه، حتی اگر دو سر پاس دقیقاً هم‌شعاع نباشند، در صورت
-                 آزادبودن پاره‌خط مستقیماً از نزدیک‌ترین مسیر وصل می‌شوند. */
-              if(sameZone&&innerLinkIsSafe(end,ns)){
+              const nextPass=sameZone&&next.pass!==contour.pass;
+              /* اتصال انتهای هر پاس به شروع پاس بعدی همیشه یک G1 مستقیم است؛
+                 بنابراین زیگزاگ بدون +X/Y/−X اضافی ادامه پیدا می‌کند. آزمون
+                 برخورد فقط میان چند بازه جدا درون همان پاس حفظ می‌شود. */
+              if(nextPass||(sameZone&&innerLinkIsSafe(end,ns))){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
                 /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
