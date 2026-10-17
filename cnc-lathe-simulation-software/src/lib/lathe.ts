@@ -1883,11 +1883,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(next){
               const ns=next.points[0];
               const sameZone=next.group===contour.group;
-              const nextPass=sameZone&&next.pass!==contour.pass;
-              /* اتصال انتهای هر پاس به شروع پاس بعدی همیشه یک G1 مستقیم است؛
-                 بنابراین زیگزاگ بدون +X/Y/−X اضافی ادامه پیدا می‌کند. آزمون
-                 برخورد فقط میان چند بازه جدا درون همان پاس حفظ می‌شود. */
-              if(nextPass||(sameZone&&innerLinkIsSafe(end,ns))){
+              /* اتصال اجباری nextPass علت عبور از آفست بود: نتیجه آزمون برخورد
+                 نادیده گرفته می‌شد. اکنون اتصال مستقیم همه پاس‌ها فقط زمانی
+                 مجاز است که کل پاره‌خط در محدوده آزاد باقی بماند. */
+              if(sameZone&&innerLinkIsSafe(end,ns)){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
                 /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
