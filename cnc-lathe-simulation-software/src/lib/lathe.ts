@@ -1786,10 +1786,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const clipped=plan.intervals.map(iv=>({a:Math.max(iv.a,lo),b:Math.min(iv.b,hi)})).filter(iv=>iv.b-iv.a>0.05);
             if(!clipped.length)return;
             if(!firstDirectionByGroup.has(group)){
-              const currentR=Math.max(0,cur.x/2),nearLow=clipped[0].a,nearHigh=clipped[clipped.length-1].b;
-              let initial=(!bottomToInnerRoughReady&&!bottomToInnerRoughDirect)||Math.abs(currentR-nearLow)<=Math.abs(currentR-nearHigh);
-              if(op.reverse)initial=!initial;
-              firstDirectionByGroup.set(group,initial);
+              /* جهت هر عملیات مستقل است. موقعیت انتهایی کف‌تراشی نباید جهت
+                 اولین پاس خشن داخل را عوض کند؛ فقط دکمه همان inner-rough مجاز
+                 به معکوس‌کردن شروع از محور/بیرون است. */
+              firstDirectionByGroup.set(group,!op.reverse);
             }
             const baseForward=firstDirectionByGroup.get(group)!;
             const forward=pass%2===0?baseForward:!baseForward;
