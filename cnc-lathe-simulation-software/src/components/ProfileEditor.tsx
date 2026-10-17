@@ -858,16 +858,24 @@ export default function ProfileEditor({
     try{return JSON.parse(localStorage.getItem("kharraat-canvas-paint-v1")||"[]") as PaintEdge[];}catch{return [];}
   });
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
+  const paintPast=useRef<PaintEdge[][]>([]),paintFuture=useRef<PaintEdge[][]>([]);
+  const [,setPaintHistoryVersion]=useState(0);
+  const clonePaint=(edges:PaintEdge[])=>edges.map(edge=>({...edge,a:{...edge.a},b:{...edge.b}}));
+  const commitPaint=(updater:(current:PaintEdge[])=>PaintEdge[])=>setPaintEdges(current=>{
+    paintPast.current.push(clonePaint(current));if(paintPast.current.length>100)paintPast.current.shift();paintFuture.current=[];setPaintHistoryVersion(v=>v+1);return updater(current);
+  });
+  const undoPaint=()=>{const previous=paintPast.current.pop();if(!previous)return;setPaintEdges(current=>{paintFuture.current.push(clonePaint(current));return clonePaint(previous);});setPaintHistoryVersion(v=>v+1);};
+  const redoPaint=()=>{const next=paintFuture.current.pop();if(!next)return;setPaintEdges(current=>{paintPast.current.push(clonePaint(current));return clonePaint(next);});setPaintHistoryVersion(v=>v+1);};
   const [selectedPaint,setSelectedPaint]=useState<number[]>([]);
   const [selectedPaintPoints,setSelectedPaintPoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const [paintMarqueeHits,setPaintMarqueeHits]=useState<number[]>([]);
   const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
-  const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[]}|null>(null);
+  const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
   useEffect(()=>{localStorage.setItem("kharraat-canvas-paint-v1",JSON.stringify(paintEdges));},[paintEdges]);
   const addPaintDraft=(points:SPoint[])=>{
     if(points.length<2)return;
     const stamp=Date.now();
-    setPaintEdges(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#ef4444",text:"",arrowSize:17,dashed:false}))]);
+    commitPaint(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#ef4444",text:"",arrowSize:17,dashed:false}))]);
   };
   const paintHitsInRect=(rectW:{z0:number;z1:number;r0:number;r1:number},mode:"window"|"crossing")=>{
     const inside=(p:SPoint)=>p.z>=rectW.z0&&p.z<=rectW.z1&&p.r>=rectW.r0&&p.r<=rectW.r1;
@@ -888,6 +896,7 @@ export default function ProfileEditor({
       if(!d||!rect||!cam)return;
       const now={z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s};
       const dz=now.z-d.start.z,dr=now.r-d.start.r;
+      if(Math.hypot(dz,dr)>1e-7)d.moved=true;
       setPaintEdges(all=>{
         const selectedBases=d.base.filter(x=>d.ids.includes(x.id));
         /* نقاط مشترک خطوط مجاور همراه نقطه اتصال حرکت می‌کنند، اما سر دیگر
@@ -907,7 +916,7 @@ export default function ProfileEditor({
         });
       });
     };
-    const up=()=>{paintDrag.current=null;};
+    const up=()=>{const d=paintDrag.current;if(d?.moved){paintPast.current.push(clonePaint(d.base));if(paintPast.current.length>100)paintPast.current.shift();paintFuture.current=[];setPaintHistoryVersion(v=>v+1);}paintDrag.current=null;};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
     return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};
   },[cam]);
@@ -1417,12 +1426,12 @@ export default function ProfileEditor({
       const redoKey = e.code === "KeyY" || k === "y";
       if ((e.ctrlKey || e.metaKey) && undoKey && !e.shiftKey) {
         e.preventDefault();
-        onUndo();
+        if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintPast.current.length)undoPaint();else onUndo();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && (redoKey || (e.shiftKey && undoKey))) {
         e.preventDefault();
-        onRedo();
+        if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintFuture.current.length)redoPaint();else onRedo();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && k === "d") {
@@ -1512,7 +1521,7 @@ export default function ProfileEditor({
       }
       if (e.key === "Delete" || e.key === "Backspace") {
         if(selectedPaint.length){
-          e.preventDefault();setPaintEdges(all=>all.filter(edge=>!selectedPaint.includes(edge.id)));setSelectedPaint([]);setPaintMenu(null);return;
+          e.preventDefault();commitPaint(all=>all.filter(edge=>!selectedPaint.includes(edge.id)));setSelectedPaint([]);setPaintMenu(null);return;
         }
         if (splitSelected) {
           e.preventDefault();
@@ -5069,13 +5078,13 @@ export default function ProfileEditor({
 
       </svg>
 
-      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>setPaintEdges(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];const menuLeft=Math.max(8,Math.min(paintMenu.x,window.innerWidth-248)),menuTop=Math.max(8,Math.min(paintMenu.y,window.innerHeight-390));return <div className="fixed z-[90] w-60 rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:menuLeft,top:menuTop}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
+      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>commitPaint(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];const menuLeft=Math.max(8,Math.min(paintMenu.x,window.innerWidth-128)),menuTop=Math.max(8,Math.min(paintMenu.y,window.innerHeight-200));return <div className="fixed z-[90] w-60 origin-top-left scale-50 rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:menuLeft,top:menuTop}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
         <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
         <label className="block text-[9.5px] text-mute">نوشته روی ضلع<input autoFocus value={edge.text} onChange={e=>patch({text:e.target.value})} className="field-input mt-1" /></label>
         <div className="mt-3 text-[9.5px] text-mute">رنگ ضلع<div dir="ltr" className="mt-2 grid grid-cols-5 gap-2">{colors.map(color=><button key={color} onClick={()=>patch({color})} className="h-7 w-7 rounded-full border-2 shadow" style={{background:color,borderColor:ids.every(id=>paintEdges.find(x=>x.id===id)?.color===color)?"white":"transparent"}} />)}<label className="relative h-7 w-7 cursor-pointer overflow-hidden rounded-full border-2 border-white/50" style={{background:"conic-gradient(red,#ff0,lime,cyan,blue,#f0f,red)"}} title="رنگ دلخواه"><input type="color" value={edge.color} onChange={e=>patch({color:e.target.value})} className="absolute inset-0 h-full w-full cursor-pointer opacity-0" /></label></div></div>
         <div className="mt-3 grid grid-cols-2 overflow-hidden rounded border border-edge"><button onClick={()=>patch({dashed:false})} className={cn("py-2 text-[10px] font-bold",!edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط صاف</button><button onClick={()=>patch({dashed:true})} className={cn("border-r border-edge py-2 text-[10px] font-bold",edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط‌چین</button></div>
         <label className="mt-3 block text-[9.5px] text-mute">اندازه فلش: <b className="text-ink">{edge.arrowSize}px</b><input type="range" min={4} max={24} step={1} value={edge.arrowSize} onChange={e=>patch({arrowSize:Number(e.target.value)})} className="mt-2 w-full accent-[#45b394]" /></label>
-        <button onClick={()=>{setPaintEdges(all=>all.filter(x=>!ids.includes(x.id)));setSelectedPaint([]);setPaintMenu(null);}} className="mt-3 w-full rounded border border-red-500/40 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10">حذف خطوط انتخاب‌شده</button>
+        <button onClick={()=>{commitPaint(all=>all.filter(x=>!ids.includes(x.id)));setSelectedPaint([]);setPaintMenu(null);}} className="mt-3 w-full rounded border border-red-500/40 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10">حذف خطوط انتخاب‌شده</button>
       </div>})()}
 
       {boxRotateBox && boxRotateSession && <div className="absolute z-50" style={{left:boxRotateBox.x,top:boxRotateBox.y,width:`${Math.max(72,28+boxRotateBox.value.length*8)}px`}} dir="ltr">
@@ -5491,10 +5500,10 @@ export default function ProfileEditor({
         </div>
 
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          <button onClick={onUndo} disabled={!canUndo} title="واگرد (Ctrl+Z)" className={cn("grid h-[27px] w-full place-items-center transition-colors", canUndo ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
+          <button onClick={()=>paintPast.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?undoPaint():onUndo()} disabled={!canUndo&&!paintPast.current.length} title="واگرد (Ctrl+Z)" className={cn("grid h-[27px] w-full place-items-center transition-colors",(canUndo||paintPast.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
             <IconUndo className="h-3.5 w-3.5" />
           </button>
-          <button onClick={onRedo} disabled={!canRedo} title="بازانجام (Ctrl+Y)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", canRedo ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
+          <button onClick={()=>paintFuture.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?redoPaint():onRedo()} disabled={!canRedo&&!paintFuture.current.length} title="بازانجام (Ctrl+Y)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors",(canRedo||paintFuture.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
             <IconRedo className="h-3.5 w-3.5" />
           </button>
           <button onClick={duplicateSelected} disabled={!selected.length} title="کپی المان‌های انتخابی (Ctrl+D)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", selected.length ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
