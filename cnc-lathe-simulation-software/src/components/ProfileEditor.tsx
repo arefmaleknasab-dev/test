@@ -873,12 +873,24 @@ export default function ProfileEditor({
       if(!d||!rect||!cam)return;
       const now={z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s};
       const dz=now.z-d.start.z,dr=now.r-d.start.r;
-      setPaintEdges(all=>all.map(edge=>{
-        const base=d.base.find(x=>x.id===edge.id);if(!base)return edge;
-        if(d.point&&d.pointId===edge.id)return {...base,[d.point]:{z:base[d.point].z+dz,r:base[d.point].r+dr}};
-        if(d.ids.includes(edge.id))return {...base,a:{z:base.a.z+dz,r:base.a.r+dr},b:{z:base.b.z+dz,r:base.b.r+dr}};
-        return edge;
-      }));
+      setPaintEdges(all=>{
+        const selectedBases=d.base.filter(x=>d.ids.includes(x.id));
+        /* نقاط مشترک خطوط مجاور همراه نقطه اتصال حرکت می‌کنند، اما سر دیگر
+           خط قبل/بعد ثابت می‌ماند؛ بنابراین Polyline کش می‌آید و گسسته نمی‌شود. */
+        const movingAnchors:SPoint[]=d.point
+          ? selectedBases.filter(x=>x.id===d.pointId).map(x=>x[d.point!])
+          : selectedBases.flatMap(x=>[x.a,x.b]);
+        const matches=(p:SPoint)=>movingAnchors.some(q=>Math.hypot(p.z-q.z,p.r-q.r)<1e-6);
+        return all.map(edge=>{
+          const base=d.base.find(x=>x.id===edge.id);if(!base)return edge;
+          if(d.point&&d.pointId===edge.id)return {...base,[d.point]:{z:base[d.point].z+dz,r:base[d.point].r+dr}};
+          if(d.ids.includes(edge.id))return {...base,a:{z:base.a.z+dz,r:base.a.r+dr},b:{z:base.b.z+dz,r:base.b.r+dr}};
+          return {...base,
+            a:matches(base.a)?{z:base.a.z+dz,r:base.a.r+dr}:base.a,
+            b:matches(base.b)?{z:base.b.z+dz,r:base.b.r+dr}:base.b,
+          };
+        });
+      });
     };
     const up=()=>{paintDrag.current=null;};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
@@ -4267,7 +4279,12 @@ export default function ProfileEditor({
                     : "cursor-move"
                   : "cursor-default"
         )}
-        onPointerDownCapture={()=>{if(paintMenu)setPaintMenu(null);}}
+        onPointerDownCapture={e=>{
+          if(paintMenu)setPaintMenu(null);
+          if(!(e.target as Element).closest("[data-paint-hit]")){
+            setSelectedPaint([]);setSelectedPaintPoint(null);
+          }
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -5031,14 +5048,14 @@ export default function ProfileEditor({
             <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />
             <polygon points={points} fill={edge.color} stroke={active?"#fff":"none"} strokeWidth={active?1.5:0} pointerEvents="none" />
             {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={12} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={3} pointerEvents="none">{edge.text}</text>}
-            <line x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
-            {active&&<><circle cx={ax} cy={ay} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="a"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle cx={bx} cy={by} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="b"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
+            <line data-paint-hit="true" x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setSelectedPaintPoint(null);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
+            {active&&<><circle data-paint-hit="true" cx={ax} cy={ay} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="a"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle data-paint-hit="true" cx={bx} cy={by} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="b"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
           </g>;
         })}
 
       </svg>
 
-      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>setPaintEdges(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];return <div className="fixed z-[90] w-60 rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:paintMenu.x,top:paintMenu.y}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
+      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>setPaintEdges(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];const menuLeft=Math.max(8,Math.min(paintMenu.x,window.innerWidth-248)),menuTop=Math.max(8,Math.min(paintMenu.y,window.innerHeight-390));return <div className="fixed z-[90] w-60 rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:menuLeft,top:menuTop}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
         <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
         <label className="block text-[9.5px] text-mute">نوشته روی ضلع<input autoFocus value={edge.text} onChange={e=>patch({text:e.target.value})} className="field-input mt-1" /></label>
         <div className="mt-3 text-[9.5px] text-mute">رنگ ضلع<div dir="ltr" className="mt-2 grid grid-cols-5 gap-2">{colors.map(color=><button key={color} onClick={()=>patch({color})} className="h-7 w-7 rounded-full border-2 shadow" style={{background:color,borderColor:ids.every(id=>paintEdges.find(x=>x.id===id)?.color===color)?"white":"transparent"}} />)}<label className="relative h-7 w-7 cursor-pointer overflow-hidden rounded-full border-2 border-white/50" style={{background:"conic-gradient(red,#ff0,lime,cyan,blue,#f0f,red)"}} title="رنگ دلخواه"><input type="color" value={edge.color} onChange={e=>patch({color:e.target.value})} className="absolute inset-0 h-full w-full cursor-pointer opacity-0" /></label></div></div>
