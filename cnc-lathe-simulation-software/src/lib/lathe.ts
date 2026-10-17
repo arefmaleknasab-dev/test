@@ -1728,7 +1728,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              بار قطع می‌کنند حذف می‌کرد. Scanline همه تقاطع‌های قله/دره و قوس را
              نگه می‌دارد و بازه‌های واقعی قابل‌ماشین‌کاری را جفت می‌کند. */
           const boundary=innerFinishOffSamples.map(q=>({r:Math.max(0,q.r),z:q.z+roughOffsetClearance}));
-          const polygon=[{r:0,z:boundary[0].z},...boundary,{r:0,z:boundary[boundary.length-1].z}];
+          /* ناحیه داخلی در سمت دهانه (+X) خط پروفایل قرار دارد. بستن چندضلعی
+             روی محور R=0، مثلث میان Split روی قوس بیرونی و صفحه دهانه را بیرون
+             می‌انداخت. دو سر شاخه به صفحه واقعی آخرین کف‌تراشی/انتهای خام بسته
+             می‌شوند تا کل دهانه، از جمله ناحیه کنار Split، داخل خشن‌کاری باشد. */
+          const mouthPlaneZ=bottomCoveredFromZ??p.blankL;
+          const polygon=[...boundary,{r:boundary[boundary.length-1].r,z:mouthPlaneZ},{r:boundary[0].r,z:mouthPlaneZ}];
           const hits:number[]=[];
           for(let i=0;i<polygon.length;i++){
             const a=polygon[i],b=polygon[(i+1)%polygon.length];
