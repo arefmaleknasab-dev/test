@@ -91,7 +91,7 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "move" | "rotate" | "boxscale" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "paint" | "move" | "rotate" | "boxscale" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
@@ -104,16 +104,18 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
+  { id: "paint", name: "نقاشی جهت‌دار", key: "N", icon: <IconPolyline className="h-4 w-4" />, hint: "خط نمایشی جهت‌دار؛ بدون تأثیر بر G-code" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
   { id: "arc", name: "کمان", key: "A", icon: <IconArc3 className="h-4 w-4" />, hint: "کمان سه‌نقطه‌ای: شروع، پایان، نقطه‌ای روی کمان" },
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, move: 0, rotate: 0, boxscale: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, paint: 0, move: 0, rotate: 0, boxscale: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
+  paint: ["نقطه شروع نقاشی", "نقطه بعدی — Enter پایان"],
   move: [],
   rotate: [],
   boxscale: [],
@@ -159,6 +161,17 @@ interface Props {
   onEditCancel: () => void;
   onEditDiscard: () => void;
   keepEditDraft: boolean;
+  showCanvasPaintTool: boolean;
+  profileLineWidth: number;
+}
+
+interface PaintEdge {
+  id: number;
+  a: SPoint;
+  b: SPoint;
+  color: string;
+  text: string;
+  arrowSize: number;
 }
 
 interface Cam {
@@ -831,6 +844,8 @@ export default function ProfileEditor({
   onEditCancel,
   onEditDiscard,
   keepEditDraft,
+  showCanvasPaintTool,
+  profileLineWidth,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -838,6 +853,16 @@ export default function ProfileEditor({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cam, setCam] = useState<Cam | null>(null);
   const [tool, setTool] = useState<Tool>("select");
+  const [paintEdges,setPaintEdges]=useState<PaintEdge[]>(()=>{
+    try{return JSON.parse(localStorage.getItem("kharraat-canvas-paint-v1")||"[]") as PaintEdge[];}catch{return [];}
+  });
+  const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
+  useEffect(()=>{localStorage.setItem("kharraat-canvas-paint-v1",JSON.stringify(paintEdges));},[paintEdges]);
+  const addPaintDraft=(points:SPoint[])=>{
+    if(points.length<2)return;
+    const stamp=Date.now();
+    setPaintEdges(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#45b394",text:"",arrowSize:8}))]);
+  };
   const toolRef = useRef<Tool>("select");
   const previousToolRef = useRef<Tool>("select");
   const chooseTool = (next: Tool) => {
@@ -1220,7 +1245,7 @@ export default function ProfileEditor({
 
       /* ورود طول مستقیم برای Line و هر بخش Polyline. */
       const drawingStraight = !editOpen &&
-        ((tool === "line" && draft.length === 1) || (tool === "polyline" && draft.length >= 1));
+        ((tool === "line" && draft.length === 1) || ((tool === "polyline" || tool === "paint") && draft.length >= 1));
       if (drawingStraight && !e.ctrlKey && !e.metaKey && !e.altKey) {
         if (/^\d$/.test(e.key)) {
           e.preventDefault();
@@ -1239,7 +1264,7 @@ export default function ProfileEditor({
         }
         if (e.key === "Enter" && measuredLineEnd) {
           e.preventDefault();
-          if (tool === "polyline") {
+          if ((tool === "polyline" || tool === "paint")) {
             setDraft([...draft, measuredLineEnd]);
           } else {
             const seg = makeSeg("line", [draft[0], measuredLineEnd]);
@@ -1263,14 +1288,17 @@ export default function ProfileEditor({
           setLineLengthText("");
           return;
         }
-        if (e.key === "Enter" && tool === "polyline" && draft.length >= 2) {
+        if (e.key === "Enter" && (tool === "polyline" || tool === "paint") && draft.length >= 2) {
           e.preventDefault();
-          const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
-          if (parts.length) {
-            const groupId = parts[0].id;
-            const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
-            commit([...segs, ...grouped]);
-            onSelected(grouped.map((part) => part.id));
+          if(tool==="paint")addPaintDraft(draft);
+          else {
+            const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
+            if (parts.length) {
+              const groupId = parts[0].id;
+              const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
+              commit([...segs, ...grouped]);
+              onSelected(grouped.map((part) => part.id));
+            }
           }
           setDraft([]);
           setLineLengthText("");
@@ -1279,7 +1307,7 @@ export default function ProfileEditor({
       }
       /* در Polyline، Backspace و Ctrl+Z فقط یک رأس تأییدشده از Draft کم می‌کنند؛
          تا پیش از Enter هیچ History سراسری ساخته نشده است. */
-      if (!editOpen && tool === "polyline" && draft.length &&
+      if (!editOpen && (tool === "polyline" || tool === "paint") && draft.length &&
           ((e.key === "Backspace" && !lineLengthText) || ((e.ctrlKey || e.metaKey) && (e.code === "KeyZ" || e.key.toLowerCase() === "z")))) {
         e.preventDefault();
         setDraft((points) => points.slice(0, -1));
@@ -1554,7 +1582,7 @@ export default function ProfileEditor({
   const constrainDraftPoint = (p: SPoint): SPoint => {
     /* Shift در ابزار Line جهت را با محور غالب حرکت ماوس تعیین می‌کند. این قفل
        هم در preview و هم در نقطه‌ای که با کلیک ثبت می‌شود اعمال می‌گردد. */
-    if ((tool === "line" || tool === "polyline") && draft.length >= 1 && shiftRef.current) {
+    if ((tool === "line" || (tool === "polyline" || tool === "paint")) && draft.length >= 1 && shiftRef.current) {
       const start = draft[draft.length - 1];
       const dz = p.z - start.z;
       const dr = p.r - start.r;
@@ -3533,10 +3561,10 @@ export default function ProfileEditor({
     /* کلیک‌راست بدون درگ: در حالت ترسیم لغو پیش‌نویس، در انتخاب منوی اتصال */
     if (d?.mode === "rwait") {
       if (!d.moved) {
-        if (draft.length && (tool === "line" || tool === "polyline")) {
+        if (draft.length && (tool === "line" || (tool === "polyline" || tool === "paint"))) {
           /* در ابزارهای خطی، راست‌کلیک دقیقاً معادل Enter است. */
           if (measuredLineEnd) {
-            if (tool === "polyline") setDraft([...draft, measuredLineEnd]);
+            if ((tool === "polyline" || tool === "paint")) setDraft([...draft, measuredLineEnd]);
             else {
               const seg = makeSeg("line", [draft[0], measuredLineEnd]);
               if (seg) { commit([...segs, seg]); onSelected([seg.id]); }
@@ -3547,13 +3575,16 @@ export default function ProfileEditor({
             const seg = makeSeg("line", [draft[0], lineCursor]);
             if (seg) { commit([...segs, seg]); onSelected([seg.id]); }
             setDraft([]);
-          } else if (tool === "polyline") {
-            const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
-            if (parts.length) {
-              const groupId = parts[0].id;
-              const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
-              commit([...segs, ...grouped]);
-              onSelected(grouped.map((part) => part.id));
+          } else if ((tool === "polyline" || tool === "paint")) {
+            if(tool==="paint")addPaintDraft(draft);
+            else {
+              const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
+              if (parts.length) {
+                const groupId = parts[0].id;
+                const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
+                commit([...segs, ...grouped]);
+                onSelected(grouped.map((part) => part.id));
+              }
             }
             setDraft([]);
             setLineLengthText("");
@@ -3702,7 +3733,7 @@ export default function ProfileEditor({
       /* افزودن نقطهٔ جدید به ترسیم در حال انجام */
       const { p } = applySnap(toWorld(e.clientX, e.clientY));
       let pt = constrainDraftPoint(p);
-      if ((tool === "line" || tool === "polyline") && draft.length >= 1 && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)) {
+      if ((tool === "line" || (tool === "polyline" || tool === "paint")) && draft.length >= 1 && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)) {
         const requested = Number(lineLengthText.replace(",", "."));
         const start = draft[draft.length - 1];
         const dz = pt.z - start.z;
@@ -3713,7 +3744,7 @@ export default function ProfileEditor({
           r: start.r + (length > 1e-9 ? dr / length : 0) * requested,
         });
       }
-      if (tool === "polyline") {
+      if ((tool === "polyline" || tool === "paint")) {
         setDraft([...draft, pt]);
         setLineLengthText("");
         return;
@@ -4035,7 +4066,7 @@ export default function ProfileEditor({
   const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id));
 
   /* پیش‌نمایش ترسیم */
-  const straightDrawing = (tool === "line" && draft.length === 1) || (tool === "polyline" && draft.length >= 1);
+  const straightDrawing = (tool === "line" && draft.length === 1) || ((tool === "polyline" || tool === "paint") && draft.length >= 1);
   const lineCursor = straightDrawing && cursor ? constrainDraftPoint(cursor) : cursor;
   const typedLineLength = lineLengthText !== "" && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)
     ? Number(lineLengthText.replace(",", "."))
@@ -4055,7 +4086,7 @@ export default function ProfileEditor({
   if (tool !== "select" && draft.length > 0 && cursor) {
     const pts = [...draft];
     const previewCursor = measuredLineEnd ?? lineCursor ?? cursor;
-    if (tool === "polyline") {
+    if ((tool === "polyline" || tool === "paint")) {
       previewSeg = makeSeg("line", [pts[pts.length - 1], previewCursor]);
     } else if (tool === "cubic" && pts.length === 4) {
       /* اگر دستهٔ دوم هنوز ثبت نشده (draftSecondSet=false)، نشانگر دستهٔ متصل به  */
@@ -4084,8 +4115,8 @@ export default function ProfileEditor({
   /* اندازهٔ زندهٔ خط در حال ترسیم */
   let liveInfo = "";
   if (tool !== "select" && tool !== "move" && draft.length >= 1 && cursor) {
-    const a = tool === "polyline" ? draft[draft.length - 1] : draft[0];
-    const b = tool === "polyline" || draft.length === 1 ? (lineCursor ?? cursor) : draft[1];
+    const a = (tool === "polyline" || tool === "paint") ? draft[draft.length - 1] : draft[0];
+    const b = (tool === "polyline" || tool === "paint") || draft.length === 1 ? (lineCursor ?? cursor) : draft[1];
     liveInfo = `طول ${dist(a, b).toFixed(1)}  •  زاویه ${lineAngle(a, b).toFixed(1)}°`;
   }
 
@@ -4305,6 +4336,22 @@ export default function ProfileEditor({
           strokeWidth={editOpen ? 0.8 : 1.3}
           strokeDasharray={editOpen ? undefined : "7 5"}
         />
+
+        {/* نقاشی جهت‌دار صرفاً نمایشی است و هرگز وارد Sketch/Generator نمی‌شود. */}
+        {showCanvasPaintTool&&paintEdges.map(edge=>{
+          const ax=cam.ox+edge.a.z*cam.s,ay=cam.oy-edge.a.r*cam.s;
+          const bx=cam.ox+edge.b.z*cam.s,by=cam.oy-edge.b.r*cam.s;
+          const angle=Math.atan2(by-ay,bx-ax),size=edge.arrowSize;
+          const p1=`${bx},${by}`;
+          const p2=`${bx-Math.cos(angle-.55)*size},${by-Math.sin(angle-.55)*size}`;
+          const p3=`${bx-Math.cos(angle+.55)*size},${by-Math.sin(angle+.55)*size}`;
+          return <g key={edge.id} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}}>
+            <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} />
+            <polygon points={`${p1} ${p2} ${p3}`} fill={edge.color} />
+            {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={12} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={3}>{edge.text}</text>}
+            <line x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={12} />
+          </g>;
+        })}
 
         {/* محورهای ساده و نازک مثل مرجع؛ تقاطع آن‌ها خودِ مبدأ است. */}
         {editOpen && (
@@ -4607,7 +4654,7 @@ export default function ProfileEditor({
         {/* پیش‌نمایش ترسیم */}
         {previewSeg && (
           <g>
-            {tool === "polyline" && draft.length > 1 && (
+            {(tool === "polyline" || tool === "paint") && draft.length > 1 && (
               <path
                 d={draft.map((point, index) => `${index ? "L" : "M"}${P(point.z, point.r)[0]},${P(point.z, point.r)[1]}`).join(" ")}
                 fill="none"
@@ -4958,6 +5005,14 @@ export default function ProfileEditor({
         })()}
 
       </svg>
+
+      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;return <div className="fixed z-[90] w-56 rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:paintMenu.x,top:paintMenu.y}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>e.preventDefault()}>
+        <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-ink"><span>تنظیم ضلع نمایشی</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
+        <label className="block text-[9.5px] text-mute">نوشته روی ضلع<input autoFocus value={edge.text} onChange={e=>setPaintEdges(all=>all.map(x=>x.id===edge.id?{...x,text:e.target.value}:x))} className="field-input mt-1" /></label>
+        <label className="mt-3 flex items-center justify-between text-[9.5px] text-mute"><span>رنگ ضلع</span><input type="color" value={edge.color} onChange={e=>setPaintEdges(all=>all.map(x=>x.id===edge.id?{...x,color:e.target.value}:x))} className="h-8 w-16 cursor-pointer rounded bg-transparent" /></label>
+        <label className="mt-3 block text-[9.5px] text-mute">اندازه فلش: <b className="text-ink">{edge.arrowSize}px</b><input type="range" min={4} max={24} step={1} value={edge.arrowSize} onChange={e=>setPaintEdges(all=>all.map(x=>x.id===edge.id?{...x,arrowSize:Number(e.target.value)}:x))} className="mt-2 w-full accent-[#45b394]" /></label>
+        <button onClick={()=>{setPaintEdges(all=>all.filter(x=>x.id!==edge.id));setPaintMenu(null);}} className="mt-3 w-full rounded border border-red-500/40 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10">حذف ضلع</button>
+      </div>})()}
 
       {boxRotateBox && boxRotateSession && <div className="absolute z-50" style={{left:boxRotateBox.x,top:boxRotateBox.y,width:`${Math.max(72,28+boxRotateBox.value.length*8)}px`}} dir="ltr">
         <input ref={boxRotateInputRef} value={boxRotateBox.value} placeholder="Angle" className="h-[30px] w-full rounded-[5px] border border-[#00a9c7] bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none" onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setBoxRotateBox({...boxRotateBox,value,error:""});const n=Number(value);if(boxScaleLive&&value&&Number.isFinite(n)){onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),false);setBoxRotateSession({...boxRotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Escape"){onSegs(boxRotateSession.base,false);setBoxRotateSession(null);setBoxRotateBox(null);return;}if(e.key!=="Enter")return;const n=boxRotateBox.value?Number(boxRotateBox.value):boxRotateSession.angle;if(!Number.isFinite(n))return;onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),true);setBoxRotateSession(null);setBoxRotateBox(null);}}/>
@@ -5332,7 +5387,7 @@ export default function ProfileEditor({
       {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
       <div className="profile-tool-column absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          {(editOpen ? TOOLS.filter((t) => t.id === "select" || t.id === "move") : TOOLS).map((t, i) => (
+          {(editOpen ? TOOLS.filter((t) => t.id === "select" || t.id === "move") : TOOLS.filter(t=>t.id!=="paint"||showCanvasPaintTool)).map((t, i) => (
             <button
               key={t.id}
               onClick={() => {
