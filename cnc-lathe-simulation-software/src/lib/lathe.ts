@@ -1695,11 +1695,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         for (const point of wallByR) {
           const last = mergedWall[mergedWall.length - 1];
           if (last && Math.abs(last.r - point.r) < 0.04) {
-            /* در قوس برگشتی، یک شعاع می‌تواند دو بار پروفایل را قطع کند. مرز
-               حفره از نخستین تقاطع در سمت −X آغاز می‌شود؛ نگه‌داشتن max(Z)
-               کلاهک میان دو شاخه قوس را حذف می‌کرد. فقط انتخاب نماینده شعاع
-               اصلاح می‌شود و ترتیب لایه‌ها و منطق فعلی خشن‌کاری دست‌نخورده است. */
-            if (point.z < last.z) last.z = point.z;
+            /* راست‌ترین مرز محافظه‌کارانه است و اجازه ورود به قله را نمی‌دهد. */
+            if (point.z > last.z) last.z = point.z;
           } else mergedWall.push({ ...point });
         }
         if (mergedWall.length < 2) break;
