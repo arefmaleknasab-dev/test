@@ -2057,6 +2057,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           rawRapid(2 * rEntry, startInnerZ);
         } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
         for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
+        /* شاخه داخلی یک مرز باز از محور تا دهانه است. برای پوشش کامل مرز ناحیه
+           داخلی، انتهای مسیر نیز در همان Z به محور بسته می‌شود؛ ورود ابتدای
+           مسیر قبلاً اتصال محور به سر دیگر شاخه را ایجاد کرده است. */
+        const finishEnd=IW[IW.length-1];
+        if(finishEnd.r>1e-7)mv(1,0,finishEnd.z,p.feedFinish,"borefin");
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
             /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
