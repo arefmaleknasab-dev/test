@@ -1340,9 +1340,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(k===0){
               if(Math.abs(p.innerStartClearance)>1e-9)mv(1,startD,zk,p.feedRough*.8,"bottom");
             }else if(zigzagBottom){
-              const prevZ=machiningDepths[k-1];
-              rawRapid(startD,prevZ+p.safety); // +X در همان Y؛ بدون برگشت به مرکز
-              mv(1,startD,zk,p.feedRough*.7,"bottom"); // −X در همان Y
+              /* اتصال پاس‌های زیگزاگ مستقیم و برشی است: ابزار در همان Y از
+                 انتهای پاس قبلی مستقیماً در −X به عمق بعد می‌رود. حرکت امن +X
+                 فقط برای اتصال نهایی کف‌تراشی به خشن داخل نگه داشته می‌شود. */
+              mv(1,startD,zk,p.feedRough*.7,"bottom");
             }else{
               const prevZ=machiningDepths[k-1];
               rawRapid(centerD,prevZ+.5);
