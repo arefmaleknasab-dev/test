@@ -140,7 +140,8 @@ export interface Params {
   innerRoughMode: RoughMode; // روش خشن‌تراشی داخل؛ classic همان رفتار قبلی است
   innerZoneOrder: number[]; // ترتیب نواحی شعاعی داخل
   innerZoneBounds: number[]; // مرزهای شعاعی داخل (R)
-  ramp: boolean; // اتصال پیوسته بین مسیرهای خشن (بدون G0 — فرورفتن مستقیم برشی)
+  ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
+  safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
   simpleFeed: boolean; // فیدر بهینه: همهٔ فیدرها به دو F اصلی (خشن/پرداخت) ساده شوند
   zoneOrder: number[]; // ترتیب دستی نواحی (اندیس ناحیه‌ها) — آرایه خالی = ترتیب خودکار
   zoneBounds: number[]; // مرزهای دستی داخلی نواحی (Z) — آرایه خالی = تقسیم خودکار
@@ -368,6 +369,7 @@ export const DEFAULT_PARAMS: Params = {
   innerZoneOrder: [],
   innerZoneBounds: [],
   ramp: true,
+  safeBottomInnerLink: true,
   simpleFeed: true,
   zoneOrder: [],
   zoneBounds: [],
@@ -392,7 +394,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -1246,6 +1248,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   let bottomCoveredFromZ: number | null = null;
   /* وضعیت اتصال مرحله‌ای کف به خشن داخل: +X امن انجام شده و Y/−X باقی است. */
   let bottomToInnerRoughReady = false;
+  let bottomToInnerRoughDirect = false;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1354,10 +1357,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           if (!finishLastInner(op.id)) {
             if (nextEnabledOp(op.id)?.type === "inner-rough") {
-              /* مرحله اول اتصال: دقیقاً به‌اندازه Safety در +X. دو مرحله بعدی
-                 در آغاز خشن داخل، ابتدا Y و سپس −X، تولید می‌شوند. */
-              rawRapid(cur.x, cur.z + p.safety);
-              bottomToInnerRoughReady = true;
+              if (p.safeBottomInnerLink) {
+                /* مرحله اول اتصال امن؛ Y و −X در آغاز خشن داخل تولید می‌شوند. */
+                rawRapid(cur.x, cur.z + p.safety);
+                bottomToInnerRoughReady = true;
+              } else {
+                /* هیچ حرکت واسطی اینجا ساخته نمی‌شود؛ اولین G1 خشن داخل مستقیماً
+                   از انتهای آخرین پاس کف به نقطه شروع آن متصل خواهد شد. */
+                bottomToInnerRoughDirect = true;
+              }
             } else if (nextIsInnerPath(op.id)) moveInnerToAxisSafely();
             else mv(0, retractX, bottomEndZ, 0, "rapid");
           }
@@ -1747,7 +1755,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         note(`INNER VERTICAL LAYERS ${layers.length} x ${f2(step)} MM`);
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zOuter + p.innerStartClearance;
-        if (!bottomToInnerRoughReady) enterFirstInner(2 * rEntry, mouthX);
+        if (!bottomToInnerRoughReady && !bottomToInnerRoughDirect) enterFirstInner(2 * rEntry, mouthX);
         const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
 
         /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
@@ -1766,7 +1774,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(!clipped.length)return;
             if(!firstDirectionByGroup.has(group)){
               const currentR=Math.max(0,cur.x/2),nearLow=clipped[0].a,nearHigh=clipped[clipped.length-1].b;
-              firstDirectionByGroup.set(group,!bottomToInnerRoughReady||Math.abs(currentR-nearLow)<=Math.abs(currentR-nearHigh));
+              firstDirectionByGroup.set(group,(!bottomToInnerRoughReady&&!bottomToInnerRoughDirect)||Math.abs(currentR-nearLow)<=Math.abs(currentR-nearHigh));
             }
             const baseForward=firstDirectionByGroup.get(group)!;
             const forward=pass%2===0?baseForward:!baseForward;
@@ -1831,7 +1839,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           for(let i=0;i<contours.length;i++){
             const contour=contours[i],start=contour.points[0],end=contour.points[contour.points.length-1];
             if(!alreadyAtNextStart){
-              if(bottomToInnerRoughReady){
+              if(bottomToInnerRoughDirect){
+                mv(1,2*start.r,start.z,p.feedRough*.7,"bore");
+                bottomToInnerRoughDirect=false;
+              }else if(bottomToInnerRoughReady){
                 /* مرحله دوم فقط Y تا نزدیک‌ترین سر پاس؛ مرحله سوم فقط −X. */
                 rawRapid(2*start.r,cur.z);
                 mv(1,2*start.r,start.z,p.feedRough*0.7,"bore");
@@ -1896,7 +1907,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                    بعدی اگر ابزار به محور برگشته باشد، همان‌جا در X امن قرار دارد
                    و باید مستقیم در −X وارد پاس بعدی شود؛ بازگشت دوباره به mouthX
                    یک حرکت +X کاملاً اضافی می‌ساخت. */
-                if (bottomToInnerRoughReady) {
+                if (bottomToInnerRoughDirect) {
+                  /* G1 بعدی خودش اتصال مستقیم و تنها خط میان دو عملیات است. */
+                  bottomToInnerRoughDirect = false;
+                } else if (bottomToInnerRoughReady) {
                   rawRapid(2 * startR, cur.z); // فقط Y
                   bottomToInnerRoughReady = false;
                 } else rawRapid(2 * startR, mouthX);
