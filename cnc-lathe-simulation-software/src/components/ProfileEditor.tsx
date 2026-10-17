@@ -859,7 +859,7 @@ export default function ProfileEditor({
   });
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
   const [selectedPaint,setSelectedPaint]=useState<number[]>([]);
-  const [selectedPaintPoint,setSelectedPaintPoint]=useState<{id:number;point:"a"|"b"}|null>(null);
+  const [selectedPaintPoints,setSelectedPaintPoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[]}|null>(null);
   useEffect(()=>{localStorage.setItem("kharraat-canvas-paint-v1",JSON.stringify(paintEdges));},[paintEdges]);
   const addPaintDraft=(points:SPoint[])=>{
@@ -3659,6 +3659,27 @@ export default function ProfileEditor({
         r1: Math.max(w0.r, w1.r),
       };
       const mode: "window" | "crossing" = loc.x >= d.sx ? "window" : "crossing";
+      /* خطوط و نقاط نقاشی نیز دقیقاً با Window/Crossing باکس Select می‌شوند. */
+      if(!editOpen&&showCanvasPaintTool){
+        const inside=(p:SPoint)=>p.z>=rectW.z0&&p.z<=rectW.z1&&p.r>=rectW.r0&&p.r<=rectW.r1;
+        const orient=(a:SPoint,b:SPoint,c:SPoint)=>(b.z-a.z)*(c.r-a.r)-(b.r-a.r)*(c.z-a.z);
+        const crosses=(a:SPoint,b:SPoint)=>{
+          if(inside(a)||inside(b))return true;
+          const corners:SPoint[]=[{z:rectW.z0,r:rectW.r0},{z:rectW.z1,r:rectW.r0},{z:rectW.z1,r:rectW.r1},{z:rectW.z0,r:rectW.r1}];
+          for(let i=0;i<4;i++){const c=corners[i],q=corners[(i+1)%4];if(orient(a,b,c)*orient(a,b,q)<=0&&orient(c,q,a)*orient(c,q,b)<=0)return true;}
+          return false;
+        };
+        const paintHits=paintEdges.filter(edge=>mode==="window"?(inside(edge.a)&&inside(edge.b)):crosses(edge.a,edge.b)).map(edge=>edge.id);
+        const pointHitsPaint=paintEdges.flatMap(edge=>(["a","b"] as const).filter(part=>inside(edge[part])).map(point=>({id:edge.id,point})));
+        const removePaint=e.ctrlKey||e.metaKey,addPaint=e.shiftKey;
+        if(removePaint)setSelectedPaint(ids=>ids.filter(id=>!paintHits.includes(id)));
+        else if(addPaint)setSelectedPaint(ids=>[...ids,...paintHits.filter(id=>!ids.includes(id))]);
+        else setSelectedPaint(paintHits);
+        const pointKey=(p:{id:number;point:"a"|"b"})=>`${p.id}:${p.point}`;
+        if(removePaint)setSelectedPaintPoints(points=>points.filter(p=>!pointHitsPaint.some(h=>pointKey(h)===pointKey(p))));
+        else if(addPaint)setSelectedPaintPoints(points=>[...points,...pointHitsPaint.filter(h=>!points.some(p=>pointKey(p)===pointKey(h)))]);
+        else setSelectedPaintPoints(pointHitsPaint);
+      }
       /* باکس در حالت ادیت: اول خطوط/رأس‌های برنامه؛ اگر چیزی نگرفت، رفتار همیشگیِ پروفایل */
       if (editOpen) {
         const bh = bufMarqueeHits(rectW, mode);
@@ -4281,8 +4302,8 @@ export default function ProfileEditor({
         )}
         onPointerDownCapture={e=>{
           if(paintMenu)setPaintMenu(null);
-          if(!(e.target as Element).closest("[data-paint-hit]")){
-            setSelectedPaint([]);setSelectedPaintPoint(null);
+          if(!(e.target as Element).closest("[data-paint-hit]")&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){
+            setSelectedPaint([]);setSelectedPaintPoints([]);
           }
         }}
         onPointerDown={onPointerDown}
@@ -5033,13 +5054,13 @@ export default function ProfileEditor({
         {/* بالاترین لایه بوم: خطوط نمایشی جهت‌دار، انتخاب و Handle نقاط. */}
         {showCanvasPaintTool&&paintEdges.map(edge=>{
           const ax=cam.ox+edge.a.z*cam.s,ay=cam.oy-edge.a.r*cam.s,bx=cam.ox+edge.b.z*cam.s,by=cam.oy-edge.b.r*cam.s;
-          const angle=Math.atan2(by-ay,bx-ax),size=edge.arrowSize,active=selectedPaint.includes(edge.id);
+          const angle=Math.atan2(by-ay,bx-ax),size=edge.arrowSize,active=selectedPaint.includes(edge.id),pointActive=selectedPaintPoints.some(p=>p.id===edge.id);
           const points=`${bx},${by} ${bx-Math.cos(angle-.55)*size},${by-Math.sin(angle-.55)*size} ${bx-Math.cos(angle+.55)*size},${by-Math.sin(angle+.55)*size}`;
           const canManipulate=tool==="select"||tool==="move"||tool==="paint";
           const begin=(e:ReactPointerEvent<SVGElement>,point?:"a"|"b")=>{
             if(e.button!==0||!canManipulate)return;e.preventDefault();e.stopPropagation();setPaintMenu(null);
             const ids=point?[edge.id]:(e.shiftKey?(active?selectedPaint:selectedPaint.concat(edge.id)):(active?selectedPaint:[edge.id]));
-            setSelectedPaint(ids);setSelectedPaintPoint(point?{id:edge.id,point}:null);onSelected([]);
+            setSelectedPaint(ids);setSelectedPaintPoints(point?[{id:edge.id,point}]:[]);onSelected([]);
             const rect=svgRef.current!.getBoundingClientRect();
             paintDrag.current={ids,point,pointId:point?edge.id:undefined,start:{z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s},base:paintEdges.map(x=>({...x,a:{...x.a},b:{...x.b}}))};
           };
@@ -5048,8 +5069,8 @@ export default function ProfileEditor({
             <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />
             <polygon points={points} fill={edge.color} stroke={active?"#fff":"none"} strokeWidth={active?1.5:0} pointerEvents="none" />
             {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={12} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={3} pointerEvents="none">{edge.text}</text>}
-            <line data-paint-hit="true" x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setSelectedPaintPoint(null);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
-            {active&&<><circle data-paint-hit="true" cx={ax} cy={ay} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="a"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle data-paint-hit="true" cx={bx} cy={by} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="b"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
+            <line data-paint-hit="true" x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setSelectedPaintPoints([]);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
+            {(active||pointActive)&&<><circle data-paint-hit="true" cx={ax} cy={ay} r={5} fill={selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="a")?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle data-paint-hit="true" cx={bx} cy={by} r={5} fill={selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="b")?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
           </g>;
         })}
 
