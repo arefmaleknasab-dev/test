@@ -1722,37 +1722,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (!layers.length || Math.abs(layers[layers.length - 1] - roughInnerZ) > 0.05) layers.push(roughInnerZ);
         if (!splitPlaneAlreadyCut && Math.abs(layers[0] - zOuter) < 0.05) splitPlaneAlreadyCut = true;
 
-        type InnerInterval={a:number;b:number;arcCap?:boolean};
-        /* فقط برای شاخه‌ای که شعاع آن برگشت دارد، حد واقعی هر صفحه X مستقیماً
-           از تقاطع همان صفحه با خط آفست خوانده می‌شود. این مکمل محلی اجازه
-           می‌دهد کلاهک قوسی نیز از محور تا دیواره تراش بخورد، بدون تغییر منطق
-           قدیمی envelope برای پروفیل‌های معمولی و نواحی جدا. */
-        let radialTurns=0,lastDrSign=0;
-        for(let i=1;i<innerFinishOffSamples.length;i++){
-          const dr=innerFinishOffSamples[i].r-innerFinishOffSamples[i-1].r;
-          const sign=Math.abs(dr)>1e-4?Math.sign(dr):lastDrSign;
-          if(lastDrSign&&sign&&sign!==lastDrSign)radialTurns++;
-          if(sign)lastDrSign=sign;
-        }
-        const hasReturningArc=radialTurns>0;
-        const arcCapRadiusAt=(layerZ:number):number|null=>{
-          if(!hasReturningArc)return null;
-          const targetZ=layerZ-roughOffsetClearance;
-          const hits:number[]=[];
-          for(let i=1;i<innerFinishOffSamples.length;i++){
-            const a=innerFinishOffSamples[i-1],b=innerFinishOffSamples[i];
-            if(targetZ<Math.min(a.z,b.z)-1e-7||targetZ>Math.max(a.z,b.z)+1e-7)continue;
-            const dz=b.z-a.z;
-            if(Math.abs(dz)<1e-9){hits.push(Math.max(0,a.r),Math.max(0,b.r));continue;}
-            const t=(targetZ-a.z)/dz;
-            if(t>=-1e-7&&t<=1+1e-7)hits.push(Math.max(0,a.r+(b.r-a.r)*Math.max(0,Math.min(1,t))));
-          }
-          return hits.length?Math.min(...hits):null;
-        };
-        const intervalsAt = (layerZ: number): InnerInterval[] => {
-          const capR=arcCapRadiusAt(layerZ);
-          if(capR!=null&&capR>0.05)return [{a:0,b:capR,arcCap:true}];
-          const intervals: InnerInterval[] = [];
+        const intervalsAt = (layerZ: number): { a: number; b: number }[] => {
+          const intervals: { a: number; b: number }[] = [];
           let open: number | null = mergedWall[0].z + roughOffsetClearance <= layerZ + 1e-7 ? mergedWall[0].r : null;
           for (let i = 1; i < mergedWall.length; i++) {
             const prev = mergedWall[i - 1], curPoint = mergedWall[i];
@@ -1805,14 +1776,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            لایه) را دنبال می‌کند؛ بنابراین قله، دره و خطوط زیگزاگی بدون ورود
            به خط آفست حفظ می‌شوند. */
         if (p.innerRoughMode !== "classic") {
-          type InnerCut = { layerZ:number; a:number; b:number; group:number; forward:boolean; pass:number; arcCap?:boolean };
+          type InnerCut = { layerZ:number; a:number; b:number; group:number; forward:boolean; pass:number };
           const cuts: InnerCut[] = [];
           /* جهت در سطح «پاس» تعیین می‌شود، نه برای هر بازه. اگر یک لایه به‌علت
              چند قله به چند Active Region شکسته شود، ابزار همه آن‌ها را در همان
              جهت Y طی می‌کند و تا آخرین دره جهت را معکوس نمی‌کند. */
           const firstDirectionByGroup=new Map<number,boolean>();
-          const appendPass=(plan:{layerZ:number;intervals:InnerInterval[]},group:number,pass:number,lo:number,hi:number)=>{
-            const clipped=plan.intervals.map(iv=>({a:Math.max(iv.a,lo),b:Math.min(iv.b,hi),arcCap:iv.arcCap})).filter(iv=>iv.b-iv.a>0.05);
+          const appendPass=(plan:{layerZ:number;intervals:{a:number;b:number}[]},group:number,pass:number,lo:number,hi:number)=>{
+            const clipped=plan.intervals.map(iv=>({a:Math.max(iv.a,lo),b:Math.min(iv.b,hi)})).filter(iv=>iv.b-iv.a>0.05);
             if(!clipped.length)return;
             if(!firstDirectionByGroup.has(group)){
               /* جهت هر عملیات مستقل است. موقعیت انتهایی کف‌تراشی نباید جهت
@@ -1823,7 +1794,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const baseForward=firstDirectionByGroup.get(group)!;
             const forward=pass%2===0?baseForward:!baseForward;
             const ordered=forward?clipped:[...clipped].reverse();
-            for(const iv of ordered)cuts.push({layerZ:plan.layerZ,a:iv.a,b:iv.b,group,forward,pass,arcCap:iv.arcCap});
+            for(const iv of ordered)cuts.push({layerZ:plan.layerZ,a:iv.a,b:iv.b,group,forward,pass});
           };
           if (p.innerRoughMode === "zone") {
             const maxR=Math.max(...mergedWall.map(q=>q.r));
@@ -1856,15 +1827,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           };
           const contours=cuts.map(cut=>{
             const a=Math.max(0,cut.a),b=Math.max(a,cut.b);
-            /* پاس کلاهک از تقاطع واقعی همین X به‌دست آمده و باید یک خط شعاعی
-               تخت از محور تا قوس باشد؛ envelope قدیمی دوباره آن را کوتاه می‌کند. */
-            const radial=cut.arcCap
-              ? [{r:a,z:cut.layerZ},{r:b,z:cut.layerZ}]
-              : [{r:a,z:wallZAtR(a)},...mergedWall.filter(q=>q.r>a+1e-6&&q.r<b-1e-6).map(q=>({r:q.r,z:q.z})),{r:b,z:wallZAtR(b)}];
+            const middle=mergedWall.filter(q=>q.r>a+1e-6&&q.r<b-1e-6);
+            const radial=[{r:a,z:wallZAtR(a)},...middle.map(q=>({r:q.r,z:q.z})),{r:b,z:wallZAtR(b)}];
             const ordered=cut.forward?radial:[...radial].reverse();
             return {
               group:cut.group,pass:cut.pass,a,b,
-              points:simplifyInnerContour(ordered.map(q=>({r:q.r,z:cut.arcCap?cut.layerZ:Math.max(cut.layerZ,q.z+roughOffsetClearance)}))),
+              points:simplifyInnerContour(ordered.map(q=>({r:q.r,z:Math.max(cut.layerZ,q.z+roughOffsetClearance)}))),
             };
           }).filter(c=>c.points.length>=2);
 
@@ -1945,9 +1913,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             /* تضمین نهایی مستقل از تشخیص بازه: کل خط برش عمودی باید در سمت
                حفرهٔ آفست بماند، پس X پاس از راست‌ترین نقطه آفست در همان بازه
                کمتر نمی‌شود. */
-            const cutZ = interval.arcCap
-              ? layerZ
-              : Math.max(layerZ, maxWallZBetween(startR, endR) + roughOffsetClearance);
+            const cutZ = Math.max(layerZ, maxWallZBetween(startR, endR) + roughOffsetClearance);
             const nextInterval = layerIntervals[intervalIndex + 1];
 
             /* فقط ناحیهٔ اول هر لایه از محور و دهانه شروع می‌شود. بعد از هر قله،
