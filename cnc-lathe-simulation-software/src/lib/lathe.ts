@@ -1327,26 +1327,29 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const centerD = 0; // کف‌تراشی دقیقاً از خط محور (X/قطر صفر) آغاز می‌شود
           const N = Math.max(1, Math.ceil(excess / p.innerDoc - 1e-9));
           const depths = Array.from({ length: N }, (_, i) => (i === N - 1 ? bottomEndZ : p.blankL - (i + 1) * p.innerDoc));
-          /* اگر کف‌تراشی وجود دارد، اولین صفحه آن مبنای فاصله شروع داخل‌تراشی است. */
-          enterFirstInner(centerD, depths[0] + p.innerStartClearance);
-          for (let k = 0; k < depths.length; k++) {
-            const zk = depths[k];
-            const isSplitPlane = Math.abs(zk - bottomEndZ) < 0.05;
-            if (isSplitPlane && splitPlaneAlreadyCut) continue;
-            if (k === 0) {
-              if (Math.abs(p.innerStartClearance) > 1e-9) mv(1, centerD, zk, p.feedRough * 0.8, "bottom");
-            } else {
-              const prevZ = depths[k - 1];
-              /* بازگشت مورب سریع: −Y تا مرکز و هم‌زمان +X به‌اندازه ۰٫۵mm */
-              rawRapid(centerD, prevZ + 0.5);
-              mv(1, centerD, zk, p.feedRough * 0.7, "bottom"); // شیرجه −X به عمق بار بعدی
+          const machiningDepths=depths.filter(zk=>!(Math.abs(zk-bottomEndZ)<0.05&&splitPlaneAlreadyCut));
+          const zigzagBottom=p.innerRoughMode!=="classic";
+          if(zigzagBottom)note(`BOTTOM SERPENTINE ${machiningDepths.length} PASSES - CUTS BOTH Y DIRECTIONS`);
+          /* ورود نخستین پاس روی محور است؛ در حالت دوطرفه، انتهای هر پاس دقیقاً
+             ابتدای پاس بعدی است و فقط با +X امن و سپس −X به عمق بعد می‌رود. */
+          enterFirstInner(centerD,(machiningDepths[0]??depths[0])+p.innerStartClearance);
+          for(let k=0;k<machiningDepths.length;k++){
+            const zk=machiningDepths[k],forward=!zigzagBottom||k%2===0;
+            const startD=forward?centerD:outsideD,endD=forward?outsideD:centerD;
+            const isSplitPlane=Math.abs(zk-bottomEndZ)<0.05;
+            if(k===0){
+              if(Math.abs(p.innerStartClearance)>1e-9)mv(1,startD,zk,p.feedRough*.8,"bottom");
+            }else if(zigzagBottom){
+              const prevZ=machiningDepths[k-1];
+              rawRapid(startD,prevZ+p.safety); // +X در همان Y؛ بدون برگشت به مرکز
+              mv(1,startD,zk,p.feedRough*.7,"bottom"); // −X در همان Y
+            }else{
+              const prevZ=machiningDepths[k-1];
+              rawRapid(centerD,prevZ+.5);
+              mv(1,centerD,zk,p.feedRough*.7,"bottom");
             }
-            /* در کاسه، کف‌تراشی دقیقاً روی مرز آفست داخلی متوقف می‌شود و
-               هرگز از دیوارهٔ رزروشده برای پاس آفست/پرداخت عبور نمی‌کند. */
-            /* کف‌تراشی تا مرز همپوشانی خشن شعاعی ادامه دارد؛ مرز X عملیات
-               با خشن داخل مشترک است، اما محدوده شعاعی آن کوتاه نمی‌شود. */
-            mv(1, outsideD, zk, p.feedRough * 0.8, "bottom"); // مرکز → همپوشانی خشن شعاعی
-            if (isSplitPlane && hasInner) splitPlaneAlreadyCut = true;
+            mv(1,endD,zk,p.feedRough*.8,"bottom");
+            if(isSplitPlane&&hasInner)splitPlaneAlreadyCut=true;
           }
           if (!finishLastInner(op.id)) {
             if (nextEnabledOp(op.id)?.type === "inner-rough") {
