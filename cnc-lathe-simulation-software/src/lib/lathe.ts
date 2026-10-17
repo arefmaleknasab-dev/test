@@ -1922,26 +1922,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               /* پاس‌های متوالی از همان سر زیگزاگ به هم می‌رسند: اتصال +X روی
                  سر نزدیک محور (Y منفیِ امن نسبت به نوک کاسه) و اتصال −X روی سر
                  قوس انجام می‌شود. بنابراین برای پاس مجاور خط واسط ساخته نمی‌شود. */
-              const directSafe=adjacentPass?scanlineLinkIsSafe(end,ns):(sameZone&&innerLinkIsSafe(end,ns));
-              if(directSafe){
+              if(adjacentPass?scanlineLinkIsSafe(end,ns):(sameZone&&innerLinkIsSafe(end,ns))){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
-              }else if(adjacentPass&&end.r>start.r+1e-7&&ns.z>end.z+1e-7){
-                /* اتصال +X پس از پاس +Y: اگر قطر مستقیم خط آفست را قطع کند،
-                   ابتدا در −Y تا یک شعاع آزاد جمع می‌شویم. شعاع آزاد با آزمون
-                   Scanline روی تمام فاصله X پیدا و سپس به‌اندازه Safety از مرز
-                   دورتر می‌شود؛ آنگاه +X و ورود +Y به پاس بعد انجام می‌شود. */
-                const maxCandidate=Math.min(end.r,ns.r);
-                let clearR=0;
-                for(let k=0;k<=100;k++){
-                  const candidate=maxCandidate*(1-k/100);
-                  if(scanlineLinkIsSafe({r:candidate,z:end.z},{r:candidate,z:ns.z})){
-                    clearR=Math.max(0,candidate-p.safety);
-                    break;
-                  }
-                }
-                if(end.r>clearR+1e-7)rawRapid(2*clearR,end.z); // −Y و رعایت فاصله امن
-                rawRapid(2*clearR,ns.z);                     // +X در Y امن
-                mv(1,2*ns.r,ns.z,p.feedRough*0.7,"bore");   // +Y ورود به پاس
               }else{
                 /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
                    جمع می‌شود؛ بازگشت کامل به صفحه دهانه انجام نمی‌شود. */
