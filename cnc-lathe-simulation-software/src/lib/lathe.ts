@@ -1835,6 +1835,46 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             return {group:cut.group,pass:cut.pass,a,b,points:simplifyInnerContour(ordered)};
           }).filter(c=>c.points.length>=2);
 
+          /* ایمنی اتصال مورب با خود Scanline سنجیده می‌شود، نه envelope شعاعی؛
+             بنابراین قله‌ها و دره‌های هم‌زمان X/Y نیز درست دیده می‌شوند. */
+          const scanlineLinkIsSafe=(from:{r:number;z:number},to:{r:number;z:number})=>{
+            for(let i=0;i<=40;i++){
+              const t=i/40,r=from.r+(to.r-from.r)*t,z=from.z+(to.z-from.z)*t;
+              const inside=intervalsAt(z).some(iv=>r>=iv.a-0.015&&r<=iv.b+0.015);
+              if(!inside)return false;
+            }
+            return true;
+          };
+          /* اگر پاس +Y در لبه قوس تمام شود و اتصال مستقیم −X به پاس بعدی خط
+             آفست را قطع کند، فقط انتهای همین پاس عقب آورده می‌شود. نزدیک‌ترین
+             نقطه امن با جست‌وجوی درشت و سپس دودویی پیدا می‌شود؛ در نتیجه اتصال
+             همچنان یک خط مستقیم است و هیچ حرکت واسطی به زیگزاگ افزوده نمی‌شود. */
+          for(let i=0;i+1<contours.length;i++){
+            const current=contours[i],next=contours[i+1];
+            if(current.group!==next.group||current.pass===next.pass)continue;
+            const first=current.points[0],lastIndex=current.points.length-1;
+            const end=current.points[lastIndex],nextStart=next.points[0];
+            if(end.r<=first.r+1e-7||nextStart.z>=end.z-1e-7||scanlineLinkIsSafe(end,nextStart))continue;
+            let safeR:number|null=null,unsafeR=end.r;
+            const span=end.r-first.r;
+            for(let k=1;k<=80;k++){
+              const candidateR=end.r-span*k/80;
+              if(scanlineLinkIsSafe({r:candidateR,z:end.z},nextStart)){
+                safeR=candidateR;
+                break;
+              }
+              unsafeR=candidateR;
+            }
+            if(safeR==null)continue;
+            let safe:number=safeR;
+            for(let k=0;k<28;k++){
+              const mid:number=(safe+unsafeR)/2;
+              if(scanlineLinkIsSafe({r:mid,z:end.z},nextStart))safe=mid;
+              else unsafeR=mid;
+            }
+            current.points[lastIndex]={r:safe,z:end.z};
+          }
+
           /* اتصال مستقیم فقط وقتی مجاز است که تمام پاره‌خط در سمت خالیِ خط
              آفست بماند. این آزمون معادل rampIsSafe بیرونی در دستگاه مختصات
              ترانهادهٔ داخل است و از جمع‌شدن بی‌دلیل به +X جلوگیری می‌کند. */
@@ -1882,7 +1922,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               /* پاس‌های متوالی از همان سر زیگزاگ به هم می‌رسند: اتصال +X روی
                  سر نزدیک محور (Y منفیِ امن نسبت به نوک کاسه) و اتصال −X روی سر
                  قوس انجام می‌شود. بنابراین برای پاس مجاور خط واسط ساخته نمی‌شود. */
-              if(adjacentPass||(sameZone&&innerLinkIsSafe(end,ns))){
+              if(adjacentPass?scanlineLinkIsSafe(end,ns):(sameZone&&innerLinkIsSafe(end,ns))){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
                 /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
