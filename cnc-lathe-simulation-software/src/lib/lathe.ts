@@ -1723,26 +1723,26 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (!splitPlaneAlreadyCut && Math.abs(layers[0] - zOuter) < 0.05) splitPlaneAlreadyCut = true;
 
         const intervalsAt = (layerZ: number): { a: number; b: number }[] => {
-          const intervals: { a: number; b: number }[] = [];
-          let open: number | null = mergedWall[0].z + roughOffsetClearance <= layerZ + 1e-7 ? mergedWall[0].r : null;
-          for (let i = 1; i < mergedWall.length; i++) {
-            const prev = mergedWall[i - 1], curPoint = mergedWall[i];
-            const prevIn = prev.z + roughOffsetClearance <= layerZ + 1e-7;
-            const curIn = curPoint.z + roughOffsetClearance <= layerZ + 1e-7;
-            if (prevIn === curIn) continue;
-            /* علامت مخرج باید حفظ شود. Math.max قبلی شیب‌های نزولی را به عدد
-               مثبت بسیار کوچک تبدیل می‌کرد و محل تقاطع را به سر اشتباه پاره‌خط
-               می‌برد؛ در نتیجه خشن‌کاری از خط آفست عبور می‌کرد. */
-            const dz = curPoint.z - prev.z;
-            const t = Math.abs(dz) > 1e-12
-              ? (layerZ - roughOffsetClearance - prev.z) / dz
-              : 0;
-            const crossR = prev.r + (curPoint.r - prev.r) * Math.max(0, Math.min(1, t));
-            if (curIn) open = crossR;
-            else if (open != null) { intervals.push({ a: open, b: crossR }); open = null; }
+          /* Scanline روی چندضلعی واقعیِ شاخه داخلی + محور دوران. مرتب‌کردن نقاط
+             برحسب R و نگه‌داشتن max(Z)، نیمه دیگر قوس‌هایی را که یک شعاع را دو
+             بار قطع می‌کنند حذف می‌کرد. Scanline همه تقاطع‌های قله/دره و قوس را
+             نگه می‌دارد و بازه‌های واقعی قابل‌ماشین‌کاری را جفت می‌کند. */
+          const boundary=innerFinishOffSamples.map(q=>({r:Math.max(0,q.r),z:q.z+roughOffsetClearance}));
+          const polygon=[{r:0,z:boundary[0].z},...boundary,{r:0,z:boundary[boundary.length-1].z}];
+          const hits:number[]=[];
+          for(let i=0;i<polygon.length;i++){
+            const a=polygon[i],b=polygon[(i+1)%polygon.length];
+            if(!((a.z<=layerZ&&b.z>layerZ)||(b.z<=layerZ&&a.z>layerZ)))continue;
+            const t=(layerZ-a.z)/(b.z-a.z);
+            hits.push(a.r+(b.r-a.r)*t);
           }
-          if (open != null) intervals.push({ a: open, b: mergedWall[mergedWall.length - 1].r });
-          return intervals.filter((interval) => interval.b - interval.a > 0.05);
+          hits.sort((a,b)=>a-b);
+          const intervals:{a:number;b:number}[]=[];
+          for(let i=0;i+1<hits.length;i+=2){
+            const a=Math.max(0,hits[i]),b=Math.max(a,hits[i+1]);
+            if(b-a>0.05)intervals.push({a,b});
+          }
+          return intervals;
         };
 
         const wallZAtR = (r: number): number => {
@@ -1827,13 +1827,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           };
           const contours=cuts.map(cut=>{
             const a=Math.max(0,cut.a),b=Math.max(a,cut.b);
-            const middle=mergedWall.filter(q=>q.r>a+1e-6&&q.r<b-1e-6);
-            const radial=[{r:a,z:wallZAtR(a)},...middle.map(q=>({r:q.r,z:q.z})),{r:b,z:wallZAtR(b)}];
+            /* بازه Scanline خودش داخل چندضلعی آفست است؛ پاس شعاعی باید در Z
+               ثابت اجرا شود. تحمیل envelope تک‌مقداری Z=f(R) دوباره نیمه قوس
+               برگشتی را حذف می‌کرد. */
+            const radial=[{r:a,z:cut.layerZ},{r:b,z:cut.layerZ}];
             const ordered=cut.forward?radial:[...radial].reverse();
-            return {
-              group:cut.group,pass:cut.pass,a,b,
-              points:simplifyInnerContour(ordered.map(q=>({r:q.r,z:Math.max(cut.layerZ,q.z+roughOffsetClearance)}))),
-            };
+            return {group:cut.group,pass:cut.pass,a,b,points:simplifyInnerContour(ordered)};
           }).filter(c=>c.points.length>=2);
 
           /* اتصال مستقیم فقط وقتی مجاز است که تمام پاره‌خط در سمت خالیِ خط
@@ -1913,7 +1912,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             /* تضمین نهایی مستقل از تشخیص بازه: کل خط برش عمودی باید در سمت
                حفرهٔ آفست بماند، پس X پاس از راست‌ترین نقطه آفست در همان بازه
                کمتر نمی‌شود. */
-            const cutZ = Math.max(layerZ, maxWallZBetween(startR, endR) + roughOffsetClearance);
+            const cutZ = layerZ; // بازه Scanline در همین صفحه کاملاً داخل محدوده مجاز است
             const nextInterval = layerIntervals[intervalIndex + 1];
 
             /* فقط ناحیهٔ اول هر لایه از محور و دهانه شروع می‌شود. بعد از هر قله،
