@@ -1019,6 +1019,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   const note = (s: string) => notes.push(s);
 
   const pushSeg = (motion: 0 | 1, x: number, z: number, feed: number, kind: SegKind) => {
+    /* نقطه آغاز برنامه باید خود نقطه شروع اولین عملیات باشد، نه Home فرضی.
+       نخستین فرمان مختصات را تثبیت می‌کند و Segment صفرطول اولیه باعث می‌شود
+       نمایش، طول برنامه و خروجی G-code همگی دقیقاً از همان نقطه آغاز شوند. */
+    if (segs.length === 0) cur = { x, z };
     segs.push({
       motion,
       x1: cur.x,
