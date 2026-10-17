@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { EditBuf, ELine, EVert, GenResult, Holder2State, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
 import { deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, translateHolder2Edit } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
@@ -104,10 +104,10 @@ const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint:
   { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
   { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
-  { id: "paint", name: "نقاشی جهت‌دار", key: "N", icon: <IconPolyline className="h-4 w-4" />, hint: "خط نمایشی جهت‌دار؛ بدون تأثیر بر G-code" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
   { id: "arc", name: "کمان", key: "A", icon: <IconArc3 className="h-4 w-4" />, hint: "کمان سه‌نقطه‌ای: شروع، پایان، نقطه‌ای روی کمان" },
+  { id: "paint", name: "نقاشی جهت‌دار", key: "N", icon: <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17L10 10L16 14L21 5"/><path d="M16 5H21V10"/></svg>, hint: "خط نمایشی جهت‌دار؛ بدون تأثیر بر G-code" },
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
@@ -172,6 +172,7 @@ interface PaintEdge {
   color: string;
   text: string;
   arrowSize: number;
+  dashed?: boolean;
 }
 
 interface Cam {
@@ -857,12 +858,32 @@ export default function ProfileEditor({
     try{return JSON.parse(localStorage.getItem("kharraat-canvas-paint-v1")||"[]") as PaintEdge[];}catch{return [];}
   });
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
+  const [selectedPaint,setSelectedPaint]=useState<number[]>([]);
+  const [selectedPaintPoint,setSelectedPaintPoint]=useState<{id:number;point:"a"|"b"}|null>(null);
+  const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[]}|null>(null);
   useEffect(()=>{localStorage.setItem("kharraat-canvas-paint-v1",JSON.stringify(paintEdges));},[paintEdges]);
   const addPaintDraft=(points:SPoint[])=>{
     if(points.length<2)return;
     const stamp=Date.now();
-    setPaintEdges(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#45b394",text:"",arrowSize:8}))]);
+    setPaintEdges(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#45b394",text:"",arrowSize:8,dashed:false}))]);
   };
+  useEffect(()=>{
+    const move=(e:PointerEvent)=>{
+      const d=paintDrag.current,rect=svgRef.current?.getBoundingClientRect();
+      if(!d||!rect||!cam)return;
+      const now={z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s};
+      const dz=now.z-d.start.z,dr=now.r-d.start.r;
+      setPaintEdges(all=>all.map(edge=>{
+        const base=d.base.find(x=>x.id===edge.id);if(!base)return edge;
+        if(d.point&&d.pointId===edge.id)return {...base,[d.point]:{z:base[d.point].z+dz,r:base[d.point].r+dr}};
+        if(d.ids.includes(edge.id))return {...base,a:{z:base.a.z+dz,r:base.a.r+dr},b:{z:base.b.z+dz,r:base.b.r+dr}};
+        return edge;
+      }));
+    };
+    const up=()=>{paintDrag.current=null;};
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
+    return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};
+  },[cam]);
   const toolRef = useRef<Tool>("select");
   const previousToolRef = useRef<Tool>("select");
   const chooseTool = (next: Tool) => {
@@ -1463,6 +1484,9 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
+        if(selectedPaint.length){
+          e.preventDefault();setPaintEdges(all=>all.filter(edge=>!selectedPaint.includes(edge.id)));setSelectedPaint([]);setPaintMenu(null);return;
+        }
         if (splitSelected) {
           e.preventDefault();
           deleteSelectedSplit();
@@ -4243,6 +4267,7 @@ export default function ProfileEditor({
                     : "cursor-move"
                   : "cursor-default"
         )}
+        onPointerDownCapture={()=>{if(paintMenu)setPaintMenu(null);}}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -4336,22 +4361,6 @@ export default function ProfileEditor({
           strokeWidth={editOpen ? 0.8 : 1.3}
           strokeDasharray={editOpen ? undefined : "7 5"}
         />
-
-        {/* نقاشی جهت‌دار صرفاً نمایشی است و هرگز وارد Sketch/Generator نمی‌شود. */}
-        {showCanvasPaintTool&&paintEdges.map(edge=>{
-          const ax=cam.ox+edge.a.z*cam.s,ay=cam.oy-edge.a.r*cam.s;
-          const bx=cam.ox+edge.b.z*cam.s,by=cam.oy-edge.b.r*cam.s;
-          const angle=Math.atan2(by-ay,bx-ax),size=edge.arrowSize;
-          const p1=`${bx},${by}`;
-          const p2=`${bx-Math.cos(angle-.55)*size},${by-Math.sin(angle-.55)*size}`;
-          const p3=`${bx-Math.cos(angle+.55)*size},${by-Math.sin(angle+.55)*size}`;
-          return <g key={edge.id} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}}>
-            <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} />
-            <polygon points={`${p1} ${p2} ${p3}`} fill={edge.color} />
-            {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={12} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={3}>{edge.text}</text>}
-            <line x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={12} />
-          </g>;
-        })}
 
         {/* محورهای ساده و نازک مثل مرجع؛ تقاطع آن‌ها خودِ مبدأ است. */}
         {editOpen && (
@@ -5004,14 +5013,38 @@ export default function ProfileEditor({
           );
         })()}
 
+        {/* بالاترین لایه بوم: خطوط نمایشی جهت‌دار، انتخاب و Handle نقاط. */}
+        {showCanvasPaintTool&&paintEdges.map(edge=>{
+          const ax=cam.ox+edge.a.z*cam.s,ay=cam.oy-edge.a.r*cam.s,bx=cam.ox+edge.b.z*cam.s,by=cam.oy-edge.b.r*cam.s;
+          const angle=Math.atan2(by-ay,bx-ax),size=edge.arrowSize,active=selectedPaint.includes(edge.id);
+          const points=`${bx},${by} ${bx-Math.cos(angle-.55)*size},${by-Math.sin(angle-.55)*size} ${bx-Math.cos(angle+.55)*size},${by-Math.sin(angle+.55)*size}`;
+          const canManipulate=tool==="select"||tool==="move"||tool==="paint";
+          const begin=(e:ReactPointerEvent<SVGElement>,point?:"a"|"b")=>{
+            if(e.button!==0||!canManipulate)return;e.preventDefault();e.stopPropagation();setPaintMenu(null);
+            const ids=point?[edge.id]:(e.shiftKey?(active?selectedPaint:selectedPaint.concat(edge.id)):(active?selectedPaint:[edge.id]));
+            setSelectedPaint(ids);setSelectedPaintPoint(point?{id:edge.id,point}:null);onSelected([]);
+            const rect=svgRef.current!.getBoundingClientRect();
+            paintDrag.current={ids,point,pointId:point?edge.id:undefined,start:{z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s},base:paintEdges.map(x=>({...x,a:{...x.a},b:{...x.b}}))};
+          };
+          return <g key={edge.id}>
+            {active&&<line x1={ax} y1={ay} x2={bx} y2={by} stroke="#fff" strokeOpacity={.9} strokeWidth={profileLineWidth+5} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />}
+            <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />
+            <polygon points={points} fill={edge.color} stroke={active?"#fff":"none"} strokeWidth={active?1.5:0} pointerEvents="none" />
+            {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={12} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={3} pointerEvents="none">{edge.text}</text>}
+            <line x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
+            {active&&<><circle cx={ax} cy={ay} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="a"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle cx={bx} cy={by} r={5} fill={selectedPaintPoint?.id===edge.id&&selectedPaintPoint.point==="b"?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
+          </g>;
+        })}
+
       </svg>
 
-      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;return <div className="fixed z-[90] w-56 rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:paintMenu.x,top:paintMenu.y}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>e.preventDefault()}>
-        <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-ink"><span>تنظیم ضلع نمایشی</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
-        <label className="block text-[9.5px] text-mute">نوشته روی ضلع<input autoFocus value={edge.text} onChange={e=>setPaintEdges(all=>all.map(x=>x.id===edge.id?{...x,text:e.target.value}:x))} className="field-input mt-1" /></label>
-        <label className="mt-3 flex items-center justify-between text-[9.5px] text-mute"><span>رنگ ضلع</span><input type="color" value={edge.color} onChange={e=>setPaintEdges(all=>all.map(x=>x.id===edge.id?{...x,color:e.target.value}:x))} className="h-8 w-16 cursor-pointer rounded bg-transparent" /></label>
-        <label className="mt-3 block text-[9.5px] text-mute">اندازه فلش: <b className="text-ink">{edge.arrowSize}px</b><input type="range" min={4} max={24} step={1} value={edge.arrowSize} onChange={e=>setPaintEdges(all=>all.map(x=>x.id===edge.id?{...x,arrowSize:Number(e.target.value)}:x))} className="mt-2 w-full accent-[#45b394]" /></label>
-        <button onClick={()=>{setPaintEdges(all=>all.filter(x=>x.id!==edge.id));setPaintMenu(null);}} className="mt-3 w-full rounded border border-red-500/40 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10">حذف ضلع</button>
+      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>setPaintEdges(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];return <div className="fixed z-[90] w-60 rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:paintMenu.x,top:paintMenu.y}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
+        <div className="mb-2 flex items-center justify-between text-[11px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
+        <label className="block text-[9.5px] text-mute">نوشته روی ضلع<input autoFocus value={edge.text} onChange={e=>patch({text:e.target.value})} className="field-input mt-1" /></label>
+        <div className="mt-3 text-[9.5px] text-mute">رنگ ضلع<div dir="ltr" className="mt-2 grid grid-cols-5 gap-2">{colors.map(color=><button key={color} onClick={()=>patch({color})} className="h-7 w-7 rounded-full border-2 shadow" style={{background:color,borderColor:ids.every(id=>paintEdges.find(x=>x.id===id)?.color===color)?"white":"transparent"}} />)}<label className="relative h-7 w-7 cursor-pointer overflow-hidden rounded-full border-2 border-white/50" style={{background:"conic-gradient(red,#ff0,lime,cyan,blue,#f0f,red)"}} title="رنگ دلخواه"><input type="color" value={edge.color} onChange={e=>patch({color:e.target.value})} className="absolute inset-0 h-full w-full cursor-pointer opacity-0" /></label></div></div>
+        <div className="mt-3 grid grid-cols-2 overflow-hidden rounded border border-edge"><button onClick={()=>patch({dashed:false})} className={cn("py-2 text-[10px] font-bold",!edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط صاف</button><button onClick={()=>patch({dashed:true})} className={cn("border-r border-edge py-2 text-[10px] font-bold",edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط‌چین</button></div>
+        <label className="mt-3 block text-[9.5px] text-mute">اندازه فلش: <b className="text-ink">{edge.arrowSize}px</b><input type="range" min={4} max={24} step={1} value={edge.arrowSize} onChange={e=>patch({arrowSize:Number(e.target.value)})} className="mt-2 w-full accent-[#45b394]" /></label>
+        <button onClick={()=>{setPaintEdges(all=>all.filter(x=>!ids.includes(x.id)));setSelectedPaint([]);setPaintMenu(null);}} className="mt-3 w-full rounded border border-red-500/40 py-1.5 text-[10px] font-bold text-red-400 hover:bg-red-500/10">حذف خطوط انتخاب‌شده</button>
       </div>})()}
 
       {boxRotateBox && boxRotateSession && <div className="absolute z-50" style={{left:boxRotateBox.x,top:boxRotateBox.y,width:`${Math.max(72,28+boxRotateBox.value.length*8)}px`}} dir="ltr">
