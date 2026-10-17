@@ -710,11 +710,13 @@ export default function App() {
   }, [sketch, gcodeOvr, allProfileLayersHidden]);
 
   const applyPreset = useCallback((p: Preset) => {
-    const nextSketch = p.empty
+    const nextSketch: SketchSeg[] = p.empty
       ? []
-      : p.wall
-        ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
-        : sketchFromPoints(presetPoints(p));
+      : p.sketch
+        ? p.sketch.map((seg, index) => ({ ...seg, id: Date.now() * 10 + index }))
+        : p.wall
+          ? sketchFromWall(p.wall.map(([z, r, smooth]) => ({ z, r, smooth })))
+          : sketchFromPoints(presetPoints(p));
     const hadEditDraft = !!editBufRef.current;
     const newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
     setProjectTabs(tabs=>[...tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t),{id:newProjectId,name:p.name,sketch:nextSketch,params,gcodeOvr:{},activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);

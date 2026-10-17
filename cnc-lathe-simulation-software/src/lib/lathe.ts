@@ -2593,6 +2593,15 @@ export interface Preset {
   empty?: boolean;
   /** زنجیره دیواره کاسه به ترتیب مسیر: خارج → لبه → داخل (فقط پریست کاسه) */
   wall?: [number, number, boolean][];
+  /** هندسه دقیق ویرایشگر برای پریست‌هایی که با نقاط Smooth قابل بازسازی نیستند. */
+  sketch?: Array<{
+    kind: "line" | "quad" | "cubic" | "arc";
+    a: { z: number; r: number };
+    b: { z: number; r: number };
+    c1?: { z: number; r: number };
+    c2?: { z: number; r: number };
+    via?: { z: number; r: number };
+  }>;
   /** نقطه Split پیشنهادی روی دیواره */
   split?: { z: number; r: number };
   /** استراتژی پیشنهادی هنگام اعمال پریست */
@@ -2661,6 +2670,33 @@ export const PRESETS: Preset[] = [
       /* شاخه داخلی: از لبه داخلی تا کف حفره */
       [82, 61, true], [70, 55, true], [56, 45, true], [42, 32, true],
       [32, 20, true], [26, 10, true], [24, 4, false],
+    ],
+  },
+  {
+    id: "inner-arc",
+    name: "قوس داخلی",
+    blankD: 150,
+    blankL: 90,
+    shape: "square",
+    strategy: "bowl",
+    split: { z: 79.9758998319284, r: 50.0316974402297 },
+    /* pts فقط برای بندانگشتی است؛ شکل واقعی از sketch دقیق زیر ساخته می‌شود. */
+    pts: [[0,0,false],[20,22,true],[42,43,true],[64,52,true],[80,50,false]],
+    sketch: [
+      {
+        kind: "cubic",
+        a: { z: 0, r: 0 }, b: { z: 80, r: 50 },
+        c1: { z: -0.001953125, r: 56 }, c2: { z: 42, r: 100 },
+      },
+      {
+        kind: "cubic",
+        a: { z: 13, r: 1 }, b: { z: 77, r: 48 },
+        c1: { z: 15, r: 62 }, c2: { z: 51, r: 75 },
+      },
+      {
+        kind: "arc",
+        a: { z: 77, r: 48 }, b: { z: 80, r: 50 }, via: { z: 80, r: 48 },
+      },
     ],
   },
   {
