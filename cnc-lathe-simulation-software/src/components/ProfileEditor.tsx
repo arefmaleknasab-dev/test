@@ -175,6 +175,7 @@ interface PaintEdge {
   dashed?: boolean;
   textSize?: number;
   alignText?: boolean;
+  hideArrow?: boolean;
 }
 
 interface Cam {
@@ -877,7 +878,7 @@ export default function ProfileEditor({
   const addPaintDraft=(points:SPoint[])=>{
     if(points.length<2)return;
     const stamp=Date.now();
-    commitPaint(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#ef4444",text:"",arrowSize:17,dashed:false,textSize:17,alignText:true}))]);
+    commitPaint(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#ef4444",text:"",arrowSize:17,dashed:false,textSize:17,alignText:true,hideArrow:false}))]);
   };
   const paintHitsInRect=(rectW:{z0:number;z1:number;r0:number;r1:number},mode:"window"|"crossing")=>{
     const inside=(p:SPoint)=>p.z>=rectW.z0&&p.z<=rectW.z1&&p.r>=rectW.r0&&p.r<=rectW.r1;
@@ -897,7 +898,10 @@ export default function ProfileEditor({
       const d=paintDrag.current,rect=svgRef.current?.getBoundingClientRect();
       if(!d||!rect||!cam)return;
       const now={z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s};
-      const dz=now.z-d.start.z,dr=now.r-d.start.r;
+      let dz=now.z-d.start.z,dr=now.r-d.start.r;
+      /* Shift هنگام جابه‌جایی نقطه، جهت غالب را نگه می‌دارد و مؤلفه دیگر را
+         صفر می‌کند؛ در نتیجه نقطه دقیقاً روی محور افقی یا عمودی قفل می‌شود. */
+      if(e.shiftKey&&d.point){if(Math.abs(dz)>=Math.abs(dr))dr=0;else dz=0;}
       if(Math.hypot(dz,dr)>1e-7)d.moved=true;
       setPaintEdges(all=>{
         const selectedBases=d.base.filter(x=>d.ids.includes(x.id));
@@ -3652,6 +3656,7 @@ export default function ProfileEditor({
             }
             setDraft([]);
             setLineLengthText("");
+            if(tool==="paint")chooseTool("select");
           }
         } else if (draft.length) cancelDraft();
         else if (editOpen) openSpeedMenu(e.clientX, e.clientY);
@@ -5075,7 +5080,7 @@ export default function ProfileEditor({
           return <g key={edge.id}>
             {highlighted&&<line x1={ax} y1={ay} x2={bx} y2={by} stroke="#fff" strokeOpacity={.9} strokeWidth={profileLineWidth+5} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />}
             <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />
-            <polygon points={points} fill={edge.color} stroke={highlighted?"#fff":"none"} strokeWidth={highlighted?1.5:0} pointerEvents="none" />
+            {!edge.hideArrow&&<polygon points={points} fill={edge.color} stroke={highlighted?"#fff":"none"} strokeWidth={highlighted?1.5:0} pointerEvents="none" />}
             {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={edge.textSize??17} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={Math.max(2.5,(edge.textSize??17)/4)} pointerEvents="none" transform={edge.alignText!==false?`rotate(${textAngle} ${(ax+bx)/2} ${(ay+by)/2})`:undefined}>{edge.text}</text>}
             <line data-paint-hit="true" x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setSelectedPaintPoints([]);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
             {(active||pointActive)&&<><circle data-paint-hit="true" cx={ax} cy={ay} r={5} fill={(selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="a")||paintMarqueePoints.some(p=>p.id===edge.id&&p.point==="a"))?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle data-paint-hit="true" cx={bx} cy={by} r={5} fill={(selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="b")||paintMarqueePoints.some(p=>p.id===edge.id&&p.point==="b"))?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
@@ -5088,7 +5093,7 @@ export default function ProfileEditor({
         <div className="mb-2 flex items-center justify-between text-[13.75px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
         <label className="block text-[11.875px] text-mute">نوشته روی ضلع<input autoFocus value={edge.text} onChange={e=>patch({text:e.target.value})} className="field-input mt-1" /></label>
         <label className="mt-3 block text-[11.875px] text-mute">اندازه نوشته: <b className="text-ink">{edge.textSize??17}px</b><input type="range" min={6} max={36} step={1} value={edge.textSize??17} onChange={e=>patch({textSize:Number(e.target.value)})} className="mt-2 w-full accent-[#45b394]" /></label>
-        <label className="mt-3 flex items-center gap-2 rounded border border-edge px-2 py-2 text-[11.875px] text-ink"><input type="checkbox" checked={edge.alignText!==false} onChange={e=>patch({alignText:e.target.checked})} className="accent-[#45b394]"/><span>نوشته موازی و هم‌جهت خط</span></label>
+        <div className="mt-3 grid grid-cols-2 gap-2"><label className="flex items-center gap-1.5 rounded border border-edge px-2 py-2 text-[11.875px] text-ink"><input type="checkbox" checked={edge.alignText!==false} onChange={e=>patch({alignText:e.target.checked})} className="accent-[#45b394]"/><span>نوشته هم‌جهت</span></label><label className="flex items-center gap-1.5 rounded border border-edge px-2 py-2 text-[11.875px] text-ink"><input type="checkbox" checked={!!edge.hideArrow} onChange={e=>patch({hideArrow:e.target.checked})} className="accent-[#45b394]"/><span>بدون فلش</span></label></div>
         <div className="mt-3 text-[11.875px] text-mute">رنگ ضلع<div dir="ltr" className="mt-2 grid grid-cols-5 gap-2">{colors.map(color=><button key={color} onClick={()=>patch({color})} className="h-7 w-7 rounded-full border-2 shadow" style={{background:color,borderColor:ids.every(id=>paintEdges.find(x=>x.id===id)?.color===color)?"white":"transparent"}} />)}<label className="relative h-7 w-7 cursor-pointer overflow-hidden rounded-full border-2 border-white/50" style={{background:"conic-gradient(red,#ff0,lime,cyan,blue,#f0f,red)"}} title="رنگ دلخواه"><input type="color" value={edge.color} onChange={e=>patch({color:e.target.value})} className="absolute inset-0 h-full w-full cursor-pointer opacity-0" /></label></div></div>
         <div className="mt-3 grid grid-cols-2 overflow-hidden rounded border border-edge"><button onClick={()=>patch({dashed:false})} className={cn("py-2 text-[12.5px] font-bold",!edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط صاف</button><button onClick={()=>patch({dashed:true})} className={cn("border-r border-edge py-2 text-[12.5px] font-bold",edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط‌چین</button></div>
         <label className="mt-3 block text-[11.875px] text-mute">اندازه فلش: <b className="text-ink">{edge.arrowSize}px</b><input type="range" min={4} max={24} step={1} value={edge.arrowSize} onChange={e=>patch({arrowSize:Number(e.target.value)})} className="mt-2 w-full accent-[#45b394]" /></label>
