@@ -1728,8 +1728,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              و ترتیب عملیات بدون تغییر می‌ماند. دو سر شاخه روی صفحه دهانه بسته
              می‌شوند تا هم حفره اصلی و هم ناحیه کوچک پشت نوک کاسه حفظ شوند. */
           const boundary=innerFinishOffSamples.map(q=>({r:Math.max(0,q.r),z:q.z+roughOffsetClearance}));
-          const mouthPlaneZ=bottomCoveredFromZ??p.blankL;
-          const polygon=[...boundary,{r:boundary[boundary.length-1].r,z:mouthPlaneZ},{r:boundary[0].r,z:mouthPlaneZ}];
+          /* محدوده مجاز خشن داخل سمت محور دورانِ خط Offset است. بستن شاخه روی
+             دهانه، ناحیه قهوه‌ایِ ماده بین پروفیل داخل و خارج را به‌اشتباه مجاز
+             می‌کرد. چندضلعی روی R=0 بسته می‌شود تا فقط حفره واقعی باقی بماند. */
+          const polygon=[{r:0,z:boundary[0].z},...boundary,{r:0,z:boundary[boundary.length-1].z}];
           const hits:number[]=[];
           for(let i=0;i<polygon.length;i++){
             const a=polygon[i],b=polygon[(i+1)%polygon.length];
@@ -1743,7 +1745,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const a=Math.max(0,hits[i]),b=Math.max(a,hits[i+1]);
             if(b-a>0.05)intervals.push({a,b});
           }
-          return intervals;
+          /* فقط مؤلفه‌ای قابل دسترس است که به محور دوران متصل باشد؛ بازه‌های
+             جداشده پشت دیواره، همان سایه قهوه‌ای/ماده قطعه هستند. */
+          return intervals.filter(iv=>iv.a<=0.05);
         };
 
         const wallZAtR = (r: number): number => {
@@ -1875,20 +1879,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             current.points[lastIndex]={r:safe,z:end.z};
           }
 
-          /* اتصال مستقیم فقط وقتی مجاز است که تمام پاره‌خط در سمت خالیِ خط
-             آفست بماند. این آزمون معادل rampIsSafe بیرونی در دستگاه مختصات
-             ترانهادهٔ داخل است و از جمع‌شدن بی‌دلیل به +X جلوگیری می‌کند. */
-          const innerLinkIsSafe=(from:{r:number;z:number},to:{r:number;z:number})=>{
-            const dr=to.r-from.r;
-            const checks=[from.r,to.r,...mergedWall.filter(q=>q.r>Math.min(from.r,to.r)&&q.r<Math.max(from.r,to.r)).map(q=>q.r)];
-            for(let i=1;i<16;i++)checks.push(from.r+dr*i/16);
-            for(const r of checks){
-              const t=Math.abs(dr)>1e-9?(r-from.r)/dr:0;
-              const linkZ=from.z+(to.z-from.z)*Math.max(0,Math.min(1,t));
-              if(linkZ<wallZAtR(r)+roughOffsetClearance-1e-5)return false;
-            }
-            return true;
-          };
           let alreadyAtNextStart=false;
           for(let i=0;i<contours.length;i++){
             const contour=contours[i],start=contour.points[0],end=contour.points[contour.points.length-1];
@@ -1918,18 +1908,16 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(next){
               const ns=next.points[0];
               const sameZone=next.group===contour.group;
-              const adjacentPass=sameZone&&next.pass!==contour.pass;
               /* پاس‌های متوالی از همان سر زیگزاگ به هم می‌رسند: اتصال +X روی
                  سر نزدیک محور (Y منفیِ امن نسبت به نوک کاسه) و اتصال −X روی سر
                  قوس انجام می‌شود. بنابراین برای پاس مجاور خط واسط ساخته نمی‌شود. */
-              if(adjacentPass?scanlineLinkIsSafe(end,ns):(sameZone&&innerLinkIsSafe(end,ns))){
+              if(sameZone&&scanlineLinkIsSafe(end,ns)){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
-                /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
-                   جمع می‌شود؛ بازگشت کامل به صفحه دهانه انجام نمی‌شود. */
-                const safeZ=Math.max(maxWallZBetween(Math.min(end.r,ns.r),Math.max(end.r,ns.r))+p.safety,end.z,ns.z);
-                if(safeZ>end.z+1e-7)rawRapid(2*end.r,safeZ);
-                rawRapid(2*ns.r,safeZ);
+                /* در اتصال نامعتبر، تنها کریدور تضمین‌شده سمت حفره محور است:
+                   −Y تا محور، تغییر X روی محور، سپس G1 تا شروع پاس بعد. */
+                if(end.r>1e-7)rawRapid(0,end.z);
+                rawRapid(0,ns.z);
                 mv(1,2*ns.r,ns.z,p.feedRough*0.7,"bore");
               }
               alreadyAtNextStart=true;
@@ -2012,11 +2000,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               } else {
                 /* فقط وقتی پاس بعدی از محور شروع می‌شود (یا پاس دیگری نیست)،
                    بازگشت کامل به محور دوران انجام می‌گیرد. */
-                const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
-                const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-                const safeReturnZ = Math.max(cutZ + 0.5, blockingZ + 0.5);
-                rawRapid(2 * endR, safeReturnZ);
-                rawRapid(0, safeReturnZ);
+                /* بازگشت در خود صفحه تراشیده‌شده تا محور انجام می‌شود؛ حرکت X
+                   بعدی روی محور است و بنابراین هرگز وارد سایه قهوه‌ای نمی‌شود. */
+                if(endR>1e-7)rawRapid(0,cutZ);
+                const nextLayerZ=layerPlans[layerIndex+1]?.layerZ;
+                if(nextLayerZ!=null)rawRapid(0,nextLayerZ);
               }
             }
           }
