@@ -4458,6 +4458,23 @@ export default function ProfileEditor({
             <path d={ghostPath} fill="rgba(227,169,78,0.12)" stroke="rgba(227,169,78,0.4)" strokeWidth={1} />
           </g>
         )}
+        {/* سایه آبی محدوده داخل‌تراشی: شاخه داخلی تا محور دوران بسته می‌شود.
+            این لایه صرفاً نمایشی است و زیر همه مسیرهای G-code قرار می‌گیرد. */}
+        {!editOpen && split.enabled && (()=>{
+          const divided=splitChainAt(chainPolyline(orderChain(segs)),{z:split.z,r:split.r});
+          const inner=split.swapped?divided.outer:divided.inner;
+          if(inner.length<2)return null;
+          const areaPath=(mirror=false)=>{
+            const body=inner.map((point,i)=>{const [x,y]=P(point.z,mirror?-point.r:point.r);return `${i?"L":"M"}${x},${y}`;}).join(" ");
+            const [endX,endY]=P(inner[inner.length-1].z,0),[startX,startY]=P(inner[0].z,0);
+            return `${body} L${endX},${endY} L${startX},${startY} Z`;
+          };
+          return <g pointerEvents="none" opacity={iso?.18:.28}>
+            <path d={areaPath(false)} fill="#69d7ff" fillOpacity={.2} stroke="#7bdcff" strokeOpacity={.25} strokeWidth={.8}/>
+            <path d={areaPath(true)} fill="#69d7ff" fillOpacity={.1} stroke="#7bdcff" strokeOpacity={.16} strokeWidth={.7}/>
+          </g>;
+        })()}
+
         {/* مسیر ابزار */}
         <g>
           {runs.map((run, i) => {
