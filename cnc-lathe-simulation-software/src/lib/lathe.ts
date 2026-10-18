@@ -1841,7 +1841,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           raw.push(to);
           /* حذف رأس‌های غیرضروری فقط با آزمون کامل داخل‌بودن خط جایگزین. */
           const out:AllowedPoint[]=[];let anchor=from,i=0;
-          while(i<raw.length){let j=raw.length-1;while(j>i&&!allowedLink(anchor,raw[j]))j--;out.push(raw[j]);anchor=raw[j];i=j+1;}
+          while(i<raw.length){
+            /* جست‌وجوی خطی از انتهای مسیر در فرورفتگی‌های عمیق صدها آزمون
+               سنگین انجام می‌داد. عقب‌گرد نمایی یک نقطه قابل‌دید را با O(log n)
+               پیدا می‌کند؛ خود نقطه انتخابی همچنان با آزمون دقیق تأیید می‌شود. */
+            let j=raw.length-1,step=1,failed=raw.length;
+            while(j>i&&!allowedLink(anchor,raw[j])){failed=j;j=Math.max(i,j-step);step*=2;}
+            /* در بازه‌ای که عقب‌گرد از روی آن پریده، دورترین نقطه امن با چند
+               آزمون دودویی بازیابی می‌شود تا تعداد خطوط G-code زیاد نشود. */
+            let lo=j,hi=failed;while(hi-lo>1){const mid=(lo+hi)>>1;if(allowedLink(anchor,raw[mid]))lo=mid;else hi=mid;}j=lo;
+            out.push(raw[j]);anchor=raw[j];i=j+1;
+          }
           return out;
         };
 
