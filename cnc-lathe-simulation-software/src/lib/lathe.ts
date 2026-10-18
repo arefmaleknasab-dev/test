@@ -143,7 +143,7 @@ export interface Params {
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
   safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
   fastInnerBoundaryRouting?: boolean; // سازگاری تنظیم ذخیره‌شده نسخه قبلی
-  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest" | "rawBoundary" | "rdp";
+  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest" | "rawBoundary" | "rdp" | "shortCode";
   simpleFeed: boolean; // فیدر بهینه: همهٔ فیدرها به دو F اصلی (خشن/پرداخت) ساده شوند
   zoneOrder: number[]; // ترتیب دستی نواحی (اندیس ناحیه‌ها) — آرایه خالی = ترتیب خودکار
   zoneBounds: number[]; // مرزهای دستی داخلی نواحی (Z) — آرایه خالی = تقسیم خودکار
@@ -1830,7 +1830,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              در صورت پیدا نشدن دید، همه رأس‌ها به‌عنوان fallback بررسی می‌شوند. */
           let area2=0;for(let i=0;i<n;i++)area2+=polygon[i].z*polygon[(i+1)%n].r-polygon[(i+1)%n].z*polygon[i].r;
           const reflex:number[]=[];for(let i=0;i<n;i++){const a=polygon[(i+n-1)%n],b=polygon[i],c=polygon[(i+1)%n],az=b.z-a.z,ar=b.r-a.r,bz=c.z-b.z,br=c.r-b.r,turn=az*br-ar*bz,scale=Math.hypot(az,ar)*Math.hypot(bz,br);if(turn*area2 < -1e-8&&scale>1e-9&&Math.abs(turn)/scale>.2)reflex.push(i);}
-          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);/* پوشش یکنواخت مانع حذف راه ورود در قوس‌های نرم می‌شود، بدون آزمون هر ۹۰۰ نمونه مرز. */const compact=p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp",stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,compact?3:6).forEach(i=>set.add(i));return [...set];};
+          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);const shortCode=p.innerBoundaryRoutingMode==="shortCode",compact=shortCode||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp";if(!shortCode){const stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);}[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,shortCode?2:compact?3:6).forEach(i=>set.add(i));return [...set];};
           const visible=(q:AllowedPoint,reverse=false)=>{let out=candidates(q).filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));if(!out.length)out=[...Array(n).keys()].filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));return out;};
           const nearestVisible=(q:AllowedPoint,reverse=false)=>{
             let nearest=0,best=Infinity;for(let i=0;i<n;i++){const d=(polygon[i].z-q.z)**2+(polygon[i].r-q.r)**2;if(d<best){best=d;nearest=i;}}
@@ -1867,7 +1867,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const out:AllowedPoint[]=[];let anchor=from,i=0;
           while(i<raw.length){
             let j=raw.length-1;
-            if(p.innerBoundaryRoutingMode==="expBinary"||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.fastInnerBoundaryRouting){
+            if(p.innerBoundaryRoutingMode==="expBinary"||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="shortCode"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.fastInnerBoundaryRouting){
               /* حالت سریع جدید: عقب‌گرد نمایی و سپس بازیابی دورترین نقطه امن
                  با جست‌وجوی دودویی. */
               let step=1,failed=raw.length;
