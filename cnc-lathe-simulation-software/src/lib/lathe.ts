@@ -126,6 +126,7 @@ export interface Params {
   offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
   innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
   innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
+  innerRectClearance: number; // فاصله مرکز G0 قائم/افقی از مرز آبی
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   bottomOffsetClearance: number; // فاصله کف‌تراشی در +X از بلندترین قله آفست داخل
@@ -358,6 +359,7 @@ export const DEFAULT_PARAMS: Params = {
   offsetDist: 0.5,
   innerOffsetDist: 0.5,
   innerStartClearance: 2,
+  innerRectClearance: 3,
   innerEndTravel: 300,
   bottomRoughOverlap: 3,
   bottomOffsetClearance: 0,
@@ -396,7 +398,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerRectClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -409,6 +411,7 @@ export function normalizeParams(
   }
   base.innerDoc = Math.min(10, Math.max(0.5, base.innerDoc));
   base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
+  base.innerRectClearance = Math.min(20, Math.max(0, base.innerRectClearance));
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   base.bottomOffsetClearance = Math.min(100, Math.max(0, base.bottomOffsetClearance));
@@ -1866,7 +1869,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               const parent=new Int32Array(total);parent.fill(-2);const queue:number[]=[];for(let id=0;id<total;id++)if(ok(id)&&clearAxis(from,qp(id))){parent[id]=-1;queue.push(id);}let goal=-1,head=0;while(head<queue.length&&goal<0){const id=queue[head++],iz=Math.floor(id/nr),ir=id%nr,q=qp(id);if(clearAxis(q,to)){goal=id;break;}for(const ni of [iz>0?id-nr:-1,iz+1<Z.length?id+nr:-1,ir>0?id-1:-1,ir+1<nr?id+1:-1])if(ni>=0&&parent[ni]===-2&&ok(ni)&&clearAxis(q,qp(ni))){parent[ni]=id;queue.push(ni);}}
               if(goal<0)return null;const ids:number[]=[];for(let id=goal;id>=0;id=parent[id])ids.push(id);ids.reverse();const route=ids.map(qp),out:AllowedPoint[]=[];for(const q of route){const last=out[out.length-1];if(last&&out.length>1){const prev=out[out.length-2];if((Math.abs(prev.z-last.z)<1e-7&&Math.abs(last.z-q.z)<1e-7)||(Math.abs(prev.r-last.r)<1e-7&&Math.abs(last.r-q.r)<1e-7))out.pop();}out.push(q);}out.push(to);return out;
             };
-            for(let clearance=3;clearance>=.5;clearance-=.5){const route=tryRect(clearance);if(route)return route;}
+            const requestedClearance=Math.min(20,Math.max(0,p.innerRectClearance));
+            for(let clearance=requestedClearance;clearance>1e-7;clearance-=.5){const route=tryRect(Math.max(0,clearance));if(route)return route;}
+            const zeroClearanceRoute=tryRect(0);if(zeroClearanceRoute)return zeroClearanceRoute;
             return raw;
           }
           if(p.innerBoundaryRoutingMode==="rawBoundary")return raw;
