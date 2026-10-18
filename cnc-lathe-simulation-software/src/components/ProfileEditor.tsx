@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { EditBuf, ELine, EVert, GenResult, Holder2State, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
-import { continuousPathOffset, deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, translateHolder2Edit } from "../lib/lathe";
+import { continuousPathOffset, deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, sampleOrderedProfile, translateHolder2Edit } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
 import {
   arcRadius,
@@ -4467,7 +4467,8 @@ export default function ProfileEditor({
           const divided=splitChainAt(chainPolyline(orderChain(segs)),{z:split.z,r:split.r});
           const inner=split.swapped?divided.outer:divided.inner;
           if(inner.length<2)return null;
-          const rawOffset=continuousPathOffset(inner,Math.max(0,params.innerOffsetDist),true).map(q=>({z:q.z,r:Math.max(0,q.r)}));
+          const sampledInner=sampleOrderedProfile(inner.map((q,i)=>({id:i+1,z:q.z,r:q.r,smooth:false})),params.blankD/2);
+          const rawOffset=continuousPathOffset(sampledInner,Math.max(0,params.innerOffsetDist),true).reverse().map(q=>({z:q.z,r:Math.max(0,q.r)}));
           if(rawOffset.length<2)return null;
           /* مسیر بسته‌شدن از محور باید ابتدا به سر کم‌شعاع Offset برسد. */
           const offset=rawOffset[0].r<=rawOffset[rawOffset.length-1].r?rawOffset:[...rawOffset].reverse();

@@ -1722,14 +1722,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (!layers.length || Math.abs(layers[layers.length - 1] - roughInnerZ) > 0.05) layers.push(roughInnerZ);
         if (!splitPlaneAlreadyCut && Math.abs(layers[0] - zOuter) < 0.05) splitPlaneAlreadyCut = true;
 
+        /* همان چندضلعی لایه «محدوده داخل‌تراشی» در ProfileEditor: انتهای
+           Offset نزدیک Split → +X → محور → −X → سر محوری Offset → Offset. */
+        const rawBoundary=innerFinishOffSamples.map(q=>({r:Math.max(0,q.r),z:q.z}));
+        const boundary=rawBoundary[0].r<=rawBoundary[rawBoundary.length-1].r?rawBoundary:[...rawBoundary].reverse();
+        const axisEnd=boundary[0],splitEnd=boundary[boundary.length-1],mouthPlaneZ=Math.max(p.blankL,splitEnd.z);
+        const polygon=[splitEnd,{r:splitEnd.r,z:mouthPlaneZ},{r:0,z:mouthPlaneZ},{r:0,z:axisEnd.z},...boundary];
         const intervalsAt = (layerZ: number): { a: number; b: number }[] => {
-          /* پروفیل برگشتی را نمی‌توان به تابع تک‌مقداری X=f(R) تبدیل کرد. فقط
-             تشخیص بازه با Scanline چندضلعی واقعی انجام می‌شود؛ سایر منطق پاس‌ها
-             و ترتیب عملیات بدون تغییر می‌ماند. دو سر شاخه روی صفحه دهانه بسته
-             می‌شوند تا هم حفره اصلی و هم ناحیه کوچک پشت نوک کاسه حفظ شوند. */
-          const boundary=innerFinishOffSamples.map(q=>({r:Math.max(0,q.r),z:q.z+roughOffsetClearance}));
-          const mouthPlaneZ=bottomCoveredFromZ??p.blankL;
-          const polygon=[...boundary,{r:boundary[boundary.length-1].r,z:mouthPlaneZ},{r:boundary[0].r,z:mouthPlaneZ}];
           const hits:number[]=[];
           for(let i=0;i<polygon.length;i++){
             const a=polygon[i],b=polygon[(i+1)%polygon.length];
@@ -1771,6 +1770,22 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const mouthX = zOuter + p.innerStartClearance;
         if (!bottomToInnerRoughReady && !bottomToInnerRoughDirect) enterFirstInner(2 * rEntry, mouthX);
         const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
+        type AllowedPoint={r:number;z:number};
+        const allowedLink=(a:AllowedPoint,b:AllowedPoint)=>{
+          const samples=Math.max(24,Math.ceil(Math.hypot(b.z-a.z,b.r-a.r)*2));
+          for(let i=0;i<=samples;i++){const t=i/samples,r=a.r+(b.r-a.r)*t,z=a.z+(b.z-a.z)*t;if(!intervalsAt(z).some(iv=>r>=iv.a-.015&&r<=iv.b+.015))return false;}return true;
+        };
+        /* مسیریاب فقط داخل همان رنگ آبی حرکت می‌کند. در صورت نامعتبر بودن خط
+           مستقیم، A* روی شبکه داخلی اجرا و سپس قطعات اضافی با آزمون دید مستقیم
+           حذف می‌شوند؛ بنابراین تمام G0/G1های اتصال داخل چندضلعی می‌مانند. */
+        const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
+          if(allowedLink(from,to))return [to];const gs=Math.max(.5,Math.min(1.5,p.innerDoc/2)),minZ=Math.min(...polygon.map(q=>q.z)),maxZ=Math.max(...polygon.map(q=>q.z)),maxR=Math.max(...polygon.map(q=>q.r)),nr=Math.ceil(maxR/gs)+1,nz=Math.ceil((maxZ-minZ)/gs)+1,total=nr*nz;
+          const pt=(id:number):AllowedPoint=>({z:minZ+Math.floor(id/nr)*gs,r:(id%nr)*gs}),valid=new Int8Array(total);valid.fill(-1);const ok=(id:number)=>{if(id<0||id>=total)return false;if(valid[id]>=0)return !!valid[id];const q=pt(id);return !!(valid[id]=intervalsAt(q.z).some(iv=>q.r>=iv.a&&q.r<=iv.b)?1:0);};
+          const nearest=(q:AllowedPoint)=>{let idBest=-1,dBest=Infinity;for(let id=0;id<total;id++)if(ok(id)){const x=pt(id),d=Math.hypot(x.z-q.z,x.r-q.r);if(d<dBest&&allowedLink(q,x)){idBest=id;dBest=d;}}return idBest;},start=nearest(from),goal=nearest(to);if(start<0||goal<0)return null;
+          const cost=new Float64Array(total);cost.fill(Infinity);cost[start]=0;const parent=new Int32Array(total);parent.fill(-1);const open=[start],closed=new Uint8Array(total),dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+          while(open.length){let oi=0,best=Infinity;for(let i=0;i<open.length;i++){const q=pt(open[i]),f=cost[open[i]]+Math.hypot(q.z-pt(goal).z,q.r-pt(goal).r);if(f<best){best=f;oi=i;}}const id=open.splice(oi,1)[0];if(id===goal)break;if(closed[id])continue;closed[id]=1;const iz=Math.floor(id/nr),ir=id%nr;for(const[dz,dr]of dirs){const zz=iz+dz,rr=ir+dr,ni=zz*nr+rr;if(zz<0||zz>=nz||rr<0||rr>=nr||!ok(ni)||!allowedLink(pt(id),pt(ni)))continue;const next=cost[id]+Math.hypot(dz,dr);if(next<cost[ni]){cost[ni]=next;parent[ni]=id;open.push(ni);}}}
+          if(start!==goal&&parent[goal]<0)return null;const ids:number[]=[];for(let id=goal;;id=parent[id]){ids.push(id);if(id===start)break;}ids.reverse();const raw=ids.map(pt),out:AllowedPoint[]=[];for(let i=0;i<raw.length;){out.push(raw[i]);if(i===raw.length-1)break;let j=raw.length-1;while(j>i+1&&!allowedLink(raw[i],raw[j]))j--;i=j;}out.push(to);return out;
+        };
 
         /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
            ترانهادهٔ X/R. هر پاس به‌جای یک خط تخت، C(R)=max(دیواره+کلیرنس،
@@ -1837,14 +1852,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
 
           /* ایمنی اتصال مورب با خود Scanline سنجیده می‌شود، نه envelope شعاعی؛
              بنابراین قله‌ها و دره‌های هم‌زمان X/Y نیز درست دیده می‌شوند. */
-          const scanlineLinkIsSafe=(from:{r:number;z:number},to:{r:number;z:number})=>{
-            for(let i=0;i<=40;i++){
-              const t=i/40,r=from.r+(to.r-from.r)*t,z=from.z+(to.z-from.z)*t;
-              const inside=intervalsAt(z).some(iv=>r>=iv.a-0.015&&r<=iv.b+0.015);
-              if(!inside)return false;
-            }
-            return true;
-          };
+          const scanlineLinkIsSafe=allowedLink;
           /* اگر پاس +Y در لبه قوس تمام شود و اتصال مستقیم −X به پاس بعدی خط
              آفست را قطع کند، فقط انتهای همین پاس عقب آورده می‌شود. نزدیک‌ترین
              نقطه امن با جست‌وجوی درشت و سپس دودویی پیدا می‌شود؛ در نتیجه اتصال
@@ -1875,20 +1883,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             current.points[lastIndex]={r:safe,z:end.z};
           }
 
-          /* اتصال مستقیم فقط وقتی مجاز است که تمام پاره‌خط در سمت خالیِ خط
-             آفست بماند. این آزمون معادل rampIsSafe بیرونی در دستگاه مختصات
-             ترانهادهٔ داخل است و از جمع‌شدن بی‌دلیل به +X جلوگیری می‌کند. */
-          const innerLinkIsSafe=(from:{r:number;z:number},to:{r:number;z:number})=>{
-            const dr=to.r-from.r;
-            const checks=[from.r,to.r,...mergedWall.filter(q=>q.r>Math.min(from.r,to.r)&&q.r<Math.max(from.r,to.r)).map(q=>q.r)];
-            for(let i=1;i<16;i++)checks.push(from.r+dr*i/16);
-            for(const r of checks){
-              const t=Math.abs(dr)>1e-9?(r-from.r)/dr:0;
-              const linkZ=from.z+(to.z-from.z)*Math.max(0,Math.min(1,t));
-              if(linkZ<wallZAtR(r)+roughOffsetClearance-1e-5)return false;
-            }
-            return true;
-          };
           let alreadyAtNextStart=false;
           for(let i=0;i<contours.length;i++){
             const contour=contours[i],start=contour.points[0],end=contour.points[contour.points.length-1];
@@ -1918,19 +1912,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(next){
               const ns=next.points[0];
               const sameZone=next.group===contour.group;
-              const adjacentPass=sameZone&&next.pass!==contour.pass;
               /* پاس‌های متوالی از همان سر زیگزاگ به هم می‌رسند: اتصال +X روی
                  سر نزدیک محور (Y منفیِ امن نسبت به نوک کاسه) و اتصال −X روی سر
                  قوس انجام می‌شود. بنابراین برای پاس مجاور خط واسط ساخته نمی‌شود. */
-              if(adjacentPass?scanlineLinkIsSafe(end,ns):(sameZone&&innerLinkIsSafe(end,ns))){
+              if(sameZone&&scanlineLinkIsSafe(end,ns)){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
-                /* فقط در وجود تداخل واقعی یا تغییر ناحیه، تا کمترین X امنِ لازم
-                   جمع می‌شود؛ بازگشت کامل به صفحه دهانه انجام نمی‌شود. */
-                const safeZ=Math.max(maxWallZBetween(Math.min(end.r,ns.r),Math.max(end.r,ns.r))+p.safety,end.z,ns.z);
-                if(safeZ>end.z+1e-7)rawRapid(2*end.r,safeZ);
-                rawRapid(2*ns.r,safeZ);
-                mv(1,2*ns.r,ns.z,p.feedRough*0.7,"bore");
+                const plan=planAllowedLink(end,ns);
+                if(plan){for(let k=0;k<plan.length-1;k++)rawRapid(2*plan[k].r,plan[k].z);const q=plan[plan.length-1];mv(1,2*q.r,q.z,p.feedRough*.7,"bore");}
+                else { /* فقط در هندسه نامعتبر؛ از تولید خط خارج محدوده خودداری می‌شود. */ mv(1,2*ns.r,ns.z,p.feedRough*.7,"bore"); }
               }
               alreadyAtNextStart=true;
             }
@@ -1983,14 +1973,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               /* اگر در ادامهٔ +Y باربرداری دیگری وجود دارد، بازگشت به محور ممنوع
                  است: ابتدا پشت راست‌ترین نقطهٔ قله ۰٫۵mm در +X فاصله می‌گیریم،
                  سپس در +Y از روی قله عبور می‌کنیم و از همان‌جا در −X وارد می‌شویم. */
-              const peakLo=Math.min(endR,nextStartR),peakHi=Math.max(endR,nextStartR);
-              const peakPoints = mergedWall.filter((point) =>
-                point.r >= peakLo - 1e-7 && point.r <= peakHi + 1e-7
-              );
-              const peakZ = peakPoints.length ? Math.max(...peakPoints.map((point) => point.z)) : layerZ;
-              const safePeakZ = Math.max(cutZ + 0.5, peakZ + 0.5);
-              rawRapid(2 * endR, safePeakZ);       // +X تا پشت قله
-              rawRapid(2 * nextStartR, safePeakZ); // +Y با حفظ فاصله امن
+              const plan=planAllowedLink({r:endR,z:cutZ},{r:nextStartR,z:cutZ});
+              if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
               const nextLayerFirst = layerPlans[layerIndex + 1]?.intervals[0];
@@ -1999,24 +1983,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                 /* اگر پاس بعدی از محور فاصله دارد، برگشت کامل تا R=0 حذف می‌شود.
                    ابزار پشت موانع در +X امن می‌شود، فقط در −Y تا شعاع شروع پاس
                    بعدی می‌آید و از همان نقطه مستقیماً در −X باربرداری می‌کند. */
-                const loR = Math.min(endR, nextLayerStartR);
-                const hiR = Math.max(endR, nextLayerStartR);
-                const blockers = mergedWall.filter((point) =>
-                  point.r >= loR - 1e-7 && point.r <= hiR + 1e-7
-                );
-                const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-                const safeReturnZ = Math.max(cutZ + 0.5, blockingZ + 0.5);
-                rawRapid(2 * endR, safeReturnZ);
-                rawRapid(2 * nextLayerStartR, safeReturnZ); // −Y فقط تا سر شروع پاس بعدی
-                preparedForNextLayer = true;
+                const nextZ=layerPlans[layerIndex+1].layerZ,plan=planAllowedLink({r:endR,z:cutZ},{r:nextLayerStartR,z:nextZ});
+                if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
+                preparedForNextLayer = !!plan;
               } else {
                 /* فقط وقتی پاس بعدی از محور شروع می‌شود (یا پاس دیگری نیست)،
                    بازگشت کامل به محور دوران انجام می‌گیرد. */
-                const blockers = mergedWall.filter((point) => point.r <= endR + 1e-7);
-                const blockingZ = blockers.length ? Math.max(...blockers.map((point) => point.z)) : layerZ;
-                const safeReturnZ = Math.max(cutZ + 0.5, blockingZ + 0.5);
-                rawRapid(2 * endR, safeReturnZ);
-                rawRapid(0, safeReturnZ);
+                const targetZ=layerPlans[layerIndex+1]?.layerZ??cutZ,plan=planAllowedLink({r:endR,z:cutZ},{r:0,z:targetZ});
+                if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
               }
             }
           }
