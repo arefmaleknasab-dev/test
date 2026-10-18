@@ -1873,6 +1873,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               if(goal<0)return null;const ids:number[]=[];for(let id=goal;id>=0;id=parent[id])ids.push(id);ids.reverse();const route=ids.map(qp),out:AllowedPoint[]=[];for(const q of route){const last=out[out.length-1];if(last&&out.length>1){const prev=out[out.length-2];if((Math.abs(prev.z-last.z)<1e-7&&Math.abs(last.z-q.z)<1e-7)||(Math.abs(prev.r-last.r)<1e-7&&Math.abs(last.r-q.r)<1e-7))out.pop();}out.push(q);}out.push(to);return out;
             };
             const requestedClearance=Math.min(20,Math.max(0,p.innerRectClearance));
+            /* صفر یعنی دقیقاً بدون Offset: استفاده از خود مسیر مرز خام. شبکه حتی
+               با clearance=0 کوتاه‌ترین مسیر داخلی را انتخاب می‌کرد و فاصله‌ای
+               ظاهری باقی می‌گذاشت، بنابراین معنای پارامتر با نمایش یکی نبود. */
+            if(requestedClearance<=1e-7)return raw;
             for(let clearance=requestedClearance;clearance>1e-7;clearance-=.5){const route=tryRect(Math.max(0,clearance));if(route)return route;}
             const zeroClearanceRoute=tryRect(0);if(zeroClearanceRoute)return zeroClearanceRoute;
             return raw;
