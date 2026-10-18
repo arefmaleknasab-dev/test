@@ -126,7 +126,6 @@ export interface Params {
   offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
   innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
   innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
-  innerRectClearance: number; // فاصله مرکز G0 قائم/افقی از مرز آبی
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   bottomOffsetClearance: number; // فاصله کف‌تراشی در +X از بلندترین قله آفست داخل
@@ -144,7 +143,7 @@ export interface Params {
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
   safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
   fastInnerBoundaryRouting?: boolean; // سازگاری تنظیم ذخیره‌شده نسخه قبلی
-  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest" | "rawBoundary" | "rdp" | "shortCode" | "rect3";
+  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest" | "rawBoundary" | "rdp" | "shortCode";
   simpleFeed: boolean; // فیدر بهینه: همهٔ فیدرها به دو F اصلی (خشن/پرداخت) ساده شوند
   zoneOrder: number[]; // ترتیب دستی نواحی (اندیس ناحیه‌ها) — آرایه خالی = ترتیب خودکار
   zoneBounds: number[]; // مرزهای دستی داخلی نواحی (Z) — آرایه خالی = تقسیم خودکار
@@ -359,7 +358,6 @@ export const DEFAULT_PARAMS: Params = {
   offsetDist: 0.5,
   innerOffsetDist: 0.5,
   innerStartClearance: 2,
-  innerRectClearance: 3,
   innerEndTravel: 300,
   bottomRoughOverlap: 3,
   bottomOffsetClearance: 0,
@@ -398,7 +396,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerRectClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -411,7 +409,6 @@ export function normalizeParams(
   }
   base.innerDoc = Math.min(10, Math.max(0.5, base.innerDoc));
   base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
-  base.innerRectClearance = Math.min(20, Math.max(0, base.innerRectClearance));
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   base.bottomOffsetClearance = Math.min(100, Math.max(0, base.bottomOffsetClearance));
@@ -1815,7 +1812,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            حذف می‌شوند؛ بنابراین تمام G0/G1های اتصال داخل چندضلعی می‌مانند. */
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
           if(allowedLink(from,to))return [to];
-          if(p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp"||p.innerBoundaryRoutingMode==="rect3"){
+          if(p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp"){
             /* دو میانبر قائم ممکن را پیش از مسیریابی مرزی امتحان می‌کند. هر دو
                ضلع جداگانه با همان آزمون دقیق ناحیه آبی تأیید می‌شوند. */
             const elbows:AllowedPoint[]=[{z:to.z,r:from.r},{z:from.z,r:to.r}];
@@ -1833,14 +1830,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              در صورت پیدا نشدن دید، همه رأس‌ها به‌عنوان fallback بررسی می‌شوند. */
           let area2=0;for(let i=0;i<n;i++)area2+=polygon[i].z*polygon[(i+1)%n].r-polygon[(i+1)%n].z*polygon[i].r;
           const reflex:number[]=[];for(let i=0;i<n;i++){const a=polygon[(i+n-1)%n],b=polygon[i],c=polygon[(i+1)%n],az=b.z-a.z,ar=b.r-a.r,bz=c.z-b.z,br=c.r-b.r,turn=az*br-ar*bz,scale=Math.hypot(az,ar)*Math.hypot(bz,br);if(turn*area2 < -1e-8&&scale>1e-9&&Math.abs(turn)/scale>.2)reflex.push(i);}
-          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);const shortCode=p.innerBoundaryRoutingMode==="shortCode",compact=shortCode||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp"||p.innerBoundaryRoutingMode==="rect3";if(!shortCode){const stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);}[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,shortCode?2:compact?3:6).forEach(i=>set.add(i));return [...set];};
+          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);const shortCode=p.innerBoundaryRoutingMode==="shortCode",compact=shortCode||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp";if(!shortCode){const stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);}[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,shortCode?2:compact?3:6).forEach(i=>set.add(i));return [...set];};
           const visible=(q:AllowedPoint,reverse=false)=>{let out=candidates(q).filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));if(!out.length)out=[...Array(n).keys()].filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));return out;};
           const nearestVisible=(q:AllowedPoint,reverse=false)=>{
             let nearest=0,best=Infinity;for(let i=0;i<n;i++){const d=(polygon[i].z-q.z)**2+(polygon[i].r-q.r)**2;if(d<best){best=d;nearest=i;}}
             for(let step=0;step<n;step++){const ids=step?[((nearest+step)%n),((nearest-step+n)%n)]:[nearest];for(const i of ids)if(reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]))return [i];}
             return [] as number[];
           };
-          const nearestMode=p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp"||p.innerBoundaryRoutingMode==="rect3",fromVisible=nearestMode?nearestVisible(from):visible(from),toVisible=nearestMode?nearestVisible(to,true):visible(to,true);
+          const nearestMode=p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp",fromVisible=nearestMode?nearestVisible(from):visible(from),toVisible=nearestMode?nearestVisible(to,true):visible(to,true);
           if(!fromVisible.length||!toVisible.length)return null;
           const edgeLen=polygon.map((q,i)=>Math.hypot(q.z-polygon[(i+1)%n].z,q.r-polygon[(i+1)%n].r));
           /* فاصله تجمعی مرز، انتخاب بهترین جفت رأس را از O(n³) به O(n²)
@@ -1858,34 +1855,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const raw:AllowedPoint[]=[];
           for(let i=bestI;;i=(i+(forward?1:n-1))%n){raw.push(polygon[i]);if(i===bestJ)break;}
           raw.push(to);
-          if(p.innerBoundaryRoutingMode==="rect3"){
-            /* مسیر خام فقط برای تعیین سمت کوتاه مرز محاسبه شد؛ اکنون اتصال با
-               شبکه قائم/افقی بازسازی می‌شود. فاصله مرکز G0 از مرز از ۳mm آغاز
-               و فقط در تنگناها طبق Preferences به‌صورت نیم‌میلی‌متری کم می‌شود. */
-            const clearanceCache=new Map<string,number>();const pointClearance=(q:AllowedPoint)=>{const key=`${q.z},${q.r}`,cached=clearanceCache.get(key);if(cached!==undefined)return cached;let d=Infinity;for(const e of polyEdges){if(q.z<e.minZ-d||q.z>e.maxZ+d||q.r<e.minR-d||q.r>e.maxR+d)continue;const l2=e.ez*e.ez+e.er*e.er,t=l2?Math.max(0,Math.min(1,((q.z-e.a.z)*e.ez+(q.r-e.a.r)*e.er)/l2)):0;d=Math.min(d,Math.hypot(q.z-(e.a.z+t*e.ez),q.r-(e.a.r+t*e.er)));}clearanceCache.set(key,d);return d;};
-            /* فاصله جهت‌دار: برای خط عمودی فقط فاصله چپ/راست (محور Z)، و
-               برای خط افقی فقط فاصله بالا/پایین (محور R) سنجیده می‌شود. */
-            const directionalClearance=(q:AllowedPoint,vertical:boolean)=>{let d=Infinity;if(vertical){for(const e of polyEdges){const a=e.a,b=e.b;if(!((a.r<=q.r&&b.r>q.r)||(b.r<=q.r&&a.r>q.r)))continue;const t=(q.r-a.r)/(b.r-a.r),z=a.z+(b.z-a.z)*t;d=Math.min(d,Math.abs(q.z-z));}}else{for(const iv of intervalsAt(q.z))d=Math.min(d,Math.abs(q.r-iv.a),Math.abs(q.r-iv.b));}return d;};
-            const tryRect=(clearance:number):AllowedPoint[]|null=>{
-              const spacing=2,zs:number[]=[from.z,to.z],rs:number[]=[from.r,to.r];for(let z=polyMinZ;z<=polyMaxZ+1e-7;z+=spacing)zs.push(z);for(let r=0;r<=Math.max(...polygon.map(q=>q.r))+1e-7;r+=spacing)rs.push(r);const uniq=(a:number[])=>[...new Set(a.map(v=>Math.round(v*1e6)/1e6))].sort((x,y)=>x-y),Z=uniq(zs),R=uniq(rs),nr=R.length,total=Z.length*nr,valid=new Int8Array(total);valid.fill(-1);const qp=(id:number):AllowedPoint=>({z:Z[Math.floor(id/nr)],r:R[id%nr]}),ok=(id:number)=>{if(valid[id]>=0)return !!valid[id];const q=qp(id);return !!(valid[id]=allowedPoint(q.r,q.z)?1:0);};
-              const clearAxis=(a:AllowedPoint,b:AllowedPoint)=>{const vertical=Math.abs(a.z-b.z)<1e-7;if(!vertical&&Math.abs(a.r-b.r)>1e-7)return false;const count=Math.max(1,Math.ceil(Math.hypot(b.z-a.z,b.r-a.r)));for(let i=0;i<=count;i++){const t=i/count,q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};if(!allowedPoint(q.r,q.z)||directionalClearance(q,vertical)<clearance-1e-7)return false;}return true;};
-              /* نقطه شروع/پایان پاس ذاتاً می‌تواند روی مرز باشد. فقط ساق کوتاه
-                 خروج/ورود از شرط فاصله معاف است؛ بخش میانی G0 فاصله انتخابی را دارد. */
-              const endpointAxis=(a:AllowedPoint,b:AllowedPoint)=>(Math.abs(a.z-b.z)<1e-7||Math.abs(a.r-b.r)<1e-7)&&allowedLink(a,b);
-              const parent=new Int32Array(total);parent.fill(-2);const queue:number[]=[];for(let id=0;id<total;id++)if(ok(id)&&endpointAxis(from,qp(id))){parent[id]=-1;queue.push(id);}let goal=-1,head=0;while(head<queue.length&&goal<0){const id=queue[head++],iz=Math.floor(id/nr),ir=id%nr,q=qp(id);if(endpointAxis(q,to)){goal=id;break;}for(const ni of [iz>0?id-nr:-1,iz+1<Z.length?id+nr:-1,ir>0?id-1:-1,ir+1<nr?id+1:-1])if(ni>=0&&parent[ni]===-2&&ok(ni)&&clearAxis(q,qp(ni))){parent[ni]=id;queue.push(ni);}}
-              if(goal<0)return null;const ids:number[]=[];for(let id=goal;id>=0;id=parent[id])ids.push(id);ids.reverse();const route=ids.map(qp),out:AllowedPoint[]=[];for(const q of route){const last=out[out.length-1];if(last&&out.length>1){const prev=out[out.length-2];if((Math.abs(prev.z-last.z)<1e-7&&Math.abs(last.z-q.z)<1e-7)||(Math.abs(prev.r-last.r)<1e-7&&Math.abs(last.r-q.r)<1e-7))out.pop();}out.push(q);}out.push(to);return out;
-            };
-            const requestedClearance=Math.min(20,Math.max(0,p.innerRectClearance));
-            for(let clearance=requestedClearance;clearance>1e-7;clearance-=.5){const route=tryRect(Math.max(0,clearance));if(route)return route;}
-            const zeroClearanceRoute=tryRect(0);if(zeroClearanceRoute)return zeroClearanceRoute;
-            /* fallback دیگر مسیر خام مورب نیست: هر ضلع خام به دو ضلع قائم/افقی
-               داخل ناحیه تبدیل می‌شود. تقسیم بازگشتی فقط برای گوشه‌های بسیار
-               تنگ است تا تغییر Offset داخل، حالت را ناگهان به Raw برنگرداند. */
-            const source=[from,...raw],rectified:AllowedPoint[]=[from];
-            const appendRect=(a:AllowedPoint,b:AllowedPoint,depth:number)=>{if(Math.abs(a.z-b.z)<1e-7||Math.abs(a.r-b.r)<1e-7){rectified.push(b);return;}const e1={z:b.z,r:a.r},e2={z:a.z,r:b.r},candidates=[e1,e2].sort((u,v)=>pointClearance(v)-pointClearance(u));for(const e of candidates)if(allowedLink(a,e)&&allowedLink(e,b)){rectified.push(e,b);return;}if(depth<3){const m={z:(a.z+b.z)/2,r:(a.r+b.r)/2};appendRect(a,m,depth+1);appendRect(m,b,depth+1);}else rectified.push(b);};
-            for(let i=1;i<source.length;i++)appendRect(source[i-1],source[i],0);
-            const fallback:AllowedPoint[]=[];for(const q of rectified.slice(1)){const n=fallback.length;if(n>=2){const a=fallback[n-2],b=fallback[n-1];if((Math.abs(a.z-b.z)<1e-7&&Math.abs(b.z-q.z)<1e-7)||(Math.abs(a.r-b.r)<1e-7&&Math.abs(b.r-q.r)<1e-7))fallback.pop();}fallback.push(q);}return fallback;
-          }
           if(p.innerBoundaryRoutingMode==="rawBoundary")return raw;
           if(p.innerBoundaryRoutingMode==="rdp"){
             /* Douglas–Peucker ایمن: ابتدا انحراف هندسی را ارزان می‌سنجد و فقط
