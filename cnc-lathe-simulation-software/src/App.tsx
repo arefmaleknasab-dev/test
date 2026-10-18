@@ -136,6 +136,10 @@ export default function App() {
   /* منبع مولد مسیر از اسکچ نمایشی جداست تا وقتی همهٔ لایه‌ها خاموش‌اند، درگ
      پروفایل بدون اجرای generate در هر فریم انجام شود؛ در pointerup همگام می‌شود. */
   const [generationSketch, setGenerationSketch] = useState<SketchSeg[]>(sketch);
+  /* درگ می‌تواند در یک فریم ده‌ها pointermove تولید کند؛ G-code فقط برای آخرین
+     هندسه همان فریم لازم است، نه همه وضعیت‌های میانی که هرگز نمایش داده نمی‌شوند. */
+  const generationFrameRef = useRef<number | null>(null);
+  const pendingGenerationSketchRef = useRef<SketchSeg[] | null>(null);
   const [params, setParams] = useState<Params>(() => normalizeParams(SAVED?.params, IS_LEGACY));
   const [settings, setSettings] = useState<EdSettings>(() => {
     const s = SAVED?.settings;
@@ -700,7 +704,18 @@ export default function App() {
       commitRef.current = { sketch, gcodeOvr, editBuf: null, editOpen: false, params }; // وضعیت پیش از شروع کشیدن
     }
     setSketch(next);
-    if (commit || !allProfileLayersHidden) setGenerationSketch(next);
+    if (commit) {
+      if (generationFrameRef.current != null) cancelAnimationFrame(generationFrameRef.current);
+      generationFrameRef.current = null;pendingGenerationSketchRef.current = null;
+      setGenerationSketch(next);
+    } else if (!allProfileLayersHidden) {
+      pendingGenerationSketchRef.current = next;
+      if (generationFrameRef.current == null) generationFrameRef.current = requestAnimationFrame(() => {
+        generationFrameRef.current = null;
+        const latest=pendingGenerationSketchRef.current;pendingGenerationSketchRef.current=null;
+        if(latest)setGenerationSketch(latest);
+      });
+    }
     /* اگر پیش‌نویس پنهان وجود دارد، اسکچ جدید را نیز در آن همگام نگه می‌داریم
        تا بازگشت و تأیید بعدی، تغییرات تازهٔ طراحی را بازنویسی نکند. */
     if (editBufRef.current && !editOpenRef.current) {
