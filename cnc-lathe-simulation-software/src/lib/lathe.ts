@@ -1778,21 +1778,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* مسیریاب فقط داخل همان رنگ آبی حرکت می‌کند. در صورت نامعتبر بودن خط
            مستقیم، A* روی شبکه داخلی اجرا و سپس قطعات اضافی با آزمون دید مستقیم
            حذف می‌شوند؛ بنابراین تمام G0/G1های اتصال داخل چندضلعی می‌مانند. */
-        const gs=Math.max(.5,Math.min(1.5,p.innerDoc/2)),minZ=Math.min(...polygon.map(q=>q.z)),maxZ=Math.max(...polygon.map(q=>q.z)),maxR=Math.max(...polygon.map(q=>q.r)),nr=Math.ceil(maxR/gs)+1,nz=Math.ceil((maxZ-minZ)/gs)+1,total=nr*nz;
-        const pt=(id:number):AllowedPoint=>({z:minZ+Math.floor(id/nr)*gs,r:(id%nr)*gs}),valid=new Int8Array(total);valid.fill(-1);
-        /* شبکه و نتیجه آزمون نقاط میان همه اتصال‌های همین عملیات مشترک است. */
-        const ok=(id:number)=>{if(id<0||id>=total)return false;if(valid[id]>=0)return !!valid[id];const q=pt(id);return !!(valid[id]=intervalsAt(q.z).some(iv=>q.r>=iv.a&&q.r<=iv.b)?1:0);};
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
-          if(allowedLink(from,to))return [to];
+          if(allowedLink(from,to))return [to];const gs=Math.max(.5,Math.min(1.5,p.innerDoc/2)),minZ=Math.min(...polygon.map(q=>q.z)),maxZ=Math.max(...polygon.map(q=>q.z)),maxR=Math.max(...polygon.map(q=>q.r)),nr=Math.ceil(maxR/gs)+1,nz=Math.ceil((maxZ-minZ)/gs)+1,total=nr*nz;
+          const pt=(id:number):AllowedPoint=>({z:minZ+Math.floor(id/nr)*gs,r:(id%nr)*gs}),valid=new Int8Array(total);valid.fill(-1);const ok=(id:number)=>{if(id<0||id>=total)return false;if(valid[id]>=0)return !!valid[id];const q=pt(id);return !!(valid[id]=intervalsAt(q.z).some(iv=>q.r>=iv.a&&q.r<=iv.b)?1:0);};
           const nearest=(q:AllowedPoint)=>{let idBest=-1,dBest=Infinity;for(let id=0;id<total;id++)if(ok(id)){const x=pt(id),d=Math.hypot(x.z-q.z,x.r-q.r);if(d<dBest&&allowedLink(q,x)){idBest=id;dBest=d;}}return idBest;},start=nearest(from),goal=nearest(to);if(start<0||goal<0)return null;
-          const cost=new Float64Array(total);cost.fill(Infinity);cost[start]=0;const parent=new Int32Array(total);parent.fill(-1);const closed=new Uint8Array(total),dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]],goalPt=pt(goal);
-          /* صف اولویت دودویی: نسخه قبلی برای یافتن کمترین f کل آرایه open را در
-             هر گام پیمایش می‌کرد (O(n²)) و در پروفیل‌های پیچیده رابط را قفل می‌کرد. */
-          type HeapNode={id:number;f:number};const open:HeapNode[]=[];
-          const push=(node:HeapNode)=>{let i=open.length;open.push(node);while(i){const p=(i-1)>>1;if(open[p].f<=node.f)break;open[i]=open[p];i=p;open[i]=node;}};
-          const pop=()=>{const root=open[0],last=open.pop()!;if(open.length){let i=0;open[0]=last;for(;;){let c=i*2+1;if(c>=open.length)break;if(c+1<open.length&&open[c+1].f<open[c].f)c++;if(open[c].f>=open[i].f)break;[open[i],open[c]]=[open[c],open[i]];i=c;}}return root;};
-          push({id:start,f:Math.hypot(pt(start).z-goalPt.z,pt(start).r-goalPt.r)});
-          while(open.length){const id=pop().id;if(closed[id])continue;if(id===goal)break;closed[id]=1;const here=pt(id),iz=Math.floor(id/nr),ir=id%nr;for(const[dz,dr]of dirs){const zz=iz+dz,rr=ir+dr,ni=zz*nr+rr;if(zz<0||zz>=nz||rr<0||rr>=nr||!ok(ni)||!allowedLink(here,pt(ni)))continue;const next=cost[id]+Math.hypot(dz,dr);if(next<cost[ni]){cost[ni]=next;parent[ni]=id;const q=pt(ni);push({id:ni,f:next+Math.hypot(q.z-goalPt.z,q.r-goalPt.r)});}}}
+          const cost=new Float64Array(total);cost.fill(Infinity);cost[start]=0;const parent=new Int32Array(total);parent.fill(-1);const open=[start],closed=new Uint8Array(total),dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+          while(open.length){let oi=0,best=Infinity;for(let i=0;i<open.length;i++){const q=pt(open[i]),f=cost[open[i]]+Math.hypot(q.z-pt(goal).z,q.r-pt(goal).r);if(f<best){best=f;oi=i;}}const id=open.splice(oi,1)[0];if(id===goal)break;if(closed[id])continue;closed[id]=1;const iz=Math.floor(id/nr),ir=id%nr;for(const[dz,dr]of dirs){const zz=iz+dz,rr=ir+dr,ni=zz*nr+rr;if(zz<0||zz>=nz||rr<0||rr>=nr||!ok(ni)||!allowedLink(pt(id),pt(ni)))continue;const next=cost[id]+Math.hypot(dz,dr);if(next<cost[ni]){cost[ni]=next;parent[ni]=id;open.push(ni);}}}
           if(start!==goal&&parent[goal]<0)return null;const ids:number[]=[];for(let id=goal;;id=parent[id]){ids.push(id);if(id===start)break;}ids.reverse();const raw=ids.map(pt),out:AllowedPoint[]=[];for(let i=0;i<raw.length;){out.push(raw[i]);if(i===raw.length-1)break;let j=raw.length-1;while(j>i+1&&!allowedLink(raw[i],raw[j]))j--;i=j;}out.push(to);return out;
         };
 
