@@ -1863,8 +1863,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                شبکه قائم/افقی بازسازی می‌شود. فاصله مرکز G0 از مرز از ۳mm آغاز
                و فقط در تنگناها طبق Preferences به‌صورت نیم‌میلی‌متری کم می‌شود. */
             const clearanceCache=new Map<string,number>();const pointClearance=(q:AllowedPoint)=>{const key=`${q.z},${q.r}`,cached=clearanceCache.get(key);if(cached!==undefined)return cached;let d=Infinity;for(const e of polyEdges){if(q.z<e.minZ-d||q.z>e.maxZ+d||q.r<e.minR-d||q.r>e.maxR+d)continue;const l2=e.ez*e.ez+e.er*e.er,t=l2?Math.max(0,Math.min(1,((q.z-e.a.z)*e.ez+(q.r-e.a.r)*e.er)/l2)):0;d=Math.min(d,Math.hypot(q.z-(e.a.z+t*e.ez),q.r-(e.a.r+t*e.er)));}clearanceCache.set(key,d);return d;};
-            const tryRect=(clearance:number,spacing=2):AllowedPoint[]|null=>{
-              const zs:number[]=[from.z,to.z],rs:number[]=[from.r,to.r];for(let z=polyMinZ;z<=polyMaxZ+1e-7;z+=spacing)zs.push(z);for(let r=0;r<=Math.max(...polygon.map(q=>q.r))+1e-7;r+=spacing)rs.push(r);const uniq=(a:number[])=>[...new Set(a.map(v=>Math.round(v*1e6)/1e6))].sort((x,y)=>x-y),Z=uniq(zs),R=uniq(rs),nr=R.length,total=Z.length*nr,valid=new Int8Array(total);valid.fill(-1);const qp=(id:number):AllowedPoint=>({z:Z[Math.floor(id/nr)],r:R[id%nr]}),ok=(id:number)=>{if(valid[id]>=0)return !!valid[id];const q=qp(id);return !!(valid[id]=allowedPoint(q.r,q.z)&&pointClearance(q)>=clearance-1e-7?1:0);};
+            const tryRect=(clearance:number):AllowedPoint[]|null=>{
+              const spacing=2,zs:number[]=[from.z,to.z],rs:number[]=[from.r,to.r];for(let z=polyMinZ;z<=polyMaxZ+1e-7;z+=spacing)zs.push(z);for(let r=0;r<=Math.max(...polygon.map(q=>q.r))+1e-7;r+=spacing)rs.push(r);const uniq=(a:number[])=>[...new Set(a.map(v=>Math.round(v*1e6)/1e6))].sort((x,y)=>x-y),Z=uniq(zs),R=uniq(rs),nr=R.length,total=Z.length*nr,valid=new Int8Array(total);valid.fill(-1);const qp=(id:number):AllowedPoint=>({z:Z[Math.floor(id/nr)],r:R[id%nr]}),ok=(id:number)=>{if(valid[id]>=0)return !!valid[id];const q=qp(id);return !!(valid[id]=allowedPoint(q.r,q.z)&&pointClearance(q)>=clearance-1e-7?1:0);};
               const clearAxis=(a:AllowedPoint,b:AllowedPoint)=>{if(Math.abs(a.z-b.z)>1e-7&&Math.abs(a.r-b.r)>1e-7)return false;const count=Math.max(1,Math.ceil(Math.hypot(b.z-a.z,b.r-a.r)));for(let i=0;i<=count;i++){const t=i/count,q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};if(!allowedPoint(q.r,q.z)||(i>0&&i<count&&pointClearance(q)<clearance-1e-7))return false;}return true;};
               /* نقطه شروع/پایان پاس ذاتاً می‌تواند روی مرز باشد. فقط ساق کوتاه
                  خروج/ورود از شرط فاصله معاف است؛ بخش میانی G0 فاصله انتخابی را دارد. */
@@ -1874,11 +1874,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             };
             const requestedClearance=Math.min(20,Math.max(0,p.innerRectClearance));
             for(let clearance=requestedClearance;clearance>1e-7;clearance-=.5){const route=tryRect(Math.max(0,clearance));if(route)return route;}
-            /* در هندسه‌ای که حین Drag موقتاً باریک می‌شود، شبکه ۲mm ممکن است
-               اتصال را نبیند و مسیر خام نمایش داده شود. شبکه‌های ریزتر مانع
-               ماندن خروجی در حالت مرز خام پس از ادامه ویرایش می‌شوند. */
-            const zeroClearanceRoute=tryRect(0)??tryRect(0,1)??tryRect(0,.5);
-            if(zeroClearanceRoute)return zeroClearanceRoute;
+            const zeroClearanceRoute=tryRect(0);if(zeroClearanceRoute)return zeroClearanceRoute;
             return raw;
           }
           if(p.innerBoundaryRoutingMode==="rawBoundary")return raw;
