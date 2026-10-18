@@ -1801,11 +1801,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              قفل نمی‌شود. دو سر مسیر فقط به رأس‌هایی وصل می‌شوند که خط دیدشان
              کاملاً داخل ناحیه مجاز باشد. */
           const n=polygon.length;
-          const fromVisible:number[]=[],toVisible:number[]=[];
-          for(let i=0;i<n;i++){
-            if(allowedLink(from,polygon[i]))fromVisible.push(i);
-            if(allowedLink(polygon[i],to))toVisible.push(i);
-          }
+          /* برای دورزدن فرورفتگی‌ها فقط رأس‌های reflex لازم‌اند. چند رأس نزدیک
+             هر سر مسیر نیز افزوده می‌شود تا ورود/خروج از مرز همیشه کوتاه بماند.
+             در صورت پیدا نشدن دید، همه رأس‌ها به‌عنوان fallback بررسی می‌شوند. */
+          let area2=0;for(let i=0;i<n;i++)area2+=polygon[i].z*polygon[(i+1)%n].r-polygon[(i+1)%n].z*polygon[i].r;
+          const reflex:number[]=[];for(let i=0;i<n;i++){const a=polygon[(i+n-1)%n],b=polygon[i],c=polygon[(i+1)%n],turn=(b.z-a.z)*(c.r-b.r)-(b.r-a.r)*(c.z-b.z);if(turn*area2 < -1e-8)reflex.push(i);}
+          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,8).forEach(i=>set.add(i));return [...set];};
+          const visible=(q:AllowedPoint,reverse=false)=>{let out=candidates(q).filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));if(!out.length)out=[...Array(n).keys()].filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));return out;};
+          const fromVisible=visible(from),toVisible=visible(to,true);
           if(!fromVisible.length||!toVisible.length)return null;
           const edgeLen=polygon.map((q,i)=>Math.hypot(q.z-polygon[(i+1)%n].z,q.r-polygon[(i+1)%n].r));
           /* فاصله تجمعی مرز، انتخاب بهترین جفت رأس را از O(n³) به O(n²)
