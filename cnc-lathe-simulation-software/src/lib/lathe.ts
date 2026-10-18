@@ -1808,7 +1808,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           if(!fromVisible.length||!toVisible.length)return null;
           const edgeLen=polygon.map((q,i)=>Math.hypot(q.z-polygon[(i+1)%n].z,q.r-polygon[(i+1)%n].r));
-          const perimeter=edgeLen.reduce((sum,x)=>sum+x,0),clockwise=(i:number,j:number)=>{let d=0;for(let k=i;k!==j;k=(k+1)%n)d+=edgeLen[k];return d;};
+          /* فاصله تجمعی مرز، انتخاب بهترین جفت رأس را از O(n³) به O(n²)
+             کاهش می‌دهد؛ در هر حرکت ویرایشی این بخش ده‌ها بار اجرا می‌شود. */
+          const prefix=new Float64Array(n+1);for(let i=0;i<n;i++)prefix[i+1]=prefix[i]+edgeLen[i];
+          const perimeter=prefix[n],clockwise=(i:number,j:number)=>j>=i?prefix[j]-prefix[i]:perimeter-prefix[i]+prefix[j];
           let best=Infinity,bestI=-1,bestJ=-1,forward=true;
           for(const i of fromVisible)for(const j of toVisible){
             const endCost=Math.hypot(from.z-polygon[i].z,from.r-polygon[i].r)+Math.hypot(to.z-polygon[j].z,to.r-polygon[j].r);
