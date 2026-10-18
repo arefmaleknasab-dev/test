@@ -1870,11 +1870,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                  خروج/ورود از شرط فاصله معاف است؛ بخش میانی G0 فاصله انتخابی را دارد. */
               const endpointAxis=(a:AllowedPoint,b:AllowedPoint)=>(Math.abs(a.z-b.z)<1e-7||Math.abs(a.r-b.r)<1e-7)&&allowedLink(a,b);
               const parent=new Int32Array(total);parent.fill(-2);const queue:number[]=[];for(let id=0;id<total;id++)if(ok(id)&&endpointAxis(from,qp(id))){parent[id]=-1;queue.push(id);}let goal=-1,head=0;while(head<queue.length&&goal<0){const id=queue[head++],iz=Math.floor(id/nr),ir=id%nr,q=qp(id);if(endpointAxis(q,to)){goal=id;break;}for(const ni of [iz>0?id-nr:-1,iz+1<Z.length?id+nr:-1,ir>0?id-1:-1,ir+1<nr?id+1:-1])if(ni>=0&&parent[ni]===-2&&ok(ni)&&clearAxis(q,qp(ni))){parent[ni]=id;queue.push(ni);}}
-              if(goal<0)return null;const ids:number[]=[];for(let id=goal;id>=0;id=parent[id])ids.push(id);ids.reverse();const route=ids.map(qp);
-              /* مسیر BFS در جابه‌جایی جزئی Offset ممکن است بین دو مسیر هم‌طول،
-                 پله‌های یک‌خانه‌ای انتخاب کند. دورترین میانبر قائم/افقی معتبر
-                 پیدا می‌شود تا ۰٫۵ و ۰٫۶ ظاهر یکسانِ خطوط بلند داشته باشند. */
-              const out:AllowedPoint[]=[];let at=0;out.push(route[0]);while(at<route.length-1){let chosen=at+1,elbow:AllowedPoint|null=null;for(let j=route.length-1;j>at;j--){const a=route[at],b=route[j];if((Math.abs(a.z-b.z)<1e-7||Math.abs(a.r-b.r)<1e-7)&&clearAxis(a,b)){chosen=j;elbow=null;break;}const es=[{z:b.z,r:a.r},{z:a.z,r:b.r}];const e=es.find(q=>clearAxis(a,q)&&clearAxis(q,b));if(e){chosen=j;elbow=e;break;}}if(elbow&&Math.hypot(elbow.z-out[out.length-1].z,elbow.r-out[out.length-1].r)>1e-7)out.push(elbow);out.push(route[chosen]);at=chosen;}out.push(to);return out;
+              if(goal<0)return null;const ids:number[]=[];for(let id=goal;id>=0;id=parent[id])ids.push(id);ids.reverse();const route=ids.map(qp),out:AllowedPoint[]=[];for(const q of route){const last=out[out.length-1];if(last&&out.length>1){const prev=out[out.length-2];if((Math.abs(prev.z-last.z)<1e-7&&Math.abs(last.z-q.z)<1e-7)||(Math.abs(prev.r-last.r)<1e-7&&Math.abs(last.r-q.r)<1e-7))out.pop();}out.push(q);}out.push(to);return out;
             };
             const requestedClearance=Math.min(20,Math.max(0,p.innerRectClearance));
             for(let clearance=requestedClearance;clearance>1e-7;clearance-=.5){const route=tryRect(Math.max(0,clearance));if(route)return route;}
@@ -1885,7 +1881,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const source=[from,...raw],rectified:AllowedPoint[]=[from];
             const appendRect=(a:AllowedPoint,b:AllowedPoint,depth:number)=>{if(Math.abs(a.z-b.z)<1e-7||Math.abs(a.r-b.r)<1e-7){rectified.push(b);return;}const e1={z:b.z,r:a.r},e2={z:a.z,r:b.r},candidates=[e1,e2].sort((u,v)=>pointClearance(v)-pointClearance(u));for(const e of candidates)if(allowedLink(a,e)&&allowedLink(e,b)){rectified.push(e,b);return;}if(depth<3){const m={z:(a.z+b.z)/2,r:(a.r+b.r)/2};appendRect(a,m,depth+1);appendRect(m,b,depth+1);}else rectified.push(b);};
             for(let i=1;i<source.length;i++)appendRect(source[i-1],source[i],0);
-            const fallback:AllowedPoint[]=[rectified[0]];let pos=0;while(pos<rectified.length-1){let chosen=pos+1,elbow:AllowedPoint|null=null;for(let j=rectified.length-1;j>pos;j--){const a=rectified[pos],b=rectified[j],axis=(u:AllowedPoint,v:AllowedPoint)=>(Math.abs(u.z-v.z)<1e-7||Math.abs(u.r-v.r)<1e-7)&&allowedLink(u,v);if(axis(a,b)){chosen=j;break;}const e=[{z:b.z,r:a.r},{z:a.z,r:b.r}].find(q=>axis(a,q)&&axis(q,b));if(e){chosen=j;elbow=e;break;}}if(elbow&&Math.hypot(elbow.z-fallback[fallback.length-1].z,elbow.r-fallback[fallback.length-1].r)>1e-7)fallback.push(elbow);fallback.push(rectified[chosen]);pos=chosen;}return fallback.slice(1);
+            const fallback:AllowedPoint[]=[];for(const q of rectified.slice(1)){const n=fallback.length;if(n>=2){const a=fallback[n-2],b=fallback[n-1];if((Math.abs(a.z-b.z)<1e-7&&Math.abs(b.z-q.z)<1e-7)||(Math.abs(a.r-b.r)<1e-7&&Math.abs(b.r-q.r)<1e-7))fallback.pop();}fallback.push(q);}return fallback;
           }
           if(p.innerBoundaryRoutingMode==="rawBoundary")return raw;
           if(p.innerBoundaryRoutingMode==="rdp"){
