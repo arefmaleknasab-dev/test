@@ -1734,10 +1734,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* فهرست مکانی لبه‌ها بر اساس Z: بیشتر مقاطع افقی فقط با چند لبه از
            صدها لبه مرز برخورد دارند. نتیجه دقیق همان است، اما پیمایش کامل حذف می‌شود. */
         const polyMinZ=Math.min(...polygon.map(q=>q.z)),polyMaxZ=Math.max(...polygon.map(q=>q.z)),bucketCount=96,bucketSpan=Math.max(1e-9,polyMaxZ-polyMinZ);
-        const polyEdges=polygon.map((a,i)=>{const b=polygon[(i+1)%polygon.length];return {a,ez:b.z-a.z,er:b.r-a.r,b};});
+        const polyEdges=polygon.map((a,i)=>{const b=polygon[(i+1)%polygon.length];return {a,ez:b.z-a.z,er:b.r-a.r,b,minZ:Math.min(a.z,b.z),maxZ:Math.max(a.z,b.z),minR:Math.min(a.r,b.r),maxR:Math.max(a.r,b.r)};});
         const edgeBuckets:number[][]=Array.from({length:bucketCount},()=>[]);
         for(let i=0;i<polyEdges.length;i++){const {a,b}=polyEdges[i],lo=Math.max(0,Math.floor((Math.min(a.z,b.z)-polyMinZ)/bucketSpan*bucketCount)),hi=Math.min(bucketCount-1,Math.floor((Math.max(a.z,b.z)-polyMinZ)/bucketSpan*bucketCount));for(let k=lo;k<=hi;k++)edgeBuckets[k].push(i);}
+        const intervalCache=new Map<number,{a:number;b:number}[]>();
         const intervalsAt = (layerZ: number): { a: number; b: number }[] => {
+          const cached=intervalCache.get(layerZ);if(cached)return cached;
           const hits:number[]=[],bucket=Math.max(0,Math.min(bucketCount-1,Math.floor((layerZ-polyMinZ)/bucketSpan*bucketCount)));
           for(const i of edgeBuckets[bucket]){
             const a=polygon[i],b=polygon[(i+1)%polygon.length];
@@ -1751,6 +1753,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const a=Math.max(0,hits[i]),b=Math.max(a,hits[i+1]);
             if(b-a>0.05)intervals.push({a,b});
           }
+          intervalCache.set(layerZ,intervals);
           return intervals;
         };
 
@@ -1785,8 +1788,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* آزمون دقیق سگمنت: به‌جای نمونه‌برداری ۲۴ تا صدها نقطه‌ای، پارامتر
              تمام تقاطع‌های خط با مرز پیدا می‌شود و فقط وسط هر بازه بررسی می‌شود.
              نتیجه هندسی یکسان است ولی هزینه هر آزمون تقریباً یک دور روی مرز است. */
-          const dz=b.z-a.z,dr=b.r-a.r,cuts=[0,1],cross=(az:number,ar:number,bz:number,br:number)=>az*br-ar*bz;
+          const dz=b.z-a.z,dr=b.r-a.r,cuts=[0,1],cross=(az:number,ar:number,bz:number,br:number)=>az*br-ar*bz,minZ=Math.min(a.z,b.z),maxZ=Math.max(a.z,b.z),minR=Math.min(a.r,b.r),maxR=Math.max(a.r,b.r);
           for(const edge of polyEdges){
+            if(edge.maxZ<minZ-1e-9||edge.minZ>maxZ+1e-9||edge.maxR<minR-1e-9||edge.minR>maxR+1e-9)continue;
             const c=edge.a,ez=edge.ez,er=edge.er,den=cross(dz,dr,ez,er);
             if(Math.abs(den)<1e-10)continue;
             const cz=c.z-a.z,cr=c.r-a.r,t=cross(cz,cr,ez,er)/den,u=cross(cz,cr,dz,dr)/den;
