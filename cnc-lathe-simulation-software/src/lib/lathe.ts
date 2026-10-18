@@ -1779,12 +1779,35 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            مستقیم، A* روی شبکه داخلی اجرا و سپس قطعات اضافی با آزمون دید مستقیم
            حذف می‌شوند؛ بنابراین تمام G0/G1های اتصال داخل چندضلعی می‌مانند. */
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
-          if(allowedLink(from,to))return [to];const gs=Math.max(.5,Math.min(1.5,p.innerDoc/2)),minZ=Math.min(...polygon.map(q=>q.z)),maxZ=Math.max(...polygon.map(q=>q.z)),maxR=Math.max(...polygon.map(q=>q.r)),nr=Math.ceil(maxR/gs)+1,nz=Math.ceil((maxZ-minZ)/gs)+1,total=nr*nz;
-          const pt=(id:number):AllowedPoint=>({z:minZ+Math.floor(id/nr)*gs,r:(id%nr)*gs}),valid=new Int8Array(total);valid.fill(-1);const ok=(id:number)=>{if(id<0||id>=total)return false;if(valid[id]>=0)return !!valid[id];const q=pt(id);return !!(valid[id]=intervalsAt(q.z).some(iv=>q.r>=iv.a&&q.r<=iv.b)?1:0);};
-          const nearest=(q:AllowedPoint)=>{let idBest=-1,dBest=Infinity;for(let id=0;id<total;id++)if(ok(id)){const x=pt(id),d=Math.hypot(x.z-q.z,x.r-q.r);if(d<dBest&&allowedLink(q,x)){idBest=id;dBest=d;}}return idBest;},start=nearest(from),goal=nearest(to);if(start<0||goal<0)return null;
-          const cost=new Float64Array(total);cost.fill(Infinity);cost[start]=0;const parent=new Int32Array(total);parent.fill(-1);const open=[start],closed=new Uint8Array(total),dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-          while(open.length){let oi=0,best=Infinity;for(let i=0;i<open.length;i++){const q=pt(open[i]),f=cost[open[i]]+Math.hypot(q.z-pt(goal).z,q.r-pt(goal).r);if(f<best){best=f;oi=i;}}const id=open.splice(oi,1)[0];if(id===goal)break;if(closed[id])continue;closed[id]=1;const iz=Math.floor(id/nr),ir=id%nr;for(const[dz,dr]of dirs){const zz=iz+dz,rr=ir+dr,ni=zz*nr+rr;if(zz<0||zz>=nz||rr<0||rr>=nr||!ok(ni)||!allowedLink(pt(id),pt(ni)))continue;const next=cost[id]+Math.hypot(dz,dr);if(next<cost[ni]){cost[ni]=next;parent[ni]=id;open.push(ni);}}}
-          if(start!==goal&&parent[goal]<0)return null;const ids:number[]=[];for(let id=goal;;id=parent[id]){ids.push(id);if(id===start)break;}ids.reverse();const raw=ids.map(pt),out:AllowedPoint[]=[];for(let i=0;i<raw.length;){out.push(raw[i]);if(i===raw.length-1)break;let j=raw.length-1;while(j>i+1&&!allowedLink(raw[i],raw[j]))j--;i=j;}out.push(to);return out;
+          if(allowedLink(from,to))return [to];
+          /* مسیر جایگزین روی خود مرز ناحیه آبی ساخته می‌شود. برخلاف Grid/A*،
+             تعداد گره‌ها به مساحت قطعه وابسته نیست و رابط روی طرح‌های بزرگ
+             قفل نمی‌شود. دو سر مسیر فقط به رأس‌هایی وصل می‌شوند که خط دیدشان
+             کاملاً داخل ناحیه مجاز باشد. */
+          const n=polygon.length;
+          const fromVisible:number[]=[],toVisible:number[]=[];
+          for(let i=0;i<n;i++){
+            if(allowedLink(from,polygon[i]))fromVisible.push(i);
+            if(allowedLink(polygon[i],to))toVisible.push(i);
+          }
+          if(!fromVisible.length||!toVisible.length)return null;
+          const edgeLen=polygon.map((q,i)=>Math.hypot(q.z-polygon[(i+1)%n].z,q.r-polygon[(i+1)%n].r));
+          const perimeter=edgeLen.reduce((sum,x)=>sum+x,0),clockwise=(i:number,j:number)=>{let d=0;for(let k=i;k!==j;k=(k+1)%n)d+=edgeLen[k];return d;};
+          let best=Infinity,bestI=-1,bestJ=-1,forward=true;
+          for(const i of fromVisible)for(const j of toVisible){
+            const endCost=Math.hypot(from.z-polygon[i].z,from.r-polygon[i].r)+Math.hypot(to.z-polygon[j].z,to.r-polygon[j].r);
+            const cw=clockwise(i,j),ccw=perimeter-cw;
+            if(endCost+cw<best){best=endCost+cw;bestI=i;bestJ=j;forward=true;}
+            if(endCost+ccw<best){best=endCost+ccw;bestI=i;bestJ=j;forward=false;}
+          }
+          if(bestI<0)return null;
+          const raw:AllowedPoint[]=[];
+          for(let i=bestI;;i=(i+(forward?1:n-1))%n){raw.push(polygon[i]);if(i===bestJ)break;}
+          raw.push(to);
+          /* حذف رأس‌های غیرضروری فقط با آزمون کامل داخل‌بودن خط جایگزین. */
+          const out:AllowedPoint[]=[];let anchor=from,i=0;
+          while(i<raw.length){let j=raw.length-1;while(j>i&&!allowedLink(anchor,raw[j]))j--;out.push(raw[j]);anchor=raw[j];i=j+1;}
+          return out;
         };
 
         /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
