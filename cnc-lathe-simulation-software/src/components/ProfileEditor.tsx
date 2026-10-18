@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { EditBuf, ELine, EVert, GenResult, Holder2State, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
-import { deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, translateHolder2Edit } from "../lib/lathe";
+import { continuousPathOffset, deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, translateHolder2Edit } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
 import {
   arcRadius,
@@ -83,6 +83,7 @@ export interface EdSettings {
   showBottom: boolean;
   showRapids: boolean;
   showGhost: boolean;
+  showInnerArea: boolean;
   /** شفافیت مشترک همهٔ لایه‌های مسیر و سایهٔ طرح (۰٫۱ تا ۱). */
   layerOpacity: number;
   /** گرید مستقل حالت ویرایش مسیر (نمایش + فاصله خطوط اصلی + تقسیمات داخلی). */
@@ -260,7 +261,8 @@ type LayerKey =
   | "showFace"
   | "showBottom"
   | "showRapids"
-  | "showGhost";
+  | "showGhost"
+  | "showInnerArea";
 
 const CHIPS: { key: LayerKey; label: string; color: string }[] = [
   { key: "showRound", label: "گرد کردن", color: "#b48ee0" },
@@ -274,8 +276,9 @@ const CHIPS: { key: LayerKey; label: string; color: string }[] = [
   { key: "showBottom", label: "کف‌تراشی", color: "#ffd166" },
   { key: "showRapids", label: "حرکت سریع", color: "#93a1ad" },
   { key: "showGhost", label: "سایه طرح", color: "#c9955a" },
+  { key: "showInnerArea", label: "محدوده داخل‌تراشی", color: "#69d7ff" },
 ];
-const TOOLPATH_LAYER_KEYS = CHIPS.filter((chip) => chip.key !== "showGhost").map((chip) => chip.key);
+const TOOLPATH_LAYER_KEYS = CHIPS.filter((chip) => chip.key !== "showGhost" && chip.key !== "showInnerArea").map((chip) => chip.key);
 
 /* منوی کرکره‌ای لایه‌های نمایش — جایگزین نوار چیپ‌های افقی */
 function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings: (p: Partial<EdSettings>) => void }) {
@@ -4458,20 +4461,22 @@ export default function ProfileEditor({
             <path d={ghostPath} fill="rgba(227,169,78,0.12)" stroke="rgba(227,169,78,0.4)" strokeWidth={1} />
           </g>
         )}
-        {/* سایه آبی محدوده داخل‌تراشی: شاخه داخلی تا محور دوران بسته می‌شود.
-            این لایه صرفاً نمایشی است و زیر همه مسیرهای G-code قرار می‌گیرد. */}
-        {!editOpen && split.enabled && (()=>{
+        {/* محدوده آبی داخل‌تراشی: Split → +X → محور (−Y) → −X روی محور →
+            خط Offset داخلی → بازگشت به Split. مرز آبی خود خط پروفایل نیست. */}
+        {!editOpen && settings.showInnerArea && split.enabled && (()=>{
           const divided=splitChainAt(chainPolyline(orderChain(segs)),{z:split.z,r:split.r});
           const inner=split.swapped?divided.outer:divided.inner;
           if(inner.length<2)return null;
-          const areaPath=(mirror=false)=>{
-            const body=inner.map((point,i)=>{const [x,y]=P(point.z,mirror?-point.r:point.r);return `${i?"L":"M"}${x},${y}`;}).join(" ");
-            const [endX,endY]=P(inner[inner.length-1].z,0),[startX,startY]=P(inner[0].z,0);
-            return `${body} L${endX},${endY} L${startX},${startY} Z`;
-          };
-          return <g pointerEvents="none" opacity={iso?.18:.28}>
-            <path d={areaPath(false)} fill="#69d7ff" fillOpacity={.2} stroke="#7bdcff" strokeOpacity={.25} strokeWidth={.8}/>
-            <path d={areaPath(true)} fill="#69d7ff" fillOpacity={.1} stroke="#7bdcff" strokeOpacity={.16} strokeWidth={.7}/>
+          const rawOffset=continuousPathOffset(inner,Math.max(0,params.innerOffsetDist),true).map(q=>({z:q.z,r:Math.max(0,q.r)}));
+          if(rawOffset.length<2)return null;
+          /* مسیر بسته‌شدن از محور باید ابتدا به سر کم‌شعاع Offset برسد. */
+          const offset=rawOffset[0].r<=rawOffset[rawOffset.length-1].r?rawOffset:[...rawOffset].reverse();
+          const axisEnd=offset[0],rightZ=Math.max(params.blankL,split.z);
+          const [sx,sy]=P(split.z,split.r),[rx,ry]=P(rightZ,split.r),[r0x,r0y]=P(rightZ,0),[a0x,a0y]=P(axisEnd.z,0);
+          const offsetPath=offset.map((point,i)=>{const[x,y]=P(point.z,point.r);return `${i?"L":"L"}${x},${y}`;}).join(" ");
+          const d=`M${sx},${sy} L${rx},${ry} L${r0x},${r0y} L${a0x},${a0y} ${offsetPath} Z`;
+          return <g pointerEvents="none" style={{opacity:(iso?.18:.34)*layerOpacity,...fadeStyle}}>
+            <path d={d} fill="#69d7ff" fillOpacity={.24} stroke="#8de4ff" strokeOpacity={.42} strokeWidth={1}/>
           </g>;
         })()}
 

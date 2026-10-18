@@ -486,7 +486,7 @@ export function normalOffset(pts: Sample[], dist: number, outward: boolean): Sam
 /* آفست یک سمتِ پیوسته برای مسیرهای برگشتی/Overhang. برخلاف normalOffset، با
    عبور مماس از قله علامت نرمال را براساس مؤلفه شعاعی عوض نمی‌کند؛ سمت چپ مسیر
    در تمام زنجیره ثابت می‌ماند و بنابراین Offset ناگهان به داخل منحنی نمی‌پرد. */
-function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sample[] {
+export function continuousPathOffset(pts: Sample[], dist: number, leftSide = true): Sample[] {
   const clean = pts.filter((point, i) => i === 0 || Math.hypot(point.z - pts[i - 1].z, point.r - pts[i - 1].r) > 1e-9);
   const n = clean.length;
   if (n < 2 || dist === 0) return clean.map((point) => ({ ...point }));
