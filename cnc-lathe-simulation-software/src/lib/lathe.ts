@@ -1771,9 +1771,25 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (!bottomToInnerRoughReady && !bottomToInnerRoughDirect) enterFirstInner(2 * rEntry, mouthX);
         const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
         type AllowedPoint={r:number;z:number};
+        const allowedPoint=(r:number,z:number)=>intervalsAt(z).some(iv=>r>=iv.a-.015&&r<=iv.b+.015);
         const allowedLink=(a:AllowedPoint,b:AllowedPoint)=>{
-          const samples=Math.max(24,Math.ceil(Math.hypot(b.z-a.z,b.r-a.r)*2));
-          for(let i=0;i<=samples;i++){const t=i/samples,r=a.r+(b.r-a.r)*t,z=a.z+(b.z-a.z)*t;if(!intervalsAt(z).some(iv=>r>=iv.a-.015&&r<=iv.b+.015))return false;}return true;
+          /* آزمون دقیق سگمنت: به‌جای نمونه‌برداری ۲۴ تا صدها نقطه‌ای، پارامتر
+             تمام تقاطع‌های خط با مرز پیدا می‌شود و فقط وسط هر بازه بررسی می‌شود.
+             نتیجه هندسی یکسان است ولی هزینه هر آزمون تقریباً یک دور روی مرز است. */
+          const dz=b.z-a.z,dr=b.r-a.r,cuts=[0,1],cross=(az:number,ar:number,bz:number,br:number)=>az*br-ar*bz;
+          for(let i=0;i<polygon.length;i++){
+            const c=polygon[i],d=polygon[(i+1)%polygon.length],ez=d.z-c.z,er=d.r-c.r,den=cross(dz,dr,ez,er);
+            if(Math.abs(den)<1e-10)continue;
+            const cz=c.z-a.z,cr=c.r-a.r,t=cross(cz,cr,ez,er)/den,u=cross(cz,cr,dz,dr)/den;
+            if(t>1e-9&&t<1-1e-9&&u>=-1e-9&&u<=1+1e-9)cuts.push(t);
+          }
+          cuts.sort((x,y)=>x-y);
+          for(let i=0;i<cuts.length-1;i++){
+            if(cuts[i+1]-cuts[i]<1e-9)continue;
+            const t=(cuts[i]+cuts[i+1])/2;
+            if(!allowedPoint(a.r+dr*t,a.z+dz*t))return false;
+          }
+          return allowedPoint(a.r,a.z)&&allowedPoint(b.r,b.z);
         };
         /* مسیریاب فقط داخل همان رنگ آبی حرکت می‌کند. در صورت نامعتبر بودن خط
            مستقیم، A* روی شبکه داخلی اجرا و سپس قطعات اضافی با آزمون دید مستقیم
