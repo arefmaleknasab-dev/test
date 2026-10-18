@@ -1728,11 +1728,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const boundary=rawBoundary[0].r<=rawBoundary[rawBoundary.length-1].r?rawBoundary:[...rawBoundary].reverse();
         const axisEnd=boundary[0],splitEnd=boundary[boundary.length-1],mouthPlaneZ=Math.max(p.blankL,splitEnd.z);
         const polygon=[splitEnd,{r:splitEnd.r,z:mouthPlaneZ},{r:0,z:mouthPlaneZ},{r:0,z:axisEnd.z},...boundary];
-        /* در مسیریابی شبکه‌ای، هزاران آزمون روی ارتفاع‌های تکراری انجام می‌شود.
-           Cache فقط محاسبه تقاطع را حذف می‌کند و نتیجه/مسیر هندسی را تغییر نمی‌دهد. */
-        const intervalCache=new Map<number,{a:number;b:number}[]>();
         const intervalsAt = (layerZ: number): { a: number; b: number }[] => {
-          const cached=intervalCache.get(layerZ);if(cached)return cached;
           const hits:number[]=[];
           for(let i=0;i<polygon.length;i++){
             const a=polygon[i],b=polygon[(i+1)%polygon.length];
@@ -1746,7 +1742,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const a=Math.max(0,hits[i]),b=Math.max(a,hits[i+1]);
             if(b-a>0.05)intervals.push({a,b});
           }
-          intervalCache.set(layerZ,intervals);
           return intervals;
         };
 
