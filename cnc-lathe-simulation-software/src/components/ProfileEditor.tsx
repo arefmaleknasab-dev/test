@@ -4461,8 +4461,8 @@ export default function ProfileEditor({
             <path d={ghostPath} fill="rgba(227,169,78,0.12)" stroke="rgba(227,169,78,0.4)" strokeWidth={1} />
           </g>
         )}
-        {/* محدوده آبی داخل‌تراشی: Split → +X → محور (−Y) → −X روی محور →
-            خط Offset داخلی → بازگشت به Split. مرز آبی خود خط پروفایل نیست. */}
+        {/* محدوده آبی داخل‌تراشی: انتهای Offset نزدیک Split → +X → محور (−Y)
+            → −X روی محور → دنبال‌کردن Offset تا همان نقطه. */}
         {!editOpen && settings.showInnerArea && split.enabled && (()=>{
           const divided=splitChainAt(chainPolyline(orderChain(segs)),{z:split.z,r:split.r});
           const inner=split.swapped?divided.outer:divided.inner;
@@ -4471,9 +4471,11 @@ export default function ProfileEditor({
           if(rawOffset.length<2)return null;
           /* مسیر بسته‌شدن از محور باید ابتدا به سر کم‌شعاع Offset برسد. */
           const offset=rawOffset[0].r<=rawOffset[rawOffset.length-1].r?rawOffset:[...rawOffset].reverse();
-          const axisEnd=offset[0],rightZ=Math.max(params.blankL,split.z);
-          const [sx,sy]=P(split.z,split.r),[rx,ry]=P(rightZ,split.r),[r0x,r0y]=P(rightZ,0),[a0x,a0y]=P(axisEnd.z,0);
-          const offsetPath=offset.map((point,i)=>{const[x,y]=P(point.z,point.r);return `${i?"L":"L"}${x},${y}`;}).join(" ");
+          const axisEnd=offset[0],splitSideEnd=offset[offset.length-1],rightZ=Math.max(params.blankL,splitSideEnd.z);
+          /* خط +X از انتهای خود Offset در سمت Split آغاز می‌شود؛ به این ترتیب
+             فاصله آفست در ضلع دهانه نیز حفظ و هیچ خطی به پروفایل اصلی وصل نمی‌شود. */
+          const [sx,sy]=P(splitSideEnd.z,splitSideEnd.r),[rx,ry]=P(rightZ,splitSideEnd.r),[r0x,r0y]=P(rightZ,0),[a0x,a0y]=P(axisEnd.z,0);
+          const offsetPath=offset.map(point=>{const[x,y]=P(point.z,point.r);return `L${x},${y}`;}).join(" ");
           const d=`M${sx},${sy} L${rx},${ry} L${r0x},${r0y} L${a0x},${a0y} ${offsetPath} Z`;
           return <g pointerEvents="none" style={{opacity:(iso?.18:.34)*layerOpacity,...fadeStyle}}>
             <path d={d} fill="#69d7ff" fillOpacity={.24} stroke="#8de4ff" strokeOpacity={.42} strokeWidth={1}/>
