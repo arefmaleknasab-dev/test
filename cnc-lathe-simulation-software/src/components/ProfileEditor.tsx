@@ -902,6 +902,16 @@ export default function ProfileEditor({
       /* Shift هنگام جابه‌جایی نقطه، جهت غالب را نگه می‌دارد و مؤلفه دیگر را
          صفر می‌کند؛ در نتیجه نقطه دقیقاً روی محور افقی یا عمودی قفل می‌شود. */
       if(e.shiftKey&&d.point){if(Math.abs(dz)>=Math.abs(dr))dr=0;else dz=0;}
+      /* جابه‌جایی نقاشی از همان گام «گیر شبکه» بوم پیروی می‌کند. مبنا یکی از
+         نقاط واقعی انتخاب است تا پس از Drag خود نقطه روی خطوط شبکه بنشیند، نه
+         اینکه صرفاً مقدار حرکت گرد شود. در قفل Shift مؤلفه ثابت دست‌نخورده است. */
+      const gridSnap=settings.snap;
+      if(gridSnap>0){
+        const baseEdge=d.base.find(edge=>edge.id===(d.pointId??d.ids[0]));
+        const anchor=baseEdge?(d.point?baseEdge[d.point]:baseEdge.a):d.start;
+        if(!(d.point&&dr===0))dr=Math.round((anchor.r+dr)/gridSnap)*gridSnap-anchor.r;
+        if(!(d.point&&dz===0))dz=Math.round((anchor.z+dz)/gridSnap)*gridSnap-anchor.z;
+      }
       if(Math.hypot(dz,dr)>1e-7)d.moved=true;
       setPaintEdges(all=>{
         const selectedBases=d.base.filter(x=>d.ids.includes(x.id));
@@ -925,7 +935,7 @@ export default function ProfileEditor({
     const up=()=>{const d=paintDrag.current;if(d?.moved){paintPast.current.push(clonePaint(d.base));if(paintPast.current.length>100)paintPast.current.shift();paintFuture.current=[];setPaintHistoryVersion(v=>v+1);}paintDrag.current=null;};
     window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
     return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};
-  },[cam]);
+  },[cam,settings.snap]);
   const toolRef = useRef<Tool>("select");
   const previousToolRef = useRef<Tool>("select");
   const chooseTool = (next: Tool) => {
