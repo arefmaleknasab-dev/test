@@ -142,6 +142,7 @@ export interface Params {
   innerZoneBounds: number[]; // مرزهای شعاعی داخل (R)
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
   safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
+  fastInnerBoundaryRouting?: boolean; // انتخاب ساده‌ساز سریع مرز آبی از Preferences
   simpleFeed: boolean; // فیدر بهینه: همهٔ فیدرها به دو F اصلی (خشن/پرداخت) ساده شوند
   zoneOrder: number[]; // ترتیب دستی نواحی (اندیس ناحیه‌ها) — آرایه خالی = ترتیب خودکار
   zoneBounds: number[]; // مرزهای دستی داخلی نواحی (Z) — آرایه خالی = تقسیم خودکار
@@ -1842,14 +1843,17 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* حذف رأس‌های غیرضروری فقط با آزمون کامل داخل‌بودن خط جایگزین. */
           const out:AllowedPoint[]=[];let anchor=from,i=0;
           while(i<raw.length){
-            /* جست‌وجوی خطی از انتهای مسیر در فرورفتگی‌های عمیق صدها آزمون
-               سنگین انجام می‌داد. عقب‌گرد نمایی یک نقطه قابل‌دید را با O(log n)
-               پیدا می‌کند؛ خود نقطه انتخابی همچنان با آزمون دقیق تأیید می‌شود. */
-            let j=raw.length-1,step=1,failed=raw.length;
-            while(j>i&&!allowedLink(anchor,raw[j])){failed=j;j=Math.max(i,j-step);step*=2;}
-            /* در بازه‌ای که عقب‌گرد از روی آن پریده، دورترین نقطه امن با چند
-               آزمون دودویی بازیابی می‌شود تا تعداد خطوط G-code زیاد نشود. */
-            let lo=j,hi=failed;while(hi-lo>1){const mid=(lo+hi)>>1;if(allowedLink(anchor,raw[mid]))lo=mid;else hi=mid;}j=lo;
+            let j=raw.length-1;
+            if(p.fastInnerBoundaryRouting){
+              /* حالت سریع جدید: عقب‌گرد نمایی و سپس بازیابی دورترین نقطه امن
+                 با جست‌وجوی دودویی. */
+              let step=1,failed=raw.length;
+              while(j>i&&!allowedLink(anchor,raw[j])){failed=j;j=Math.max(i,j-step);step*=2;}
+              let lo=j,hi=failed;while(hi-lo>1){const mid=(lo+hi)>>1;if(allowedLink(anchor,raw[mid]))lo=mid;else hi=mid;}j=lo;
+            }else{
+              /* حالت قبلی و پیش‌فرض، طبق انتخاب Preferences. */
+              while(j>i&&!allowedLink(anchor,raw[j]))j--;
+            }
             out.push(raw[j]);anchor=raw[j];i=j+1;
           }
           return out;
