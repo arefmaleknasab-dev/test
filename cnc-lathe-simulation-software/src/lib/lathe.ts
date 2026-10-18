@@ -143,7 +143,7 @@ export interface Params {
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
   safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
   fastInnerBoundaryRouting?: boolean; // سازگاری تنظیم ذخیره‌شده نسخه قبلی
-  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest";
+  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest" | "rawBoundary";
   simpleFeed: boolean; // فیدر بهینه: همهٔ فیدرها به دو F اصلی (خشن/پرداخت) ساده شوند
   zoneOrder: number[]; // ترتیب دستی نواحی (اندیس ناحیه‌ها) — آرایه خالی = ترتیب خودکار
   zoneBounds: number[]; // مرزهای دستی داخلی نواحی (Z) — آرایه خالی = تقسیم خودکار
@@ -1812,7 +1812,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            حذف می‌شوند؛ بنابراین تمام G0/G1های اتصال داخل چندضلعی می‌مانند. */
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
           if(allowedLink(from,to))return [to];
-          if(p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"){
+          if(p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"){
             /* دو میانبر قائم ممکن را پیش از مسیریابی مرزی امتحان می‌کند. هر دو
                ضلع جداگانه با همان آزمون دقیق ناحیه آبی تأیید می‌شوند. */
             const elbows:AllowedPoint[]=[{z:to.z,r:from.r},{z:from.z,r:to.r}];
@@ -1830,14 +1830,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              در صورت پیدا نشدن دید، همه رأس‌ها به‌عنوان fallback بررسی می‌شوند. */
           let area2=0;for(let i=0;i<n;i++)area2+=polygon[i].z*polygon[(i+1)%n].r-polygon[(i+1)%n].z*polygon[i].r;
           const reflex:number[]=[];for(let i=0;i<n;i++){const a=polygon[(i+n-1)%n],b=polygon[i],c=polygon[(i+1)%n],az=b.z-a.z,ar=b.r-a.r,bz=c.z-b.z,br=c.r-b.r,turn=az*br-ar*bz,scale=Math.hypot(az,ar)*Math.hypot(bz,br);if(turn*area2 < -1e-8&&scale>1e-9&&Math.abs(turn)/scale>.2)reflex.push(i);}
-          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);/* پوشش یکنواخت مانع حذف راه ورود در قوس‌های نرم می‌شود، بدون آزمون هر ۹۰۰ نمونه مرز. */const compact=p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest",stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,compact?3:6).forEach(i=>set.add(i));return [...set];};
+          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);/* پوشش یکنواخت مانع حذف راه ورود در قوس‌های نرم می‌شود، بدون آزمون هر ۹۰۰ نمونه مرز. */const compact=p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary",stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,compact?3:6).forEach(i=>set.add(i));return [...set];};
           const visible=(q:AllowedPoint,reverse=false)=>{let out=candidates(q).filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));if(!out.length)out=[...Array(n).keys()].filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));return out;};
           const nearestVisible=(q:AllowedPoint,reverse=false)=>{
             let nearest=0,best=Infinity;for(let i=0;i<n;i++){const d=(polygon[i].z-q.z)**2+(polygon[i].r-q.r)**2;if(d<best){best=d;nearest=i;}}
             for(let step=0;step<n;step++){const ids=step?[((nearest+step)%n),((nearest-step+n)%n)]:[nearest];for(const i of ids)if(reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]))return [i];}
             return [] as number[];
           };
-          const nearestMode=p.innerBoundaryRoutingMode==="nearest",fromVisible=nearestMode?nearestVisible(from):visible(from),toVisible=nearestMode?nearestVisible(to,true):visible(to,true);
+          const nearestMode=p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary",fromVisible=nearestMode?nearestVisible(from):visible(from),toVisible=nearestMode?nearestVisible(to,true):visible(to,true);
           if(!fromVisible.length||!toVisible.length)return null;
           const edgeLen=polygon.map((q,i)=>Math.hypot(q.z-polygon[(i+1)%n].z,q.r-polygon[(i+1)%n].r));
           /* فاصله تجمعی مرز، انتخاب بهترین جفت رأس را از O(n³) به O(n²)
@@ -1855,6 +1855,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const raw:AllowedPoint[]=[];
           for(let i=bestI;;i=(i+(forward?1:n-1))%n){raw.push(polygon[i]);if(i===bestJ)break;}
           raw.push(to);
+          if(p.innerBoundaryRoutingMode==="rawBoundary")return raw;
           /* حذف رأس‌های غیرضروری فقط با آزمون کامل داخل‌بودن خط جایگزین. */
           const out:AllowedPoint[]=[];let anchor=from,i=0;
           while(i<raw.length){
