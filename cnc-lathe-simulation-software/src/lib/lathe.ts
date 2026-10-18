@@ -2642,6 +2642,7 @@ export interface Preset {
     c1?: { z: number; r: number };
     c2?: { z: number; r: number };
     via?: { z: number; r: number };
+    polylineId?: number;
   }>;
   /** نقطه Split پیشنهادی روی دیواره */
   split?: { z: number; r: number };
@@ -2738,6 +2739,41 @@ export const PRESETS: Preset[] = [
         kind: "arc",
         a: { z: 77, r: 48 }, b: { z: 80, r: 50 }, via: { z: 80, r: 48 },
       },
+    ],
+  },
+  {
+    id: "custom-project-3",
+    name: "طرح سفارشی ۳",
+    blankD: 200,
+    blankL: 90,
+    shape: "square",
+    strategy: "bowl",
+    split: { z: 64.51035778909231, r: 88.64065309179512 },
+    /* هندسه دقیق فایل project(3)، شامل منحنی‌ها و دو Polyline داخلی. */
+    pts: [[0,66,false],[18,88,true],[45,94,true],[68,84,true],[71,81,false]],
+    sketch: [
+      { kind: "line", a: { z: 0, r: 0 }, b: { z: 0, r: 66 } },
+      { kind: "cubic", a: { z: 0, r: 66 }, b: { z: 67.62462364355223, r: 84.19182880685447 }, c1: { z: -0.0021391051206346434, r: 89.30455724402302 }, c2: { z: 68, r: 98.46142578125 } },
+      { kind: "cubic", a: { z: 44.8, r: 60.7 }, b: { z: 29.990484516107415, r: 59.93037758803072 }, c1: { z: 39.990484516107415, r: 52.93037758803072 }, c2: { z: 36.990484516107415, r: 49.93037758803072 } },
+      { kind: "cubic", a: { z: 29.990484516107415, r: 59.93037758803072 }, b: { z: 12.990484516107415, r: 58.93037758803072 }, c1: { z: 23.990484516107415, r: 70.93037758803071 }, c2: { z: 20.990484516107415, r: 73.93037758803072 } },
+      { kind: "cubic", a: { z: 73, r: 72 }, b: { z: 84, r: 62 }, c1: { z: 73, r: 69 }, c2: { z: 75, r: 62 } },
+      { kind: "cubic", a: { z: 84, r: 62 }, b: { z: 83, r: 51 }, c1: { z: 89, r: 62 }, c2: { z: 90, r: 51 } },
+      { kind: "line", a: { z: 83, r: 51 }, b: { z: 70, r: 51 }, polylineId: 9763 },
+      { kind: "line", a: { z: 70, r: 51 }, b: { z: 70, r: 68 }, polylineId: 9763 },
+      { kind: "line", a: { z: 70, r: 68 }, b: { z: 60, r: 68 }, polylineId: 9763 },
+      { kind: "line", a: { z: 60, r: 68 }, b: { z: 60, r: 56 }, polylineId: 9763 },
+      { kind: "line", a: { z: 60, r: 56 }, b: { z: 50, r: 71 }, polylineId: 9763 },
+      { kind: "line", a: { z: 50, r: 71 }, b: { z: 44.8, r: 60.7 }, polylineId: 9763 },
+      { kind: "line", a: { z: 12.990484516107415, r: 58.93037758803072 }, b: { z: 21, r: 47 } },
+      { kind: "line", a: { z: 21, r: 47 }, b: { z: 10, r: 41 } },
+      { kind: "cubic", a: { z: 10, r: 41 }, b: { z: 10, r: 21 }, c1: { z: 31, r: 38 }, c2: { z: 56, r: 30 } },
+      { kind: "line", a: { z: 10, r: 21 }, b: { z: 10, r: 0 } },
+      { kind: "line", a: { z: 67.62462364355223, r: 84.19182880685447 }, b: { z: 71, r: 84.19182880685447 } },
+      { kind: "line", a: { z: 71, r: 84.19182880685447 }, b: { z: 71, r: 81 } },
+      { kind: "line", a: { z: 71, r: 81 }, b: { z: 67, r: 81 } },
+      { kind: "line", a: { z: 67, r: 81 }, b: { z: 67, r: 75 }, polylineId: 12065 },
+      { kind: "line", a: { z: 67, r: 75 }, b: { z: 73, r: 75 }, polylineId: 12065 },
+      { kind: "line", a: { z: 73, r: 75 }, b: { z: 73, r: 72 }, polylineId: 12065 },
     ],
   },
   {
