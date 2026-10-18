@@ -1875,7 +1875,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const requestedClearance=Math.min(20,Math.max(0,p.innerRectClearance));
             for(let clearance=requestedClearance;clearance>1e-7;clearance-=.5){const route=tryRect(Math.max(0,clearance));if(route)return route;}
             const zeroClearanceRoute=tryRect(0);if(zeroClearanceRoute)return zeroClearanceRoute;
-            return raw;
+            /* fallback دیگر مسیر خام مورب نیست: هر ضلع خام به دو ضلع قائم/افقی
+               داخل ناحیه تبدیل می‌شود. تقسیم بازگشتی فقط برای گوشه‌های بسیار
+               تنگ است تا تغییر Offset داخل، حالت را ناگهان به Raw برنگرداند. */
+            const source=[from,...raw],rectified:AllowedPoint[]=[from];
+            const appendRect=(a:AllowedPoint,b:AllowedPoint,depth:number)=>{if(Math.abs(a.z-b.z)<1e-7||Math.abs(a.r-b.r)<1e-7){rectified.push(b);return;}const e1={z:b.z,r:a.r},e2={z:a.z,r:b.r},candidates=[e1,e2].sort((u,v)=>pointClearance(v)-pointClearance(u));for(const e of candidates)if(allowedLink(a,e)&&allowedLink(e,b)){rectified.push(e,b);return;}if(depth<3){const m={z:(a.z+b.z)/2,r:(a.r+b.r)/2};appendRect(a,m,depth+1);appendRect(m,b,depth+1);}else rectified.push(b);};
+            for(let i=1;i<source.length;i++)appendRect(source[i-1],source[i],0);
+            const fallback:AllowedPoint[]=[];for(const q of rectified.slice(1)){const n=fallback.length;if(n>=2){const a=fallback[n-2],b=fallback[n-1];if((Math.abs(a.z-b.z)<1e-7&&Math.abs(b.z-q.z)<1e-7)||(Math.abs(a.r-b.r)<1e-7&&Math.abs(b.r-q.r)<1e-7))fallback.pop();}fallback.push(q);}return fallback;
           }
           if(p.innerBoundaryRoutingMode==="rawBoundary")return raw;
           if(p.innerBoundaryRoutingMode==="rdp"){
