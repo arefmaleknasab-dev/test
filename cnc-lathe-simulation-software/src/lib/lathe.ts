@@ -2027,6 +2027,23 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           break;
         }
+        /* اتصال‌های G0 حالت یک‌طرفه هرگز مجاز نیستند از X عمق فعلی کمتر شوند.
+           ابتدا اتصال مستقیم/مورب امتحان می‌شود؛ اگر مسیریاب عمومی به سمت −X
+           منحرف شود، یک عقب‌نشینی +X و سپس جابه‌جایی شعاعی امن ساخته می‌شود. */
+        const planClassicRapid=(from:AllowedPoint,to:AllowedPoint,minZ:number):AllowedPoint[]|null=>{
+          if(to.z>=from.z-1e-7&&allowedLink(from,to))return [to];
+          const planned=planAllowedLink(from,to);let previousZ=from.z;
+          if(planned&&planned.every(q=>{const monotonic=q.z>=previousZ-1e-7;previousZ=q.z;return monotonic;}))return planned;
+          const firstRetreat=Math.max(1,Math.ceil(Math.max(0,to.z-minZ)));
+          for(let retreat=firstRetreat;minZ+retreat<=mouthPlaneZ+1e-7;retreat+=1){
+            const z=Math.min(mouthPlaneZ,minZ+retreat),a={r:from.r,z},b={r:to.r,z};
+            /* نقطه پایان G0 می‌تواند جلوتر از ۱mm باشد؛ ورود از آن نقطه تا عمق
+               واقعی پاس بعد فقط در حلقه بعد و با G1 انجام می‌شود. */
+            if(allowedLink(from,b))return [b];
+            if(allowedLink(from,a)&&allowedLink(a,b))return [a,b];
+          }
+          return null;
+        };
         let preparedForNextLayer = false;
         for (let layerIndex = 0; layerIndex < layerPlans.length; layerIndex++) {
           const { layerZ, intervals: layerIntervals } = layerPlans[layerIndex];
@@ -2068,23 +2085,24 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               /* اگر در ادامهٔ +Y باربرداری دیگری وجود دارد، بازگشت به محور ممنوع
                  است: ابتدا پشت راست‌ترین نقطهٔ قله ۰٫۵mm در +X فاصله می‌گیریم،
                  سپس در +Y از روی قله عبور می‌کنیم و از همان‌جا در −X وارد می‌شویم. */
-              const plan=planAllowedLink({r:endR,z:cutZ},{r:nextStartR,z:cutZ});
+              const plan=planClassicRapid({r:endR,z:cutZ},{r:nextStartR,z:cutZ},cutZ);
               if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
               const nextLayerFirst = layerPlans[layerIndex + 1]?.intervals[0];
-              const nextLayerStartR = nextLayerFirst ? Math.max(rEntry, nextLayerFirst.a) : 0;
-              if (nextLayerFirst && nextLayerStartR > 1e-7) {
-                /* اگر پاس بعدی از محور فاصله دارد، برگشت کامل تا R=0 حذف می‌شود.
-                   ابزار پشت موانع در +X امن می‌شود، فقط در −Y تا شعاع شروع پاس
-                   بعدی می‌آید و از همان نقطه مستقیماً در −X باربرداری می‌کند. */
-                const nextZ=layerPlans[layerIndex+1].layerZ,plan=planAllowedLink({r:endR,z:cutZ},{r:nextLayerStartR,z:nextZ});
+              if (nextLayerFirst) {
+                /* بین دو عمق هرگز G0 در −X اجرا نمی‌شود. ابزار ابتدا دقیقاً ۱mm
+                   در +X عقب می‌آید (هم‌زمان می‌تواند به شعاع شروع بعدی برود)،
+                   سپس ورود −X به عمق بعد فقط با G1 حلقه بعد انجام می‌شود. این
+                   قاعده برای جهت عادی و معکوس یکسان است. */
+                const nextLayerStartR=op.reverse?Math.max(nextLayerFirst.a,nextLayerFirst.b):Math.max(rEntry,nextLayerFirst.a);
+                const stageZ=Math.min(mouthPlaneZ,cutZ+1);
+                const plan=planClassicRapid({r:endR,z:cutZ},{r:nextLayerStartR,z:stageZ},cutZ);
                 if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
-                preparedForNextLayer = !!plan;
+                preparedForNextLayer=!!plan;
               } else {
-                /* فقط وقتی پاس بعدی از محور شروع می‌شود (یا پاس دیگری نیست)،
-                   بازگشت کامل به محور دوران انجام می‌گیرد. */
-                const targetZ=layerPlans[layerIndex+1]?.layerZ??cutZ,plan=planAllowedLink({r:endR,z:cutZ},{r:0,z:targetZ});
+                /* پس از آخرین پاس، برگشت روی همان X تا محور مجاز است. */
+                const plan=planClassicRapid({r:endR,z:cutZ},{r:0,z:cutZ},cutZ);
                 if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
               }
             }
