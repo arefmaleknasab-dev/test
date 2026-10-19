@@ -126,7 +126,6 @@ export interface Params {
   offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
   innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
   innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
-  innerClassicG0Clearance: number; // فاصله خطوط امن G0 روش یک‌طرفه از نوک مرز آبی
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   bottomOffsetClearance: number; // فاصله کف‌تراشی در +X از بلندترین قله آفست داخل
@@ -359,7 +358,6 @@ export const DEFAULT_PARAMS: Params = {
   offsetDist: 0.5,
   innerOffsetDist: 0.5,
   innerStartClearance: 2,
-  innerClassicG0Clearance: 3,
   innerEndTravel: 300,
   bottomRoughOverlap: 3,
   bottomOffsetClearance: 0,
@@ -398,7 +396,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerClassicG0Clearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -411,7 +409,6 @@ export function normalizeParams(
   }
   base.innerDoc = Math.min(10, Math.max(0.5, base.innerDoc));
   base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
-  base.innerClassicG0Clearance = Math.min(3, Math.max(0, base.innerClassicG0Clearance));
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   base.bottomOffsetClearance = Math.min(100, Math.max(0, base.bottomOffsetClearance));
@@ -2030,47 +2027,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           break;
         }
-        if(p.innerRoughMode==="classic"){
-          /* روش یک‌طرفه: هر X به‌اندازه DOC جابه‌جا می‌شود. در جهت عادی ابتدا
-             بازه پایین از محور/خط امن تا مرز آبی و سپس بازه بالا از مرز خام تا
-             مرز آبی تراشیده می‌شود. پس از پایان شاخه بالا، پاس‌های پایین دوباره
-             از محور آغاز می‌شوند. */
-          const tip=boundary.reduce((best,q)=>q.z>best.z?q:best,boundary[0]),clearance=Math.min(3,Math.max(0,p.innerClassicG0Clearance)),safeZ=Math.min(mouthPlaneZ,tip.z+clearance),safeR=Math.max(0,tip.r-clearance);
-          const plans=op.reverse?[...layerPlans].reverse():layerPlans;
-          let previousHadUpper=false,first=true;
-          const rapid=(r:number,z:number)=>{if(Math.abs(cur.x/2-r)>1e-7||Math.abs(cur.z-z)>1e-7)rawRapid(2*r,z);};
-          for(let pi=0;pi<plans.length;pi++){
-            const plan=plans[pi],ivs=plan.intervals;if(!ivs.length)continue;
-            const lower=ivs[0],upper=ivs.length>1?ivs[ivs.length-1]:null;
-            if(!op.reverse){
-              /* رسیدن به شروع پاس پایین: نخستین پاس و پاس‌های پس از پایان شاخه
-                 بالا از محور؛ در بخش U فقط تا خط امن پایین می‌آیند. */
-              const lowerStart=first||!upper?lower.a:Math.max(lower.a,Math.min(lower.b,safeR));
-              if(!first){
-                if(previousHadUpper){rapid(cur.x/2,safeZ);rapid(lowerStart,safeZ);rapid(lowerStart,plan.layerZ);}
-                else {rapid(lower.a,cur.z);rapid(lower.a,plan.layerZ);}
-              }else {rapid(lowerStart,plan.layerZ);}
-              mv(1,2*lower.b,plan.layerZ,p.feedRough,"bore");
-              if(upper){
-                /* پایان پایین → مورب/عقب‌نشینی −Y تا فاصله تنظیمی → +X پشت نوک
-                   → +Y تا مرز خام → −X تا X پاس؛ سپس G1 از خام به مرز آبی. */
-                const retreat=Math.max(lower.a,lower.b-clearance);rapid(retreat,plan.layerZ);rapid(retreat,safeZ);rapid(upper.b,safeZ);rapid(upper.b,plan.layerZ);
-                mv(1,2*upper.a,plan.layerZ,p.feedRough,"bore");
-              }
-            }else{
-              /* جهت معکوس: ابتدا پاس بالا و سپس پایین؛ جهت هر G1 نیز برعکس است. */
-              if(upper){
-                if(first)rapid(upper.a,plan.layerZ);else {rapid(cur.x/2,safeZ);rapid(upper.a,safeZ);rapid(upper.a,plan.layerZ);}
-                mv(1,2*upper.b,plan.layerZ,p.feedRough,"bore");
-                rapid(upper.a,plan.layerZ);rapid(upper.a,safeZ);rapid(lower.b,safeZ);rapid(lower.b,plan.layerZ);
-              }else if(first)rapid(lower.b,plan.layerZ);else {rapid(lower.a,cur.z);rapid(lower.a,plan.layerZ);rapid(lower.b,plan.layerZ);}
-              mv(1,2*lower.a,plan.layerZ,p.feedRough,"bore");
-            }
-            first=false;previousHadUpper=!!upper;
-          }
-          innerCleared=true;if(!finishLastInner(op.id)){moveInnerToAxisSafely();if(!nextIsInnerPath(op.id)){rawRapid(0,mouthX);mv(0,retractX,mouthX,0,"rapid");}}break;
-        }
-
         /* اتصال‌های G0 حالت یک‌طرفه هرگز مجاز نیستند از X عمق فعلی کمتر شوند.
            ابتدا اتصال مستقیم/مورب امتحان می‌شود؛ اگر مسیریاب عمومی به سمت −X
            منحرف شود، یک عقب‌نشینی +X و سپس جابه‌جایی شعاعی امن ساخته می‌شود. */
