@@ -2085,7 +2085,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               /* اگر در ادامهٔ +Y باربرداری دیگری وجود دارد، بازگشت به محور ممنوع
                  است: ابتدا پشت راست‌ترین نقطهٔ قله ۰٫۵mm در +X فاصله می‌گیریم،
                  سپس در +Y از روی قله عبور می‌کنیم و از همان‌جا در −X وارد می‌شویم. */
-              const plan=planClassicRapid({r:endR,z:cutZ},{r:nextStartR,z:cutZ},cutZ);
+              /* دو بازه هم‌عمق ممکن است در دو سوی U باشند؛ مسیر امن ناچار دور
+                 نوک منحنی می‌چرخد و می‌تواند پس از +X دوباره −X شود. این حرکت
+                 با G0 و کاملاً داخل محدوده آبی است، نه اتصال برشی مستقیم. */
+              const plan=planAllowedLink({r:endR,z:cutZ},{r:nextStartR,z:cutZ});
               if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
