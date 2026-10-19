@@ -2031,27 +2031,42 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           break;
         }
         if(p.innerRoughMode==="classic"){
-          /* روش یک‌طرفه مطابق دیاگرام مرجع: از نوک U به بیرون، پاس عمودیِ شاخه
-             پایین و پاس افقیِ شاخه بالا یکی‌درمیان اجرا می‌شوند. */
-          const tipIndex=boundary.reduce((best,q,i)=>q.z>boundary[best].z?i:best,0),tip=boundary[tipIndex],lower=boundary.slice(0,tipIndex+1),upper=boundary.slice(tipIndex);
-          const atZ=(path:AllowedPoint[],z:number)=>{const hits:number[]=[];for(let i=0;i+1<path.length;i++){const a=path[i],b=path[i+1];if(z<Math.min(a.z,b.z)-1e-7||z>Math.max(a.z,b.z)+1e-7)continue;const d=b.z-a.z;if(Math.abs(d)<1e-9)continue;const t=(z-a.z)/d;if(t>=-1e-7&&t<=1+1e-7)hits.push(a.r+(b.r-a.r)*t);}return hits.length?Math.max(...hits):null;};
-          const atR=(path:AllowedPoint[],r:number)=>{const hits:number[]=[];for(let i=0;i+1<path.length;i++){const a=path[i],b=path[i+1];if(r<Math.min(a.r,b.r)-1e-7||r>Math.max(a.r,b.r)+1e-7)continue;const d=b.r-a.r;if(Math.abs(d)<1e-9)continue;const t=(r-a.r)/d;if(t>=-1e-7&&t<=1+1e-7)hits.push(a.z+(b.z-a.z)*t);}return hits.length?Math.min(...hits):null;};
-          const descend=(start:number,end:number)=>{const out:number[]=[];for(let v=start-step;v>end+0.05;v-=step)out.push(v);if(start-end>0.05)out.push(end);return out;},ascend=(start:number,end:number)=>{const out:number[]=[];for(let v=start+step;v<end-0.05;v+=step)out.push(v);if(end-start>0.05)out.push(end);return out;};
-          type ClassicCut={kind:"v"|"h";start:AllowedPoint;end:AllowedPoint};const vertical:ClassicCut[]=[],horizontal:ClassicCut[]=[];
-          const clearance=Math.min(3,Math.max(0,p.innerClassicG0Clearance)),safeR=Math.max(0,tip.r-clearance),safeZ=Math.min(mouthPlaneZ,tip.z+clearance);
-          for(const z of descend(tip.z,Math.min(...lower.map(q=>q.z)))){const r=atZ(lower,z);if(r!=null&&r>safeR+0.05)vertical.push({kind:"v",start:{r:safeR,z},end:{r,z}});}
-          for(const r of ascend(tip.r,Math.max(...upper.map(q=>q.r)))){const z=atR(upper,r);if(z!=null&&safeZ>z+0.05)horizontal.push({kind:"h",start:{r,z:safeZ},end:{r,z}});}
-          const cuts:ClassicCut[]=[];for(let i=0;i<Math.max(vertical.length,horizontal.length);i++){if(vertical[i])cuts.push(vertical[i]);if(horizontal[i])cuts.push(horizontal[i]);}if(op.reverse)cuts.reverse();
-          const rapidAxis=(target:AllowedPoint)=>{if(Math.abs(cur.x/2-target.r)<1e-7&&Math.abs(cur.z-target.z)<1e-7)return;rawRapid(2*target.r,target.z);};
-          if(cuts.length){
-            /* تمام G0ها دقیقاً روی دو راهروی خاکستری‌اند: R=safeR و Z=safeZ.
-               پس از هر پاس ابتدا همان مسیر تراش‌خورده عقب‌نشینی می‌شود، سپس از
-               گوشه مشترک به شروع پاس بعد می‌رویم؛ هیچ قطر موربی ساخته نمی‌شود. */
-            rapidAxis({r:safeR,z:mouthPlaneZ});rapidAxis({r:safeR,z:safeZ});let previous:ClassicCut|null=null;
-            for(const cut of cuts){
-              if(previous){if(previous.kind==="v")rapidAxis({r:safeR,z:previous.end.z});else rapidAxis({r:previous.end.r,z:safeZ});rapidAxis({r:safeR,z:safeZ});}
-              rapidAxis(cut.start);mv(1,2*cut.end.r,cut.end.z,p.feedRough,"bore");previous=cut;
+          /* روش یک‌طرفه: هر X به‌اندازه DOC جابه‌جا می‌شود. در جهت عادی ابتدا
+             بازه پایین از محور/خط امن تا مرز آبی و سپس بازه بالا از مرز خام تا
+             مرز آبی تراشیده می‌شود. پس از پایان شاخه بالا، پاس‌های پایین دوباره
+             از محور آغاز می‌شوند. */
+          const tip=boundary.reduce((best,q)=>q.z>best.z?q:best,boundary[0]),clearance=Math.min(3,Math.max(0,p.innerClassicG0Clearance)),safeZ=Math.min(mouthPlaneZ,tip.z+clearance),safeR=Math.max(0,tip.r-clearance);
+          const plans=op.reverse?[...layerPlans].reverse():layerPlans;
+          let previousHadUpper=false,first=true;
+          const rapid=(r:number,z:number)=>{if(Math.abs(cur.x/2-r)>1e-7||Math.abs(cur.z-z)>1e-7)rawRapid(2*r,z);};
+          for(let pi=0;pi<plans.length;pi++){
+            const plan=plans[pi],ivs=plan.intervals;if(!ivs.length)continue;
+            const lower=ivs[0],upper=ivs.length>1?ivs[ivs.length-1]:null;
+            if(!op.reverse){
+              /* رسیدن به شروع پاس پایین: نخستین پاس و پاس‌های پس از پایان شاخه
+                 بالا از محور؛ در بخش U فقط تا خط امن پایین می‌آیند. */
+              const lowerStart=first||!upper?lower.a:Math.max(lower.a,Math.min(lower.b,safeR));
+              if(!first){
+                if(previousHadUpper){rapid(cur.x/2,safeZ);rapid(lowerStart,safeZ);rapid(lowerStart,plan.layerZ);}
+                else {rapid(lower.a,cur.z);rapid(lower.a,plan.layerZ);}
+              }else {rapid(lowerStart,plan.layerZ);}
+              mv(1,2*lower.b,plan.layerZ,p.feedRough,"bore");
+              if(upper){
+                /* پایان پایین → مورب/عقب‌نشینی −Y تا فاصله تنظیمی → +X پشت نوک
+                   → +Y تا مرز خام → −X تا X پاس؛ سپس G1 از خام به مرز آبی. */
+                const retreat=Math.max(lower.a,lower.b-clearance);rapid(retreat,plan.layerZ);rapid(retreat,safeZ);rapid(upper.b,safeZ);rapid(upper.b,plan.layerZ);
+                mv(1,2*upper.a,plan.layerZ,p.feedRough,"bore");
+              }
+            }else{
+              /* جهت معکوس: ابتدا پاس بالا و سپس پایین؛ جهت هر G1 نیز برعکس است. */
+              if(upper){
+                if(first)rapid(upper.a,plan.layerZ);else {rapid(cur.x/2,safeZ);rapid(upper.a,safeZ);rapid(upper.a,plan.layerZ);}
+                mv(1,2*upper.b,plan.layerZ,p.feedRough,"bore");
+                rapid(upper.a,plan.layerZ);rapid(upper.a,safeZ);rapid(lower.b,safeZ);rapid(lower.b,plan.layerZ);
+              }else if(first)rapid(lower.b,plan.layerZ);else {rapid(lower.a,cur.z);rapid(lower.a,plan.layerZ);rapid(lower.b,plan.layerZ);}
+              mv(1,2*lower.a,plan.layerZ,p.feedRough,"bore");
             }
+            first=false;previousHadUpper=!!upper;
           }
           innerCleared=true;if(!finishLastInner(op.id)){moveInnerToAxisSafely();if(!nextIsInnerPath(op.id)){rawRapid(0,mouthX);mv(0,retractX,mouthX,0,"rapid");}}break;
         }
