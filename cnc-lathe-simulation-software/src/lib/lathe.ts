@@ -2030,6 +2030,19 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* اتصال‌های G0 حالت یک‌طرفه هرگز مجاز نیستند از X عمق فعلی کمتر شوند.
            ابتدا اتصال مستقیم/مورب امتحان می‌شود؛ اگر مسیریاب عمومی به سمت −X
            منحرف شود، یک عقب‌نشینی +X و سپس جابه‌جایی شعاعی امن ساخته می‌شود. */
+        const planSameDepthCompact=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
+          if(allowedLink(from,to))return [to];
+          const tipZ=Math.max(...boundary.map(q=>q.z)),maxR=Math.max(...polygon.map(q=>q.r));
+          for(let safeZ=Math.min(mouthPlaneZ,tipZ+.1);safeZ<=mouthPlaneZ+1e-7;safeZ+=.5){
+            const a={r:from.r,z:safeZ},b={r:to.r,z:safeZ};
+            if(allowedLink(from,a)&&allowedLink(a,b)&&allowedLink(b,to))return [a,b,to];
+            for(let bridgeR=0;bridgeR<=maxR+1e-7;bridgeR+=.5){
+              const p1={r:bridgeR,z:from.z},p2={r:bridgeR,z:safeZ},p3={r:to.r,z:safeZ};
+              if(allowedLink(from,p1)&&allowedLink(p1,p2)&&allowedLink(p2,p3)&&allowedLink(p3,to))return [p1,p2,p3,to];
+            }
+          }
+          return null;
+        };
         const planClassicRapid=(from:AllowedPoint,to:AllowedPoint,minZ:number):AllowedPoint[]|null=>{
           if(to.z>=from.z-1e-7&&allowedLink(from,to))return [to];
           const planned=planAllowedLink(from,to);let previousZ=from.z;
@@ -2088,7 +2101,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               /* دو بازه هم‌عمق ممکن است در دو سوی U باشند؛ مسیر امن ناچار دور
                  نوک منحنی می‌چرخد و می‌تواند پس از +X دوباره −X شود. این حرکت
                  با G0 و کاملاً داخل محدوده آبی است، نه اتصال برشی مستقیم. */
-              const plan=planAllowedLink({r:endR,z:cutZ},{r:nextStartR,z:cutZ});
+              const from={r:endR,z:cutZ},to={r:nextStartR,z:cutZ};
+              const plan=planSameDepthCompact(from,to)??planAllowedLink(from,to);
               if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
