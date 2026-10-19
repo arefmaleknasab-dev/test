@@ -126,6 +126,7 @@ export interface Params {
   offsetDist: number; // فاصله آفست — مرجع مراحل خشن قبل از پرداخت بیرونی
   innerOffsetDist: number; // فاصله آفست داخل‌تراشی — مرجع خشن و پاس پیش از پرداخت داخل
   innerStartClearance: number; // فاصله شروع داخل‌تراشی جلوتر از اولین عملیات H2
+  innerClassicG0Clearance: number; // فاصله خطوط امن G0 روش یک‌طرفه از نوک مرز آبی
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   bottomOffsetClearance: number; // فاصله کف‌تراشی در +X از بلندترین قله آفست داخل
@@ -358,6 +359,7 @@ export const DEFAULT_PARAMS: Params = {
   offsetDist: 0.5,
   innerOffsetDist: 0.5,
   innerStartClearance: 2,
+  innerClassicG0Clearance: 3,
   innerEndTravel: 300,
   bottomRoughOverlap: 3,
   bottomOffsetClearance: 0,
@@ -396,7 +398,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerClassicG0Clearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -409,6 +411,7 @@ export function normalizeParams(
   }
   base.innerDoc = Math.min(10, Math.max(0.5, base.innerDoc));
   base.innerStartClearance = Math.min(20, Math.max(0, base.innerStartClearance));
+  base.innerClassicG0Clearance = Math.min(3, Math.max(0, base.innerClassicG0Clearance));
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   base.bottomOffsetClearance = Math.min(100, Math.max(0, base.bottomOffsetClearance));
@@ -2027,6 +2030,32 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           break;
         }
+        if(p.innerRoughMode==="classic"){
+          /* روش یک‌طرفه مطابق دیاگرام مرجع: از نوک U به بیرون، پاس عمودیِ شاخه
+             پایین و پاس افقیِ شاخه بالا یکی‌درمیان اجرا می‌شوند. */
+          const tipIndex=boundary.reduce((best,q,i)=>q.z>boundary[best].z?i:best,0),tip=boundary[tipIndex],lower=boundary.slice(0,tipIndex+1),upper=boundary.slice(tipIndex);
+          const atZ=(path:AllowedPoint[],z:number)=>{const hits:number[]=[];for(let i=0;i+1<path.length;i++){const a=path[i],b=path[i+1];if(z<Math.min(a.z,b.z)-1e-7||z>Math.max(a.z,b.z)+1e-7)continue;const d=b.z-a.z;if(Math.abs(d)<1e-9)continue;const t=(z-a.z)/d;if(t>=-1e-7&&t<=1+1e-7)hits.push(a.r+(b.r-a.r)*t);}return hits.length?Math.max(...hits):null;};
+          const atR=(path:AllowedPoint[],r:number)=>{const hits:number[]=[];for(let i=0;i+1<path.length;i++){const a=path[i],b=path[i+1];if(r<Math.min(a.r,b.r)-1e-7||r>Math.max(a.r,b.r)+1e-7)continue;const d=b.r-a.r;if(Math.abs(d)<1e-9)continue;const t=(r-a.r)/d;if(t>=-1e-7&&t<=1+1e-7)hits.push(a.z+(b.z-a.z)*t);}return hits.length?Math.min(...hits):null;};
+          const descend=(start:number,end:number)=>{const out:number[]=[];for(let v=start-step;v>end+0.05;v-=step)out.push(v);if(start-end>0.05)out.push(end);return out;},ascend=(start:number,end:number)=>{const out:number[]=[];for(let v=start+step;v<end-0.05;v+=step)out.push(v);if(end-start>0.05)out.push(end);return out;};
+          type ClassicCut={kind:"v"|"h";start:AllowedPoint;end:AllowedPoint};const vertical:ClassicCut[]=[],horizontal:ClassicCut[]=[];
+          const clearance=Math.min(3,Math.max(0,p.innerClassicG0Clearance)),safeR=Math.max(0,tip.r-clearance),safeZ=Math.min(mouthPlaneZ,tip.z+clearance);
+          for(const z of descend(tip.z,Math.min(...lower.map(q=>q.z)))){const r=atZ(lower,z);if(r!=null&&r>safeR+0.05)vertical.push({kind:"v",start:{r:safeR,z},end:{r,z}});}
+          for(const r of ascend(tip.r,Math.max(...upper.map(q=>q.r)))){const z=atR(upper,r);if(z!=null&&safeZ>z+0.05)horizontal.push({kind:"h",start:{r,z:safeZ},end:{r,z}});}
+          const cuts:ClassicCut[]=[];for(let i=0;i<Math.max(vertical.length,horizontal.length);i++){if(vertical[i])cuts.push(vertical[i]);if(horizontal[i])cuts.push(horizontal[i]);}if(op.reverse)cuts.reverse();
+          const rapidAxis=(target:AllowedPoint)=>{if(Math.abs(cur.x/2-target.r)<1e-7&&Math.abs(cur.z-target.z)<1e-7)return;rawRapid(2*target.r,target.z);};
+          if(cuts.length){
+            /* تمام G0ها دقیقاً روی دو راهروی خاکستری‌اند: R=safeR و Z=safeZ.
+               پس از هر پاس ابتدا همان مسیر تراش‌خورده عقب‌نشینی می‌شود، سپس از
+               گوشه مشترک به شروع پاس بعد می‌رویم؛ هیچ قطر موربی ساخته نمی‌شود. */
+            rapidAxis({r:safeR,z:mouthPlaneZ});rapidAxis({r:safeR,z:safeZ});let previous:ClassicCut|null=null;
+            for(const cut of cuts){
+              if(previous){if(previous.kind==="v")rapidAxis({r:safeR,z:previous.end.z});else rapidAxis({r:previous.end.r,z:safeZ});rapidAxis({r:safeR,z:safeZ});}
+              rapidAxis(cut.start);mv(1,2*cut.end.r,cut.end.z,p.feedRough,"bore");previous=cut;
+            }
+          }
+          innerCleared=true;if(!finishLastInner(op.id)){moveInnerToAxisSafely();if(!nextIsInnerPath(op.id)){rawRapid(0,mouthX);mv(0,retractX,mouthX,0,"rapid");}}break;
+        }
+
         /* اتصال‌های G0 حالت یک‌طرفه هرگز مجاز نیستند از X عمق فعلی کمتر شوند.
            ابتدا اتصال مستقیم/مورب امتحان می‌شود؛ اگر مسیریاب عمومی به سمت −X
            منحرف شود، یک عقب‌نشینی +X و سپس جابه‌جایی شعاعی امن ساخته می‌شود. */
