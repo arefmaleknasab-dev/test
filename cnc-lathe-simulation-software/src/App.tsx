@@ -1090,6 +1090,7 @@ export default function App() {
               onEditDiscard={discardEdit}
               keepEditDraft={preferences.keepEditDraft}
               showCanvasPaintTool={preferences.showCanvasPaintTool}
+              rightClickToolToggle={preferences.rightClickToolToggle}
               profileLineWidth={preferences.lineWidth}
               selected={selectedIds}
               onSelected={setSelectedIds}

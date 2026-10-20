@@ -164,6 +164,7 @@ interface Props {
   onEditDiscard: () => void;
   keepEditDraft: boolean;
   showCanvasPaintTool: boolean;
+  rightClickToolToggle: boolean;
   profileLineWidth: number;
 }
 
@@ -854,6 +855,7 @@ export default function ProfileEditor({
   onEditDiscard,
   keepEditDraft,
   showCanvasPaintTool,
+  rightClickToolToggle,
   profileLineWidth,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -2796,16 +2798,16 @@ export default function ProfileEditor({
       const nearLines = hitBufLines(ploc.x, ploc.y);
       /* اگر خط هایلایت‌شده زیر/روی خطوط دیگر باشد، Drag نقطه فقط رأس‌های همان
          خط را می‌بیند و رأس هم‌مکان خطوط دیگر وارد انتخاب نمی‌شود. */
-      const selectedHitLine=nearLines.find(id=>selL.includes(id));
+      const selectedHitLine=nearLines.find(id=>selL.includes(id))??selL.find(id=>{const line=lineById.get(id);return !!line&&nearVerts.some(v=>v===line.va||v===line.vb);});
       if(selectedHitLine!=null){const line=lineById.get(selectedHitLine);if(line)nearVerts=nearVerts.filter(id=>id===line.va||id===line.vb);}
       const endpointCandidate = nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
 
       /* نشان‌های ابتدا/انتها بر Segment زیرین اولویت دارند تا با یک کلیک ساده
          انتخاب شوند و همان لحظه امکان drag آن‌ها وجود داشته باشد. */
       if (endpointCandidate != null) {
-        const chosen = e.shiftKey
+        const chosen = selectedHitLine!=null ? [endpointCandidate] : e.shiftKey
           ? (selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate])
-          : (selV.includes(endpointCandidate) ? [...selV] : [endpointCandidate]);
+          : [endpointCandidate];
         setSelV(chosen);
         focusEditVertexInGCode(endpointCandidate);
         setHitPicker(null);
@@ -2864,9 +2866,9 @@ export default function ProfileEditor({
       setPickerHover(null);
       const bv = hitBufVx(ploc.x, ploc.y);
       if (bv != null) {
-        const chosen = e.shiftKey
+        const chosen = selectedHitLine!=null ? [bv] : e.shiftKey
           ? (selV.includes(bv) ? selV.filter((id) => id !== bv) : [...selV, bv])
-          : (selV.includes(bv) ? [...selV] : [bv]);
+          : [bv];
         setSelV(chosen);
         focusEditVertexInGCode(bv);
         drag.current = {
@@ -3680,8 +3682,15 @@ export default function ProfileEditor({
             if(tool==="paint")chooseTool("select");
           }
         } else if (draft.length) cancelDraft();
-        else if (editOpen) openSpeedMenu(e.clientX, e.clientY);
-        else openJoinMenu(e.clientX, e.clientY);
+        else {
+          const ploc=toLocal(e.clientX,e.clientY),world=worldPt(camRef.current!,ploc.x,ploc.y);
+          const empty=editOpen
+            ? hitBufLine(ploc.x,ploc.y)==null&&hitBufVx(ploc.x,ploc.y)==null&&hitOffSeg(ploc.x,ploc.y)==null
+            : !hitSeg(world)&&hitHandle(world)==null&&!hitSplitMarker(ploc.x,ploc.y);
+          if(rightClickToolToggle&&empty){const previous=previousToolRef.current;if(!editOpen||previous==="select"||previous==="move")chooseTool(previous);}
+          else if (editOpen) openSpeedMenu(e.clientX, e.clientY);
+          else openJoinMenu(e.clientX, e.clientY);
+        }
       }
       return;
     }
