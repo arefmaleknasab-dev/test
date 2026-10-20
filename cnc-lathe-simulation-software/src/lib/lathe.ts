@@ -2057,6 +2057,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           return null;
         };
+        const reverseApexZ=boundary.reduce((best,q)=>q.r>best.r?q:best,boundary[0]).z;
+        const classicIntervalStart=(layerZ:number,iv:{a:number;b:number})=>op.reverse?(layerZ>reverseApexZ+1e-7?Math.max(iv.a,iv.b-step):Math.max(iv.a,iv.b)):Math.max(rEntry,iv.a);
         let preparedForNextLayer = false;
         for (let layerIndex = 0; layerIndex < layerPlans.length; layerIndex++) {
           const { layerZ, intervals: layerIntervals } = layerPlans[layerIndex];
@@ -2064,8 +2066,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const interval = layerIntervals[intervalIndex];
             const lowR = Math.max(rEntry, interval.a);
             const highR = Math.max(lowR, interval.b);
-            const startR = op.reverse ? highR : lowR;
-            const endR = op.reverse ? lowR : highR;
+            let startR = op.reverse ? highR : lowR;
+            let endR = op.reverse ? lowR : highR;
+            /* در سمت راست رأس قوس، انتهای مجاز پاس معکوس خودِ مرز آبیِ بالا
+               (highR) است، نه محور. G0 فقط تا یک DOC مانده به مرز می‌آید و
+               همان بخش کوتاه با G1 رو به مرز تراشیده می‌شود. */
+            if(op.reverse&&layerZ>reverseApexZ+1e-7){endR=highR;startR=Math.max(lowR,highR-step);}
             /* تضمین نهایی مستقل از تشخیص بازه: کل خط برش عمودی باید در سمت
                حفرهٔ آفست بماند، پس X پاس از راست‌ترین نقطه آفست در همان بازه
                کمتر نمی‌شود. */
@@ -2094,7 +2100,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if (Math.abs(endR-startR) > 0.05) mv(1, 2 * endR, cutZ, p.feedRough, "bore");
 
             if (nextInterval) {
-              const nextStartR = op.reverse ? Math.max(nextInterval.a,nextInterval.b) : Math.max(endR, nextInterval.a);
+              const nextStartR = op.reverse ? classicIntervalStart(cutZ,nextInterval) : Math.max(endR, nextInterval.a);
               /* اگر در ادامهٔ +Y باربرداری دیگری وجود دارد، بازگشت به محور ممنوع
                  است: ابتدا پشت راست‌ترین نقطهٔ قله ۰٫۵mm در +X فاصله می‌گیریم،
                  سپس در +Y از روی قله عبور می‌کنیم و از همان‌جا در −X وارد می‌شویم. */
@@ -2112,7 +2118,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                    در +X عقب می‌آید (هم‌زمان می‌تواند به شعاع شروع بعدی برود)،
                    سپس ورود −X به عمق بعد فقط با G1 حلقه بعد انجام می‌شود. این
                    قاعده برای جهت عادی و معکوس یکسان است. */
-                const nextLayerStartR=op.reverse?Math.max(nextLayerFirst.a,nextLayerFirst.b):Math.max(rEntry,nextLayerFirst.a);
+                const nextLayerStartR=classicIntervalStart(layerPlans[layerIndex+1].layerZ,nextLayerFirst);
                 const stageZ=Math.min(mouthPlaneZ,cutZ+1);
                 const plan=planClassicRapid({r:endR,z:cutZ},{r:nextLayerStartR,z:stageZ},cutZ);
                 if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
