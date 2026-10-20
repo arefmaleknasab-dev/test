@@ -2053,11 +2053,13 @@ export default function ProfileEditor({
       next=next.map(s=>{
         if(!incident.some(i=>i.id===s.id))return s;
         const atA=dist(s.a,vertex)<1e-8;
-        const [baseC1,baseC2]=defaultCubicHandles(s.a,s.b);
         const other=atA?s.b:s.a;
         const sign=((other.z-vertex.z)*ux+(other.r-vertex.r)*ur)>=0?1:-1;
         const handle={z:vertex.z+ux*arm*sign,r:vertex.r+ur*arm*sign};
-        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:baseC1),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:baseC2):handle};
+        /* فقط رأس انتخاب‌شده دسته می‌گیرد. کنترل سمت دیگر Segment دقیقاً روی
+           نقطهٔ انتهایی می‌ماند تا روی دو رأس هم‌جوار منحنی کنترلی ایجاد نشود.
+           اگر آن رأس قبلاً مستقلاً منحنی شده باشد، کنترل موجودش حفظ می‌شود. */
+        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:{...s.a}),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:{...s.b}):handle};
       });
     }
     commit(next);setCtxMenu(null);
