@@ -1598,14 +1598,17 @@ export default function ProfileEditor({
           deleteSelectedSplit();
           return;
         }
-        if (selPoints.length) {
-          e.preventDefault();
-          deleteSelectedPoints();
-          return;
-        }
+        /* وقتی خود Polyline/Segment انتخاب است، حذف هندسه بر انتخاب نقطه‌ای
+           باقی‌مانده اولویت دارد؛ وگرنه یک رأس ادغام می‌شد و گاهی خط صفرطول
+           به‌شکل نقطه‌ای غیرقابل‌حذف روی بوم باقی می‌ماند. */
         if (selected.length) {
           e.preventDefault();
           deleteSelected();
+          return;
+        }
+        if (selPoints.length) {
+          e.preventDefault();
+          deleteSelectedPoints();
         }
         return;
       }
@@ -2151,8 +2154,10 @@ export default function ProfileEditor({
       }
       i++;
     }
-    commit(next.filter((s) => !removed.has(s.id)));
+    const kept=next.filter(s=>!removed.has(s.id)&&!(s.kind==="line"&&dist(s.a,s.b)<1e-8));
+    commit(kept);
     onSelected([]);
+    setSelPoints([]);
   };
 
   const deleteSelectedSplit = () => {
@@ -2216,7 +2221,9 @@ export default function ProfileEditor({
         next = next.filter((s) => s.id !== o1.seg.id && s.id !== o2.seg.id);
         removedSegIds.add(o1.seg.id);
         removedSegIds.add(o2.seg.id);
-        next.push(newSeg);
+        /* ادغام دو سر هم‌مکان نباید Segment صفرطول بسازد؛ چنین Segmentی فقط
+           به‌صورت یک نقطه با linecap گرد دیده می‌شود و Hit-test خط ندارد. */
+        if(dist(newSeg.a,newSeg.b)>=1e-8||newSeg.kind!=="line")next.push(newSeg);
         nextSelPoints = nextSelPoints.filter((p) => p.segId !== o1.seg.id && p.segId !== o2.seg.id);
       } else if (owners.length === 1) {
         /* نقطه فقط متعلق به یک المان — حذف همان المان */
@@ -2226,8 +2233,10 @@ export default function ProfileEditor({
       }
     }
 
+    next=next.filter(segment=>!(segment.kind==="line"&&dist(segment.a,segment.b)<1e-8));
+    const survivingIds=new Set(next.map(segment=>segment.id));
     commit(next);
-    setSelPoints(nextSelPoints.filter((p) => !removedSegIds.has(p.segId)));
+    setSelPoints(nextSelPoints.filter((p) => !removedSegIds.has(p.segId)&&survivingIds.has(p.segId)));
   };
 
   const duplicateSelected = () => {
