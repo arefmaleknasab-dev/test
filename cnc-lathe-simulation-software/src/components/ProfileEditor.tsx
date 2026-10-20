@@ -2188,18 +2188,6 @@ export default function ProfileEditor({
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
-  const previousEditOpen=useRef(editOpen),innerEditSeen=useRef(false);
-  useEffect(()=>{
-    if(editOpen&&!previousEditOpen.current)innerEditSeen.current=false;
-    if(editOpen){const ids=activeLine==null?selL:[activeLine,...selL];if(ids.some(id=>{const kind=lineById.get(id)?.kind;return kind==="bore"||kind==="boreoff"||kind==="borefin";}))innerEditSeen.current=true;}
-    if(!editOpen&&previousEditOpen.current&&innerEditSeen.current){
-      /* مسیر داخل در Edit Path با آفست دیده می‌شود و مرکز بصری متفاوتی دارد.
-         هنگام خروج فقط Translation نما اصلاح می‌شود؛ Scale دقیقاً ثابت می‌ماند. */
-      setCam(c=>c?{s:c.s,ox:size.w/2-(L/2)*c.s,oy:size.h/2}:c);
-      innerEditSeen.current=false;
-    }
-    previousEditOpen.current=editOpen;
-  },[editOpen,activeLine,selL,lineById,size.w,size.h,L]);
   const vertexLineCount = useMemo(() => {
     const count = new Map<number, number>();
     for (const line of lines) {
