@@ -66,6 +66,12 @@ const rotationCursor=(angle:number)=>{const svg=`<svg xmlns="http://www.w3.org/2
 const BOX_ROTATE_CURSORS = [180,270,0,90].map(rotationCursor);
 const resizeCursor=(mode:"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w",rotation:number)=>{const base:{[K in typeof mode]:number}={e:0,w:0,n:90,s:90,ne:-45,sw:-45,nw:45,se:45},angle=base[mode]+rotation,svg=`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="rotate(${angle} 12 12)" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 12l4-4M3 12l4 4M21 12l-4-4M21 12l-4 4" stroke="#000" stroke-width="4"/><path d="M3 12h18M3 12l4-4M3 12l4 4M21 12l-4-4M21 12l-4 4" stroke="#fff" stroke-width="2"/></g></svg>`;return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, move`;};
 
+const movePolylineSelection=(all:SketchSeg[],ids:number[],dz:number,dr:number)=>{
+  const chosen=new Set(ids),keys=new Set<string>();
+  for(const s of all)if(chosen.has(s.id)&&s.polylineId!=null){keys.add(`${s.polylineId}:${s.a.z}:${s.a.r}`);keys.add(`${s.polylineId}:${s.b.z}:${s.b.r}`);}
+  return all.map(s=>{if(chosen.has(s.id))return moveSeg(s,dz,dr);if(s.polylineId==null)return s;const a=keys.has(`${s.polylineId}:${s.a.z}:${s.a.r}`),b=keys.has(`${s.polylineId}:${s.b.z}:${s.b.r}`);if(!a&&!b)return s;const next={...s,a:a?{z:s.a.z+dz,r:s.a.r+dr}:s.a,b:b?{z:s.b.z+dz,r:s.b.r+dr}:s.b};if(s.kind==="cubic"){if(a&&s.c1)next.c1={z:s.c1.z+dz,r:s.c1.r+dr};if(b&&s.c2)next.c2={z:s.c2.z+dz,r:s.c2.r+dr};}return next;});
+};
+
 export interface EdSettings {
   snap: number;
   smartSnap: boolean;
@@ -1104,7 +1110,7 @@ export default function ProfileEditor({
           : vertex),
       }, false);
     } else {
-      onSegs(moveSession.base.map((segment) => moveSession.ids.includes(segment.id) ? moveSeg(segment, dz, dr) : segment), false);
+      onSegs(movePolylineSelection(moveSession.base,moveSession.ids,dz,dr), false);
     }
   }, [moveBox?.value, moveSession?.pointer, moveSession?.axis, moveSession?.mode]);
   const [draft, setDraft] = useState<SPoint[]>([]);
@@ -1601,7 +1607,7 @@ export default function ProfileEditor({
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (k === "r" && tool === "move" && lastMove && selected.length) {
         e.preventDefault();
-        const next = segs.map((s) => selected.includes(s.id) ? moveSeg(s, lastMove.dz, lastMove.dr) : s);
+        const next = movePolylineSelection(segs,selected,lastMove.dz,lastMove.dr);
         onSegs(next, true);
         return;
       }
@@ -3002,16 +3008,18 @@ export default function ProfileEditor({
     const s = editOpen ? null : hitSeg(raw);
     if (s) {
       const objectIds = sketchObjectIds(s.id);
-      /* المانِ متصل (از یک یا هر دو سر به المان خارج از گروه) قفل است و درگ نمی‌شود */
-      const allowed = selected.includes(s.id) ? [...selected] : objectIds;
-      if (allowed.some((id) => segLocked(id, allowed))) {
+      const drillSingle=s.polylineId!=null&&objectIds.length>1&&objectIds.every(id=>selected.includes(id));
+      /* کلیک اول کل Polyline و کلیک دوم ضلع زیر نشانگر را فعال می‌کند. ضلع منفرد
+         Polyline قفل نمی‌شود؛ هنگام Move اتصال دو همسایه به‌صورت هندسی حفظ می‌شود. */
+      const allowed = drillSingle?[s.id]:(selected.includes(s.id) ? [...selected] : objectIds);
+      if (!drillSingle&&allowed.some((id) => segLocked(id, allowed))) {
         if (e.shiftKey) onSelected(selected.includes(s.id) ? selected.filter((x) => !objectIds.includes(x)) : [...selected, ...objectIds.filter((id) => !selected.includes(id))]);
         else if (e.ctrlKey || e.metaKey) onSelected(selected.filter((x) => !objectIds.includes(x)));
         else if (!selected.includes(s.id)) onSelected(objectIds);
         return;
       }
       /* تصمیم نهایی کلیک در pointerup گرفته می‌شود تا درگ گروهی ممکن باشد */
-      drag.current = { mode: "move", ids: selected.includes(s.id) ? [...selected] : objectIds, clicked: s.id, last: raw, sx: e.clientX, sy: e.clientY, moved: false };
+      drag.current = { mode: "move", ids: allowed, clicked: s.id, last: raw, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     /* فضای خالی: شروع باکس انتخابگر (پاک‌سازی در pointerup اگر کلیک بود) */
@@ -3256,7 +3264,7 @@ export default function ProfileEditor({
         if (moveSession.editBase && moveSession.editVertexIds && edit) {
           const moving = new Set(moveSession.editVertexIds);
           onEditBuf({ ...edit, verts: moveSession.editBase.map((v) => moving.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dr } : v) }, false);
-        } else onSegs(moveSession.base.map((s) => moveSession.ids.includes(s.id) ? moveSeg(s, dz, dr) : s), false);
+        } else onSegs(movePolylineSelection(moveSession.base,moveSession.ids,dz,dr), false);
       }
       return;
     }
@@ -3536,7 +3544,7 @@ export default function ProfileEditor({
          بیرون خام بمانند، درحالی‌که انتقال کل خط از مرز عبور نمی‌کند. */
       const dz = Math.min(L - maxZ, Math.max(-minZ, requestedDz));
       const dr = Math.min(R - maxR, Math.max(-minR, requestedDr));
-      onSegs(segs.map((s) => (d.ids.includes(s.id) ? moveSeg(s, dz, dr) : s)), false);
+      onSegs(movePolylineSelection(segs,d.ids,dz,dr), false);
     }
   };
 
@@ -3914,7 +3922,8 @@ export default function ProfileEditor({
         } else if (e.ctrlKey || e.metaKey) {
           onSelected(selected.filter((x) => !objectIds.includes(x)));
         } else {
-          onSelected(objectIds);
+          const wholePolyline=objectIds.length>1&&objectIds.every(item=>selected.includes(item));
+          onSelected(wholePolyline?[id]:objectIds);
         }
         return;
       }
@@ -5607,7 +5616,7 @@ export default function ProfileEditor({
                 const moving = new Set(moveSession.editVertexIds);
                 onEditBuf({ ...edit, verts: moveSession.editBase.map((v) => moving.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dr } : v) }, true);
               } else {
-                const next = moveSession.base.map((s) => moveSession.ids.includes(s.id) ? moveSeg(s, dz, dr) : s);
+                const next = movePolylineSelection(moveSession.base,moveSession.ids,dz,dr);
                 onSegs(next, true);
               }
               setLastMove({ dz, dr }); setMoveBox(null); setMoveSession(null);
