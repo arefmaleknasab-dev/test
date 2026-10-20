@@ -4994,17 +4994,17 @@ export default function ProfileEditor({
                 از Gaussian blur پرهزینه برای تک‌تک Segmentها استفاده نمی‌شود. */}
             {selectedLinesPath && (
               <>
-                {!iso && <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
+                {!iso && <path d={selectedLinesPath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
                 {showPathBySpeed ? [...selectedSpeedPaths].map(([color, d]) => (
                   <path key={color} d={d} fill="none" stroke={color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3.2} strokeLinecap="round" pointerEvents="none" />
                 )) : (
-                  <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3} strokeLinecap="round" pointerEvents="none" />
+                  <path d={selectedLinesPath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3} strokeLinecap="round" pointerEvents="none" />
                 )}
               </>
             )}
             {/* خط Active فقط با رنگ آبی روشن مشخص می‌شود؛ بدون Glow یا تغییر ضخامت. */}
             {activeLinePath && (
-              <path d={activeLinePath} fill="none" stroke="#7bb8ff" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={activeLineStrokeWidth} strokeLinecap="round" pointerEvents="none" />
+              <path d={activeLinePath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={activeLineStrokeWidth} strokeLinecap="round" pointerEvents="none" />
             )}
             {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
             {rangePreviewPath && (
@@ -5043,8 +5043,8 @@ export default function ProfileEditor({
             return <>
               <path d={pathOf(divided.outer, true)} fill="none" stroke={split.swapped ? "#4cc9f0" : "#e3a94e"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
               <path d={pathOf(divided.inner, true)} fill="none" stroke={split.swapped ? "#e3a94e" : "#4cc9f0"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
-              <path d={pathOf(divided.outer)} fill="none" stroke={split.swapped ? guideLineColor : profileColor} strokeWidth={2.4} strokeLinecap="round" />
-              <path d={pathOf(divided.inner)} fill="none" stroke={split.swapped ? profileColor : guideLineColor} strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.outer)} fill="none" stroke={split.swapped ? "#4cc9f0" : profileColor} strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.inner)} fill="none" stroke={split.swapped ? profileColor : "#4cc9f0"} strokeWidth={2.4} strokeLinecap="round" />
             </>;
           })()}
           {/* بدون Split، رنگ معمول هر المان استفاده می‌شود. */}
@@ -5056,7 +5056,7 @@ export default function ProfileEditor({
             const sel = selected.includes(s.id);
             const hov = selPoints.length === 0 && hoverId === s.id;
             const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
-            const base = segSide.get(s.id) === "inner" ? guideLineColor : profileColor;
+            const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : profileColor;
             return (
               <path
                 key={s.id}
@@ -5396,7 +5396,7 @@ export default function ProfileEditor({
           const [x2, y2] = P(mirrorSession.cursor!.z, mirrorSession.cursor!.r);
           const horizontal = Math.abs(mirrorSession.cursor!.r - mirrorSession.p1!.r) < 1e-9;
           const vertical = Math.abs(mirrorSession.cursor!.z - mirrorSession.p1!.z) < 1e-9;
-          const guideColor = horizontal ? "#754052" : vertical ? "#3b7373" : guideLineColor;
+          const guideColor = horizontal ? "#754052" : vertical ? "#3b7373" : "#28dfc2";
           return (
             <g pointerEvents="none">
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
@@ -5410,7 +5410,7 @@ export default function ProfileEditor({
         {copySession && (() => {
           const [x1, y1] = P(copySession.origin.z, copySession.origin.r);
           const [x2, y2] = P(copySession.pointer.z, copySession.pointer.r);
-          const guideColor = copySession.axis === "x" ? "#754052" : copySession.axis === "y" ? "#3b7373" : guideLineColor;
+          const guideColor = copySession.axis === "x" ? "#754052" : copySession.axis === "y" ? "#3b7373" : "#28dfc2";
           return (
             <g pointerEvents="none">
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
@@ -5445,7 +5445,7 @@ export default function ProfileEditor({
             ? "#754052"
             : moveSession.axis === "y"
               ? "#3b7373"
-              : moveSession.mode === "absolute" ? "#a99cff" : guideLineColor;
+              : moveSession.mode === "absolute" ? "#a99cff" : "#28dfc2";
           return (
             <g pointerEvents="none">
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
