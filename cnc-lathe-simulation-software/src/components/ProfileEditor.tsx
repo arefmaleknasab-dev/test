@@ -2949,9 +2949,19 @@ export default function ProfileEditor({
           const segment=segs.find(item=>item.id===point.segId);
           return !!segment&&dist(segment[point.part],anchor)<1e-8;
         });
-        /* انتخاب دسته فقط از طریق drag.current برجسته می‌شود؛ افزودن آن به
-           selPoints باعث می‌شد منطق جابه‌جایی چندنقطه‌ای خود رأس را هم حرکت دهد. */
-        if(!anchorSelected||!(drawingHandle.part==="c1"||drawingHandle.part==="c2"))setSelPoints([drawingHandle]);
+        const clickedPoint=owner?.[drawingHandle.part];
+        const drawingPointSelected=!!clickedPoint&&selPoints.some(point=>{
+          const segment=segs.find(item=>item.id===point.segId),selectedPoint=segment?.[point.part];
+          if(!selectedPoint)return false;
+          /* دو سر هم‌مکان یک رأس Polyline یک نقطهٔ هندسی‌اند؛ دسته و Via فقط
+             با شناسهٔ خودشان عضو انتخاب چندنقطه‌ای محسوب می‌شوند. */
+          return (drawingHandle.part==="a"||drawingHandle.part==="b")&&(point.part==="a"||point.part==="b")
+            ? dist(selectedPoint,clickedPoint)<1e-8
+            : point.segId===drawingHandle.segId&&point.part===drawingHandle.part;
+        });
+        /* اگر نقطهٔ زیر نشانگر از قبل عضو انتخاب چندنقطه‌ای است، انتخاب را دست
+           نمی‌زنیم تا Drag مشترک در همهٔ ابزارهای رسم فعال بماند. */
+        if(!drawingPointSelected&&(!anchorSelected||!(drawingHandle.part==="c1"||drawingHandle.part==="c2")))setSelPoints([drawingHandle]);
       }
       return;
     }
