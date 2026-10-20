@@ -2046,15 +2046,21 @@ export default function ProfileEditor({
       const vertex=source[pick.part],key=`${source.polylineId}:${vertex.z}:${vertex.r}`;if(done.has(key))continue;done.add(key);
       const incident=next.filter(s=>s.polylineId===source.polylineId&&(dist(s.a,vertex)<1e-8||dist(s.b,vertex)<1e-8));
       if(incident.length<2)continue;
-      const others=incident.slice(0,2).map(s=>dist(s.a,vertex)<1e-8?s.b:s.a);
-      const dz=others[1].z-others[0].z,dr=others[1].r-others[0].r,len=Math.hypot(dz,dr)||1;
-      const arm=Math.min(dist(vertex,others[0]),dist(vertex,others[1]))/3;
-      const ux=dz/len,ur=dr/len;
+      const pair=incident.slice(0,2);
+      const others=pair.map(s=>dist(s.a,vertex)<1e-8?s.b:s.a);
+      const l0=dist(vertex,others[0]),l1=dist(vertex,others[1]),arm=Math.min(l0,l1)/3;
+      const u0={z:(others[0].z-vertex.z)/(l0||1),r:(others[0].r-vertex.r)/(l0||1)};
+      const u1={z:(others[1].z-vertex.z)/(l1||1),r:(others[1].r-vertex.r)/(l1||1)};
+      /* نیمساز جهت‌های ورودی/خروجی، مستقل از طول اضلاع، محور پایدار دسته‌هاست.
+         علامت براساس جایگاه Segment در جفت تعیین می‌شود تا دو دسته حتی در
+         گوشه‌های تند، برگشت مسیر و اضلاع هم‌اندازه دقیقاً روبه‌روی هم باشند. */
+      let tz=u0.z-u1.z,tr=u0.r-u1.r,tl=Math.hypot(tz,tr);
+      if(tl<1e-9){tz=-u0.r;tr=u0.z;tl=Math.hypot(tz,tr)||1;}
+      const ux=tz/tl,ur=tr/tl;
       next=next.map(s=>{
-        if(!incident.some(i=>i.id===s.id))return s;
+        const pairIndex=pair.findIndex(item=>item.id===s.id);if(pairIndex<0)return s;
         const atA=dist(s.a,vertex)<1e-8;
-        const other=atA?s.b:s.a;
-        const sign=((other.z-vertex.z)*ux+(other.r-vertex.r)*ur)>=0?1:-1;
+        const sign=pairIndex===0?1:-1;
         const handle={z:vertex.z+ux*arm*sign,r:vertex.r+ur*arm*sign};
         /* فقط رأس انتخاب‌شده دسته می‌گیرد. کنترل سمت دیگر Segment دقیقاً روی
            نقطهٔ انتهایی می‌ماند تا روی دو رأس هم‌جوار منحنی کنترلی ایجاد نشود.
