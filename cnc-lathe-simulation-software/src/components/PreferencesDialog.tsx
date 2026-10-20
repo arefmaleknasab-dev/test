@@ -44,7 +44,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   lineWidth: 2, toolbarScale: 1, keepEditDraft: false, showCanvasPaintTool: true, useWindowsSaveDialog: false, rightClickToolToggle: true, deferMarqueeControlPoints: false, historyLimit: 40,
   showHeaderImportAi: true, showHeaderExportDxf: true, showHeaderCopyGcode: true, showHeaderDownloadNc: true,
   shortcuts: { select:"v", move:"m", rotate:"r", boxscale:"b", scale:"s", copy:"c", mirror:"i", fillet:"f", line:"l", polyline:"p", quad:"q", cubic:"u", arc:"a", split:"x" },
-  postProcessor: "fanuc", gcodeUnits: "mm", sequenceNumbers: true, gcodeFormat: "modal", continuousPaths: true, safeBottomInnerLink: true, innerBoundaryRoutingMode: "linear", optimizeFeeds: true, spreadRapid: false, spindleSpeed: 1500,
+  postProcessor: "fanuc", gcodeUnits: "mm", sequenceNumbers: true, gcodeFormat: "modal", continuousPaths: true, safeBottomInnerLink: true, innerBoundaryRoutingMode: "offsetOptimized", optimizeFeeds: true, spreadRapid: false, spindleSpeed: 1500,
   operationFeeds: { round:2000, face:100, rough:2000, roughz:2000, copy:2000, offset:500, finish:100, bottom:300, bore:300, boreoff:300, borefin:150 },
 };
 
