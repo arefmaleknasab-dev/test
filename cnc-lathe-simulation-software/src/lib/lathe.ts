@@ -1885,21 +1885,22 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            کوتاه خروج/ورود پاس مستثناست؛ در تنگنا فاصله نیم‌میلی‌متری تا صفر کم می‌شود. */
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
           const base=planBaseLink(from,to);if(!base)return null;
-          const original=[from,...base];
-          for(let clearance=3;clearance>=-.001;clearance-=.5){
-            const c=Math.max(0,clearance);if(c<=0)return base;
-            /* آفست G0 فقط رو به محور (-X) مجاز است. مسیر پایه با گام‌های کوتاه
-               نمونه‌برداری می‌شود و هسته مسیر به‌اندازه کلیرنس در -R جابه‌جا
-               می‌شود؛ بنابراین مسیریاب هرگز برای گرفتن کلیرنس به +X نمی‌رود. */
-            const dense:AllowedPoint[]=[from],lengths=original.slice(1).map((q,i)=>Math.hypot(q.z-original[i].z,q.r-original[i].r)),total=lengths.reduce((s,v)=>s+v,0);let passed=0;
-            for(let k=0;k<lengths.length;k++){const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/3));for(let i=1;i<=n;i++){const t=i/n,along=passed+lengths[k]*t,required=Math.min(c,along,total-along),q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};dense.push({z:q.z,r:q.r-required});}passed+=lengths[k];}
-            /* آفست فقط در -X ساخته می‌شود، ولی تمام ساق‌های آن همچنان باید
-               داخل محدوده آبی بمانند. اگر این مقدار در یک فرورفتگی جا نشود،
-               حلقه مقدار کلیرنس را نیم‌میلی‌متر کاهش می‌دهد. */
-            if(dense.some(q=>q.r<-.001)||dense.slice(1).some((q,i)=>!allowedLink(dense[i],q)))continue;
-            const out:AllowedPoint[]=[];for(let i=1;i<dense.length;i++){const a=out.length?out[out.length-1]:from,b=dense[i],next=dense[i+1];if(next){const cross=(b.z-a.z)*(next.r-b.r)-(b.r-a.r)*(next.z-b.z);if(Math.abs(cross)<1e-7)continue;}out.push(b);}return out;
+          const original=[from,...base],lengths=original.slice(1).map((q,i)=>Math.hypot(q.z-original[i].z,q.r-original[i].r)),total=lengths.reduce((s,v)=>s+v,0),out:AllowedPoint[]=[];let passed=0,previous=from;
+          /* آفست برای هر بخش مستقل است: هر نمونه ابتدا ۳mm به سمت -X می‌رود و
+             فقط همان نمونه، در صورت خروج از محدوده آبی، پله‌ای تا صفر برمی‌گردد.
+             بنابراین یک گلوگاه دیگر آفست تمام مسیر را صفر نمی‌کند. */
+          for(let k=0;k<lengths.length;k++){
+            const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/1.5));
+            for(let i=1;i<=n;i++){
+              const t=i/n,along=passed+lengths[k]*t,ramp=Math.min(3,along,total-along),q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};let chosen:AllowedPoint|null=null;
+              for(let shift=Math.floor((ramp+1e-9)*2)/2;shift>=0;shift-=.5){const candidate={z:q.z,r:q.r-shift};if(candidate.r>=-.001&&allowedPoint(candidate.r,candidate.z)&&allowedLink(previous,candidate)){chosen=candidate;break;}}
+              if(!chosen){const bridge=planBaseLink(previous,q);if(bridge)out.push(...bridge);else out.push(q);previous=q;continue;}
+              out.push(chosen);previous=chosen;
+            }
+            passed+=lengths[k];
           }
-          return base;
+          /* نقاط هم‌خط حذف می‌شوند، ولی تنها وقتی اتصال مستقیم همچنان داخل محدوده باشد. */
+          const compact:AllowedPoint[]=[];for(const q of out){while(compact.length>=2){const a=compact[compact.length-2],b=compact[compact.length-1],cross=(b.z-a.z)*(q.r-b.r)-(b.r-a.r)*(q.z-b.z);if(Math.abs(cross)>1e-7||!allowedLink(a,q))break;compact.pop();}compact.push(q);}return compact;
         };
 
         /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
