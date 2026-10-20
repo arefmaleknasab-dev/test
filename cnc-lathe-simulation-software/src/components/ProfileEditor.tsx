@@ -2032,9 +2032,10 @@ export default function ProfileEditor({
 
   const convertSelectedPolylineVertices=(fallback:{segId:number;part:"a"|"b"})=>{
     const endpointSelection=selPoints.filter((p):p is {segId:number;part:"a"|"b"}=>p.part==="a"||p.part==="b");
-    const fallbackSelected=endpointSelection.some(p=>p.segId===fallback.segId&&p.part===fallback.part);
-    /* راست‌کلیک روی نقطهٔ انتخاب‌نشده فقط همان نقطه را تبدیل می‌کند؛ تنها وقتی
-       خود نقطه عضو انتخاب باشد، عملیات روی مجموعهٔ نقاط انتخابی اعمال می‌شود. */
+    const fallbackSeg=segs.find(s=>s.id===fallback.segId),fallbackPoint=fallbackSeg?.[fallback.part];
+    const fallbackSelected=!!fallbackPoint&&endpointSelection.some(p=>{const s=segs.find(x=>x.id===p.segId);return !!s&&dist(s[p.part],fallbackPoint)<1e-8;});
+    /* نمایش/انتخاب رأس مستقل است، اما دو نمایش هم‌مکانِ یک رأس Polyline برای
+       تشخیص راست‌کلیک همان یک رأس هندسی محسوب می‌شوند. */
     const points=fallbackSelected?endpointSelection:[fallback];
     let next=segs.map(s=>({...s}));
     const done=new Set<string>();
@@ -2057,7 +2058,7 @@ export default function ProfileEditor({
         return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:baseC1),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:baseC2):handle,[atA?"smoothA":"smoothB"]:true};
       });
     }
-    commit(next);setCtxMenu(null);
+    commit(next);setSelPoints(points);onSelected([]);setCtxMenu(null);
   };
 
   const convertPolylineEdge=(id:number,kind:"arc"|"cubic")=>{
@@ -4367,7 +4368,8 @@ export default function ProfileEditor({
 
   /* المان‌هایی که دسته‌های کنترل و نقاطشان نمایش داده می‌شود: یا المان انتخاب شده
      یا حداقل یک نقطه‌اش مستقل انتخاب شده است */
-  const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id));
+  const selectedEndpointCoords=selPoints.flatMap(point=>{if(point.part!=="a"&&point.part!=="b")return [];const segment=segs.find(s=>s.id===point.segId);return segment?[segment[point.part]]:[];});
+  const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id) || selectedEndpointCoords.some(point=>(s.smoothA&&dist(s.a,point)<1e-8)||(s.smoothB&&dist(s.b,point)<1e-8)));
 
   /* پیش‌نمایش ترسیم */
   const straightDrawing = (tool === "line" && draft.length === 1) || ((tool === "polyline" || tool === "paint") && draft.length >= 1);
@@ -4952,15 +4954,18 @@ export default function ProfileEditor({
             const pointIsActive = (part: HandleRef["part"]) =>
               selPoints.some((point) => point.segId === s.id && point.part === part) ||
               (drag.current?.mode === "handle" && drag.current.ref.segId === s.id && drag.current.ref.part === part);
+            const endpointChosen=(part:"a"|"b")=>selPoints.some(point=>{if(point.part!=="a"&&point.part!=="b")return false;const source=segs.find(x=>x.id===point.segId);return !!source&&dist(source[point.part],s[part])<1e-8;});
+            const showC1=selected.includes(s.id)||pointIsActive("c1")||(!!s.smoothA&&endpointChosen("a"));
+            const showC2=selected.includes(s.id)||pointIsActive("c2")||(!!s.smoothB&&endpointChosen("b"));
             return (
               <g key={`h${s.id}`}>
-                {s.c1 && (
+                {s.c1 && showC1 && (
                   <>
                     <line x1={ax} y1={ay} x2={P(s.c1.z, s.c1.r)[0]} y2={P(s.c1.z, s.c1.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
                   </>
                 )}
-                {s.c2 && (
+                {s.c2 && showC2 && (
                   <>
                     <line x1={bx} y1={by} x2={P(s.c2.z, s.c2.r)[0]} y2={P(s.c2.z, s.c2.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
