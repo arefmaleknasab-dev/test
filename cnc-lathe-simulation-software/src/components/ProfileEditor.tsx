@@ -2065,26 +2065,37 @@ export default function ProfileEditor({
     commit(next);setCtxMenu(null);
   };
 
-  const simplifyPolylineVertex=(fallback:{segId:number;part:"a"|"b"})=>{
-    const source=segs.find(s=>s.id===fallback.segId);if(!source||source.polylineId==null)return;
-    const vertex=source[fallback.part];
-    const next=segs.map(segment=>{
-      if(segment.polylineId!==source.polylineId||segment.kind!=="cubic")return segment;
-      const atA=dist(segment.a,vertex)<1e-8,atB=dist(segment.b,vertex)<1e-8;if(!atA&&!atB)return segment;
-      const c1=atA?{...segment.a}:segment.c1;
-      const c2=atB?{...segment.b}:segment.c2;
-      const noStart=!c1||dist(c1,segment.a)<1e-8,noEnd=!c2||dist(c2,segment.b)<1e-8;
-      return noStart&&noEnd?{...segment,kind:"line" as const,c1:undefined,c2:undefined}:{...segment,c1,c2};
-    });
-    commit(next);setSelPoints([fallback]);onSelected([]);setCtxMenu(null);
+  const selectedVerticesFor=(fallback:{segId:number;part:"a"|"b"})=>{
+    const endpoints=selPoints.filter((point):point is {segId:number;part:"a"|"b"}=>point.part==="a"||point.part==="b");
+    const source=segs.find(segment=>segment.id===fallback.segId),vertex=source?.[fallback.part];
+    const clickedIsSelected=!!vertex&&endpoints.some(point=>{const owner=segs.find(segment=>segment.id===point.segId);return !!owner&&dist(owner[point.part],vertex)<1e-8;});
+    return clickedIsSelected?endpoints:[fallback];
   };
 
-  const vertexHasControl=(segId:number,part:"a"|"b")=>{
-    const source=segs.find(s=>s.id===segId);if(!source||source.polylineId==null)return false;
-    const vertex=source[part];
+  const simplifyPolylineVertex=(fallback:{segId:number;part:"a"|"b"})=>{
+    const points=selectedVerticesFor(fallback);
+    let next=segs.map(segment=>({...segment}));
+    const done=new Set<string>();
+    for(const point of points){
+      const source=next.find(segment=>segment.id===point.segId);if(!source||source.polylineId==null)continue;
+      const vertex=source[point.part],key=`${source.polylineId}:${vertex.z}:${vertex.r}`;if(done.has(key))continue;done.add(key);
+      next=next.map(segment=>{
+        if(segment.polylineId!==source.polylineId||segment.kind!=="cubic")return segment;
+        const atA=dist(segment.a,vertex)<1e-8,atB=dist(segment.b,vertex)<1e-8;if(!atA&&!atB)return segment;
+        const c1=atA?{...segment.a}:segment.c1,c2=atB?{...segment.b}:segment.c2;
+        const noStart=!c1||dist(c1,segment.a)<1e-8,noEnd=!c2||dist(c2,segment.b)<1e-8;
+        return noStart&&noEnd?{...segment,kind:"line" as const,c1:undefined,c2:undefined}:{...segment,c1,c2};
+      });
+    }
+    commit(next);setSelPoints(points);onSelected([]);setCtxMenu(null);
+  };
+
+  const vertexHasControl=(segId:number,part:"a"|"b")=>selectedVerticesFor({segId,part}).some(point=>{
+    const source=segs.find(segment=>segment.id===point.segId);if(!source||source.polylineId==null)return false;
+    const vertex=source[point.part];
     return segs.some(segment=>segment.polylineId===source.polylineId&&segment.kind==="cubic"&&
       ((dist(segment.a,vertex)<1e-8&&!!segment.c1&&dist(segment.a,segment.c1)>1e-8)||(dist(segment.b,vertex)<1e-8&&!!segment.c2&&dist(segment.b,segment.c2)>1e-8)));
-  };
+  });
 
   const convertPolylineEdge=(id:number,kind:"arc"|"cubic")=>{
     commit(segs.map(segment=>{
