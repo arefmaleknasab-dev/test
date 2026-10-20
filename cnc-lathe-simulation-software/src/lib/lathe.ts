@@ -2053,6 +2053,16 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             /* نقطه پایان G0 می‌تواند جلوتر از ۱mm باشد؛ ورود از آن نقطه تا عمق
                واقعی پاس بعد فقط در حلقه بعد و با G1 انجام می‌شود. */
             if(allowedLink(from,b))return [b];
+            /* اگر +X مستقیم از مرز آبی بیرون می‌رود، همان حرکت سریع با تغییر
+               هم‌زمان Y مورب می‌شود. نقطه میانی فقط از بازه‌های مجاز همین X
+               انتخاب می‌شود و ضلع دوم نیز پیش از تولید کامل بررسی می‌گردد. */
+            const candidates:AllowedPoint[]=[];
+            for(const iv of intervalsAt(z)){
+              const clamp=(r:number)=>Math.max(iv.a+.001,Math.min(iv.b-.001,r));
+              for(const r of [clamp(from.r),clamp(to.r),(iv.a+iv.b)/2])if(!candidates.some(q=>Math.abs(q.r-r)<1e-6))candidates.push({r,z});
+            }
+            candidates.sort((u,v)=>Math.abs(u.r-to.r)-Math.abs(v.r-to.r));
+            for(const mid of candidates)if(allowedLink(from,mid)&&allowedLink(mid,b))return [mid,b];
             if(allowedLink(from,a)&&allowedLink(a,b))return [a,b];
           }
           return null;
