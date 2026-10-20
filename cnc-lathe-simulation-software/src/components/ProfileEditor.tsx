@@ -2930,7 +2930,9 @@ export default function ProfileEditor({
       /* انتخاب نقطه مستقل از انتخاب Segment است. بدون کلید کمکی فقط خود نقطه
          فعال می‌شود؛ نقاط هم‌مکان صرفاً اتصال هندسی خود را حفظ می‌کنند. */
       if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
-        onSelected([]);
+        /* اگر نقطه/دسته متعلق به Polyline انتخاب‌شده است، Drag آن نباید انتخاب
+           کل Polyline را پاک کند؛ انتخاب فقط برای هندسهٔ خارج از گروه عوض می‌شود. */
+        if(!selected.includes(drawingHandle.segId))onSelected([]);
         /* هنگام گرفتن دستهٔ Bézier متعلق به رأس انتخاب‌شده، انتخاب رأس را حفظ
            می‌کنیم تا خود نقطه و دستهٔ مقابل در تمام مدت Drag قابل مشاهده بمانند. */
         const owner=segs.find(segment=>segment.id===drawingHandle.segId);
