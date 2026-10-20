@@ -918,7 +918,7 @@ export default function ProfileEditor({
   const [selectedPaintPoints,setSelectedPaintPoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const [paintMarqueeHits,setPaintMarqueeHits]=useState<number[]>([]);
   const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
-  const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
+  const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;points?:Array<{id:number;point:"a"|"b"}>;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
   useEffect(()=>{localStorage.setItem(paintStorageKey,JSON.stringify(paintEdges));},[paintEdges,paintStorageKey]);
   const importReferenceFiles=async(files:File[],drop?:SPoint)=>{const valid=files.filter(file=>file.type.startsWith("image/")||/\.(avif|bmp|gif|jpe?g|png|svg|webp|ico|tiff?)$/i.test(file.name)),added=await Promise.all(valid.map(file=>new Promise<ReferenceImage|null>(resolve=>{const reader=new FileReader();reader.onerror=()=>resolve(null);reader.onload=()=>{const src=String(reader.result||""),probe=new Image();probe.onerror=()=>resolve(null);probe.onload=()=>{const width=100,height=100*(probe.naturalHeight||1)/(probe.naturalWidth||1);resolve({id:Date.now()+Math.random(),src,name:file.name,z:drop?drop.z-width/2:(params.blankL-width)/2,r:drop?drop.r+height/2:height/2,width,height,locked:false,black:0,gamma:1,white:255,opacity:.65,aspectLocked:true,originalRatio:width/height,grayscale:false});};probe.src=src;};reader.readAsDataURL(file);})));const images=added.filter((x):x is ReferenceImage=>!!x);if(images.length){commitImages([...referenceImages,...images]);setSelectedImageId(images[images.length-1].id);}};
   const addPaintDraft=(points:SPoint[])=>{
@@ -963,13 +963,17 @@ export default function ProfileEditor({
         const selectedBases=d.base.filter(x=>d.ids.includes(x.id));
         /* نقاط مشترک خطوط مجاور همراه نقطه اتصال حرکت می‌کنند، اما سر دیگر
            خط قبل/بعد ثابت می‌ماند؛ بنابراین Polyline کش می‌آید و گسسته نمی‌شود. */
-        const movingAnchors:SPoint[]=d.point
-          ? selectedBases.filter(x=>x.id===d.pointId).map(x=>x[d.point!])
+        const movingAnchors:SPoint[]=d.points?.length
+          ? d.points.flatMap(point=>{const edge=d.base.find(item=>item.id===point.id);return edge?[edge[point.point]]:[];})
           : selectedBases.flatMap(x=>[x.a,x.b]);
         const matches=(p:SPoint)=>movingAnchors.some(q=>Math.hypot(p.z-q.z,p.r-q.r)<1e-6);
+        const pointChosen=(id:number,point:"a"|"b")=>!!d.points?.some(item=>item.id===id&&item.point===point);
         return all.map(edge=>{
           const base=d.base.find(x=>x.id===edge.id);if(!base)return edge;
-          if(d.point&&d.pointId===edge.id)return {...base,[d.point]:{z:base[d.point].z+dz,r:base[d.point].r+dr}};
+          if(d.points?.length)return {...base,
+            a:(pointChosen(edge.id,"a")||matches(base.a))?{z:base.a.z+dz,r:base.a.r+dr}:base.a,
+            b:(pointChosen(edge.id,"b")||matches(base.b))?{z:base.b.z+dz,r:base.b.r+dr}:base.b,
+          };
           if(d.ids.includes(edge.id))return {...base,a:{z:base.a.z+dz,r:base.a.r+dr},b:{z:base.b.z+dz,r:base.b.r+dr}};
           return {...base,
             a:matches(base.a)?{z:base.a.z+dz,r:base.a.r+dr}:base.a,
@@ -5425,10 +5429,12 @@ export default function ProfileEditor({
           const canManipulate=tool==="select"||tool==="move"||tool==="paint";
           const begin=(e:ReactPointerEvent<SVGElement>,point?:"a"|"b")=>{
             if(e.button!==0||!canManipulate)return;e.preventDefault();e.stopPropagation();setPaintMenu(null);
-            const ids=point?[edge.id]:(e.shiftKey?(active?selectedPaint:selectedPaint.concat(edge.id)):(active?selectedPaint:[edge.id]));
-            setSelectedPaint(ids);setSelectedPaintPoints(point?[{id:edge.id,point}]:[]);onSelected([]);
+            const clickedPointSelected=!!point&&selectedPaintPoints.some(item=>item.id===edge.id&&item.point===point);
+            const points=point?(clickedPointSelected?selectedPaintPoints:[{id:edge.id,point}]):[];
+            const ids=point?[...new Set(points.map(item=>item.id))]:(e.shiftKey?(active?selectedPaint:selectedPaint.concat(edge.id)):(active?selectedPaint:[edge.id]));
+            setSelectedPaint(ids);setSelectedPaintPoints(points);onSelected([]);
             const rect=svgRef.current!.getBoundingClientRect();
-            paintDrag.current={ids,point,pointId:point?edge.id:undefined,start:{z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s},base:paintEdges.map(x=>({...x,a:{...x.a},b:{...x.b}}))};
+            paintDrag.current={ids,point,pointId:point?edge.id:undefined,points:point?points:undefined,start:{z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s},base:paintEdges.map(x=>({...x,a:{...x.a},b:{...x.b}}))};
           };
           return <g key={edge.id}>
             {highlighted&&<line x1={ax} y1={ay} x2={bx} y2={by} stroke="#fff" strokeOpacity={.9} strokeWidth={profileLineWidth+5} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />}
