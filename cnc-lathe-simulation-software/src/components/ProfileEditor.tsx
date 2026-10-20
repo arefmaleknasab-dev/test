@@ -3643,6 +3643,11 @@ export default function ProfileEditor({
         if (d.mode === "eline" && d.holder2) {
           const fin = normalizeEditBuf(d.holder2.latestVerts, edit.lines);
           onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, holder2: d.holder2.next }, true);
+        } else if(d.mode==="evert") {
+          /* رأس جداشدهٔ خط انتخابی نباید normalizeEditBuf شود؛ نرمال‌ساز مسیر
+             عمداً va هر خط را دوباره به vb خط قبلی وصل می‌کند و نقطه را به محل
+             اصلی بازمی‌گرداند. هندسه زنده قبلاً اعتبارسنجی شده و مستقیم ثبت می‌شود. */
+          onEditBuf({ ...edit }, true);
         } else setBufGeom(edit.verts, edit.lines, true);
       }
       return;
