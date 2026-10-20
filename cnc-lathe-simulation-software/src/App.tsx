@@ -111,6 +111,9 @@ export default function App() {
   const [showAiImport, setShowAiImport] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
   const [imageImportRequest,setImageImportRequest]=useState(0);
+  const imageHistoryApi=useRef<{undo:()=>void;redo:()=>void;canUndo:boolean;canRedo:boolean}|null>(null);
+  const [imageHistoryState,setImageHistoryState]=useState({canUndo:false,canRedo:false});
+  const registerImageHistory=useCallback((api:{undo:()=>void;redo:()=>void;canUndo:boolean;canRedo:boolean})=>{imageHistoryApi.current=api;setImageHistoryState(s=>s.canUndo===api.canUndo&&s.canRedo===api.canRedo?s:{canUndo:api.canUndo,canRedo:api.canRedo});},[]);
   const [saveAsName,setSaveAsName]=useState<string|null>(null);
   const saveAsResolver=useRef<((name:string|null)=>void)|null>(null);
   const [preferences, setPreferences] = useState<AppPreferences>(() => {
@@ -485,6 +488,8 @@ export default function App() {
     commitRef.current = null;
     restore(future.current.pop()!);
   };
+  const undoAny=()=>imageHistoryApi.current?.canUndo?imageHistoryApi.current.undo():undo();
+  const redoAny=()=>imageHistoryApi.current?.canRedo?imageHistoryApi.current.redo():redo();
 
   /* ---------- حالت ویرایش مسیر ---------- */
   const openEdit = () => {
@@ -976,10 +981,10 @@ export default function App() {
         onExportGcode={downloadGCode}
         onExportDxf={downloadDxf}
         onPreferences={() => setShowPreferences(true)}
-        onUndo={undo}
-        onRedo={redo}
-        canUndo={past.current.length > 0}
-        canRedo={future.current.length > 0}
+        onUndo={undoAny}
+        onRedo={redoAny}
+        canUndo={past.current.length > 0||imageHistoryState.canUndo}
+        canRedo={future.current.length > 0||imageHistoryState.canRedo}
       />
       {/* ---------- سربرگ ---------- */}
       <header className="relative z-40 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-edge bg-panel/85 px-3.5 py-2 pl-14 backdrop-blur">
@@ -1005,10 +1010,10 @@ export default function App() {
         <div className="flex items-center gap-1.5">
           <WindowMenu items={menuItems} onToggle={togglePanel} onReset={resetLayout} />
           <span className="mx-1 h-5 w-px bg-edge" />
-          <button className="btn !px-2 !py-1.5" onClick={redo} disabled={future.current.length === 0} title="بازانجام (Ctrl+Y)">
+          <button className="btn !px-2 !py-1.5" onClick={redoAny} disabled={future.current.length === 0&&!imageHistoryState.canRedo} title="بازانجام (Ctrl+Y)">
             <IconArrowRight className="h-4 w-4" />
           </button>
-          <button className="btn !px-2 !py-1.5" onClick={undo} disabled={past.current.length === 0} title="واگرد (Ctrl+Z)">
+          <button className="btn !px-2 !py-1.5" onClick={undoAny} disabled={past.current.length === 0&&!imageHistoryState.canUndo} title="واگرد (Ctrl+Z)">
             <IconArrowLeft className="h-4 w-4" />
           </button>
           <span className="mx-1 h-5 w-px bg-edge" />
@@ -1088,6 +1093,7 @@ export default function App() {
               referenceImages={referenceImages}
               onReferenceImages={setReferenceImages}
               imageImportRequest={imageImportRequest}
+              registerImageHistory={registerImageHistory}
               segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
               edit={editOpen ? editBuf : null}
