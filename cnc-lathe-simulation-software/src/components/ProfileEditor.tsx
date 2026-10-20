@@ -2087,7 +2087,8 @@ export default function ProfileEditor({
         return noStart&&noEnd?{...segment,kind:"line" as const,c1:undefined,c2:undefined}:{...segment,c1,c2};
       });
     }
-    commit(next);setSelPoints(points);onSelected([]);setCtxMenu(null);
+    /* تغییر نوع رأس نباید انتخاب فعلی Polyline را از بین ببرد. */
+    commit(next);setSelPoints(points);setCtxMenu(null);
   };
 
   const vertexHasControl=(segId:number,part:"a"|"b")=>selectedVerticesFor({segId,part}).some(point=>{
