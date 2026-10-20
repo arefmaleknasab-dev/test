@@ -879,6 +879,11 @@ export default function ProfileEditor({
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
   const [selectedImageId,setSelectedImageId]=useState<number|null>(null);
   const imageInputRef=useRef<HTMLInputElement>(null);
+  const imagePast=useRef<ReferenceImage[][]>([]),imageFuture=useRef<ReferenceImage[][]>([]),imageGestureBase=useRef<ReferenceImage[]|null>(null),imageHistoryFocus=useRef(false);
+  const cloneImages=(images:ReferenceImage[])=>images.map(img=>({...img}));
+  const commitImages=(next:ReferenceImage[])=>{imageHistoryFocus.current=true;imagePast.current.push(cloneImages(referenceImages));if(imagePast.current.length>100)imagePast.current.shift();imageFuture.current=[];onReferenceImages(next);};
+  const undoImage=()=>{const prev=imagePast.current.pop();if(!prev)return;imageFuture.current.push(cloneImages(referenceImages));onReferenceImages(cloneImages(prev));};
+  const redoImage=()=>{const next=imageFuture.current.pop();if(!next)return;imagePast.current.push(cloneImages(referenceImages));onReferenceImages(cloneImages(next));};
   const lastImageImportRequest=useRef(imageImportRequest);
   useEffect(()=>{if(imageImportRequest!==lastImageImportRequest.current){lastImageImportRequest.current=imageImportRequest;imageInputRef.current?.click();}},[imageImportRequest]);
   const imageDrag=useRef<{id:number;start:SPoint;base:ReferenceImage;mode:"move"|"rotate"|"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w";startAngle?:number}|null>(null);
@@ -896,7 +901,7 @@ export default function ProfileEditor({
   const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
   useEffect(()=>{localStorage.setItem(paintStorageKey,JSON.stringify(paintEdges));},[paintEdges,paintStorageKey]);
-  const importReferenceFiles=async(files:File[])=>{const valid=files.filter(file=>file.type.startsWith("image/")||/\.(avif|bmp|gif|jpe?g|png|svg|webp|ico|tiff?)$/i.test(file.name)),added=await Promise.all(valid.map(file=>new Promise<ReferenceImage|null>(resolve=>{const reader=new FileReader();reader.onerror=()=>resolve(null);reader.onload=()=>{const src=String(reader.result||""),probe=new Image();probe.onerror=()=>resolve(null);probe.onload=()=>{const width=100,height=100*(probe.naturalHeight||1)/(probe.naturalWidth||1);resolve({id:Date.now()+Math.random(),src,name:file.name,z:(params.blankL-width)/2,r:height/2,width,height,locked:false,black:0,gamma:1,white:255,opacity:.65,aspectLocked:true});};probe.src=src;};reader.readAsDataURL(file);})));const images=added.filter((x):x is ReferenceImage=>!!x);if(images.length){onReferenceImages([...referenceImages,...images]);setSelectedImageId(images[images.length-1].id);}};
+  const importReferenceFiles=async(files:File[])=>{const valid=files.filter(file=>file.type.startsWith("image/")||/\.(avif|bmp|gif|jpe?g|png|svg|webp|ico|tiff?)$/i.test(file.name)),added=await Promise.all(valid.map(file=>new Promise<ReferenceImage|null>(resolve=>{const reader=new FileReader();reader.onerror=()=>resolve(null);reader.onload=()=>{const src=String(reader.result||""),probe=new Image();probe.onerror=()=>resolve(null);probe.onload=()=>{const width=100,height=100*(probe.naturalHeight||1)/(probe.naturalWidth||1);resolve({id:Date.now()+Math.random(),src,name:file.name,z:(params.blankL-width)/2,r:height/2,width,height,locked:false,black:0,gamma:1,white:255,opacity:.65,aspectLocked:true});};probe.src=src;};reader.readAsDataURL(file);})));const images=added.filter((x):x is ReferenceImage=>!!x);if(images.length){commitImages([...referenceImages,...images]);setSelectedImageId(images[images.length-1].id);}};
   const addPaintDraft=(points:SPoint[])=>{
     if(points.length<2)return;
     const stamp=Date.now();
@@ -1464,12 +1469,12 @@ export default function ProfileEditor({
       const redoKey = e.code === "KeyY" || k === "y";
       if ((e.ctrlKey || e.metaKey) && undoKey && !e.shiftKey) {
         e.preventDefault();
-        if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintPast.current.length)undoPaint();else onUndo();
+        if(imageHistoryFocus.current&&imagePast.current.length)undoImage();else if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintPast.current.length)undoPaint();else onUndo();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && (redoKey || (e.shiftKey && undoKey))) {
         e.preventDefault();
-        if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintFuture.current.length)redoPaint();else onRedo();
+        if(imageHistoryFocus.current&&imageFuture.current.length)redoImage();else if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintFuture.current.length)redoPaint();else onRedo();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && k === "d") {
@@ -1558,6 +1563,7 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
+        if(selectedImageId!=null){e.preventDefault();commitImages(referenceImages.filter(img=>img.id!==selectedImageId));setSelectedImageId(null);return;}
         if(selectedPaint.length){
           e.preventDefault();commitPaint(all=>all.filter(edge=>!selectedPaint.includes(edge.id)));setSelectedPaint([]);setPaintMenu(null);return;
         }
@@ -1593,7 +1599,7 @@ export default function ProfileEditor({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu, lastMove, lineLengthText, cursor, shiftDown]);
+  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu, lastMove, lineLengthText, cursor, shiftDown, selectedImageId, referenceImages]);
 
   /* وضعیت فیزیکی Shift برای پیش‌نمایش بازه؛ مستقل از زبان صفحه‌کلید. */
   useEffect(() => {
@@ -3026,8 +3032,8 @@ export default function ProfileEditor({
     }
     const raw = toWorld(e.clientX, e.clientY);
     if(imageDrag.current){
-      const d=imageDrag.current;if(d.base.locked)return;const delta=quantStep(raw,d.start),dx=delta.z,dy=delta.r;let next={...d.base};
-      if(d.mode==="rotate"){const center={z:d.base.z+d.base.width/2,r:d.base.r-d.base.height/2},angle=Math.atan2(raw.r-center.r,raw.z-center.z);next.rotation=(d.base.rotation??0)+(angle-(d.startAngle??angle))*180/Math.PI;}
+      const d=imageDrag.current;if(d.base.locked)return;if(!imageGestureBase.current){imageHistoryFocus.current=true;imageGestureBase.current=cloneImages(referenceImages);imagePast.current.push(cloneImages(referenceImages));if(imagePast.current.length>100)imagePast.current.shift();imageFuture.current=[];}const delta=quantStep(raw,d.start),dx=delta.z,dy=delta.r;let next={...d.base};
+      if(d.mode==="rotate"){const center={z:d.base.z+d.base.width/2,r:d.base.r-d.base.height/2},angle=Math.atan2(raw.r-center.r,raw.z-center.z);next.rotation=(d.base.rotation??0)+((d.startAngle??angle)-angle)*180/Math.PI;}
       else if(d.mode==="move")next={...next,z:d.base.z+dx,r:d.base.r+dy};
       else {const bottom=d.base.r-d.base.height,oldCenterZ=d.base.z+d.base.width/2,oldCenterR=d.base.r-d.base.height/2;
         if(d.mode.includes("e"))next.width=Math.max(.5,d.base.width+dx);
@@ -3598,7 +3604,7 @@ export default function ProfileEditor({
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
-    if(imageDrag.current){imageDrag.current=null;return;}
+    if(imageDrag.current){imageDrag.current=null;imageGestureBase.current=null;return;}
     if (boxPivotDrag.current) { boxPivotDrag.current=false; return; }
     if (boxRotateDrag.current) { boxRotateDrag.current=null; requestAnimationFrame(()=>{boxRotateInputRef.current?.focus();boxRotateInputRef.current?.select();}); return; }
     if (boxScaleDrag.current) {
@@ -5207,7 +5213,7 @@ export default function ProfileEditor({
         })}
 
       </svg>
-      {selectedImageId!=null&&(()=>{const img=referenceImages.find(x=>x.id===selectedImageId);if(!img)return null;const patch=(p:Partial<ReferenceImage>)=>onReferenceImages(referenceImages.map(x=>x.id===img.id?{...x,...p}:x));return <div dir="rtl" className="absolute right-3 bottom-20 z-10 w-64 rounded-lg border border-edge2 bg-panel/95 p-3 text-[10px] text-ink shadow-2xl"><div className="flex items-center justify-between gap-2"><b className="truncate">{img.name}</b><div className="flex shrink-0 gap-1"><button onClick={()=>patch({locked:!img.locked})} className={cn("rounded border px-2 py-1",img.locked?"border-danger text-danger":"border-edge text-mute")}>{img.locked?"بازکردن قفل":"قفل"}</button><button onClick={()=>{onReferenceImages(referenceImages.filter(x=>x.id!==img.id));setSelectedImageId(null);}} className="rounded border border-danger/50 px-2 py-1 text-danger">حذف</button></div></div><div className="mt-3 grid grid-cols-2 gap-2"><label>عرض mm<input type="number" min="0.5" step="0.1" value={Number(img.width.toFixed(2))} onChange={e=>{const width=Math.max(.5,Number(e.target.value));patch(img.aspectLocked!==false?{width,height:width*img.height/img.width}:{width});}} className="field-input mt-1"/></label><label>ارتفاع mm<input type="number" min="0.5" step="0.1" value={Number(img.height.toFixed(2))} onChange={e=>{const height=Math.max(.5,Number(e.target.value));patch(img.aspectLocked!==false?{height,width:height*img.width/img.height}:{height});}} className="field-input mt-1"/></label></div><div className="mt-2 grid grid-cols-2 gap-2"><label className="flex items-center gap-1"><input type="checkbox" checked={img.aspectLocked!==false} onChange={e=>patch({aspectLocked:e.target.checked})} className="accent-[#28dfc2]"/>قفل تناسب</label><label>چرخش °<input type="number" step="1" value={img.rotation??0} onChange={e=>patch({rotation:Number(e.target.value)||0})} className="field-input mt-1"/></label></div><div className="mt-3 grid gap-2">{[["black","نقطه سیاه",0,254,1],["gamma","میدتون",.1,3,.05],["white","نقطه سفید",1,255,1],["opacity","شفافیت",0,1,.01]].map(([key,label,min,max,step])=><label key={String(key)}><span className="flex justify-between"><span>{label}</span><b className="font-mono text-teal">{Number(img[key as keyof ReferenceImage]).toFixed(key==="gamma"||key==="opacity"?2:0)}</b></span><input type="range" min={Number(min)} max={Number(max)} step={Number(step)} value={Number(img[key as keyof ReferenceImage])} onChange={e=>{const value=Number(e.target.value);if(key==="black")patch({black:Math.min(value,img.white-1)});else if(key==="white")patch({white:Math.max(value,img.black+1)});else patch({[key]:value});}} className="w-full accent-[#45b394]"/></label>)}</div></div>;})()}
+      {selectedImageId!=null&&(()=>{const img=referenceImages.find(x=>x.id===selectedImageId);if(!img)return null;const patch=(p:Partial<ReferenceImage>)=>commitImages(referenceImages.map(x=>x.id===img.id?{...x,...p}:x));return <div dir="rtl" className="absolute right-3 bottom-20 z-10 w-64 rounded-lg border border-edge2 bg-panel/95 p-3 text-[10px] text-ink shadow-2xl"><div className="flex items-center justify-between gap-2"><b className="truncate">{img.name}</b><div className="flex shrink-0 gap-1"><button onClick={()=>patch({locked:!img.locked})} className={cn("rounded border px-2 py-1",img.locked?"border-danger text-danger":"border-edge text-mute")}>{img.locked?"بازکردن قفل":"قفل"}</button><button onClick={()=>{commitImages(referenceImages.filter(x=>x.id!==img.id));setSelectedImageId(null);}} className="rounded border border-danger/50 px-2 py-1 text-danger">حذف</button></div></div><div className="mt-3 grid grid-cols-2 gap-2"><label>عرض mm<input type="number" min="0.5" step="0.1" value={Number(img.width.toFixed(2))} onChange={e=>{const width=Math.max(.5,Number(e.target.value));patch(img.aspectLocked!==false?{width,height:width*img.height/img.width}:{width});}} className="field-input mt-1"/></label><label>ارتفاع mm<input type="number" min="0.5" step="0.1" value={Number(img.height.toFixed(2))} onChange={e=>{const height=Math.max(.5,Number(e.target.value));patch(img.aspectLocked!==false?{height,width:height*img.width/img.height}:{height});}} className="field-input mt-1"/></label></div><div className="mt-2 grid grid-cols-2 gap-2"><label className="flex items-center gap-1"><input type="checkbox" checked={img.aspectLocked!==false} onChange={e=>patch({aspectLocked:e.target.checked})} className="accent-[#28dfc2]"/>قفل تناسب</label><label>چرخش °<input type="number" step="1" value={img.rotation??0} onChange={e=>patch({rotation:Number(e.target.value)||0})} className="field-input mt-1"/></label></div><div className="mt-3 grid gap-2">{[["black","نقطه سیاه",0,254,1],["gamma","میدتون",.1,3,.05],["white","نقطه سفید",1,255,1],["opacity","شفافیت",0,1,.01]].map(([key,label,min,max,step])=><label key={String(key)}><span className="flex justify-between"><span>{label}</span><b className="font-mono text-teal">{Number(img[key as keyof ReferenceImage]).toFixed(key==="gamma"||key==="opacity"?2:0)}</b></span><input type="range" min={Number(min)} max={Number(max)} step={Number(step)} value={Number(img[key as keyof ReferenceImage])} onChange={e=>{const value=Number(e.target.value);if(key==="black")patch({black:Math.min(value,img.white-1)});else if(key==="white")patch({white:Math.max(value,img.black+1)});else patch({[key]:value});}} className="w-full accent-[#45b394]"/></label>)}</div></div>;})()}
 
       {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>commitPaint(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];const menuLeft=Math.max(8,Math.min(paintMenu.x,window.innerWidth-184)),menuTop=Math.max(8,Math.min(paintMenu.y,window.innerHeight-380));return <div className="fixed z-[90] w-60 origin-top-left scale-[0.72] rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:menuLeft,top:menuTop}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
         <div className="mb-2 flex items-center justify-between text-[13.75px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
@@ -5633,10 +5639,10 @@ export default function ProfileEditor({
         </div>
 
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          <button onClick={()=>paintPast.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?undoPaint():onUndo()} disabled={!canUndo&&!paintPast.current.length} title="واگرد (Ctrl+Z)" className={cn("grid h-[27px] w-full place-items-center transition-colors",(canUndo||paintPast.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
+          <button onClick={()=>imageHistoryFocus.current&&imagePast.current.length?undoImage():paintPast.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?undoPaint():onUndo()} disabled={!canUndo&&!paintPast.current.length&&!imagePast.current.length} title="واگرد (Ctrl+Z)" className={cn("grid h-[27px] w-full place-items-center transition-colors",(canUndo||paintPast.current.length||imagePast.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
             <IconUndo className="h-3.5 w-3.5" />
           </button>
-          <button onClick={()=>paintFuture.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?redoPaint():onRedo()} disabled={!canRedo&&!paintFuture.current.length} title="بازانجام (Ctrl+Y)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors",(canRedo||paintFuture.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
+          <button onClick={()=>imageHistoryFocus.current&&imageFuture.current.length?redoImage():paintFuture.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?redoPaint():onRedo()} disabled={!canRedo&&!paintFuture.current.length&&!imageFuture.current.length} title="بازانجام (Ctrl+Y)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors",(canRedo||paintFuture.current.length||imageFuture.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
             <IconRedo className="h-3.5 w-3.5" />
           </button>
           <button onClick={duplicateSelected} disabled={!selected.length} title="کپی المان‌های انتخابی (Ctrl+D)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", selected.length ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
