@@ -132,12 +132,13 @@ const STEP_HINT: Record<Tool, string[]> = {
   split: ["کلیک روی پروفیل برای قرار دادن نقطه Split"],
 };
 
-export interface ReferenceImage { id:number; src:string; name:string; z:number; r:number; width:number; height:number; locked:boolean; black:number; gamma:number; white:number; opacity:number; }
+export interface ReferenceImage { id:number; src:string; name:string; z:number; r:number; width:number; height:number; locked:boolean; black:number; gamma:number; white:number; opacity:number; rotation?:number; }
 
 interface Props {
   projectId: string;
   referenceImages: ReferenceImage[];
   onReferenceImages: (images:ReferenceImage[])=>void;
+  imageImportRequest: number;
   segs: SketchSeg[];
   onSegs: (next: SketchSeg[], commit: boolean) => void;
   selected: number[];
@@ -833,6 +834,7 @@ export default function ProfileEditor({
   projectId,
   referenceImages,
   onReferenceImages,
+  imageImportRequest,
   segs,
   onSegs,
   selected,
@@ -877,7 +879,9 @@ export default function ProfileEditor({
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
   const [selectedImageId,setSelectedImageId]=useState<number|null>(null);
   const imageInputRef=useRef<HTMLInputElement>(null);
-  const imageDrag=useRef<{id:number;start:SPoint;base:ReferenceImage;mode:"move"|"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w"}|null>(null);
+  const lastImageImportRequest=useRef(imageImportRequest);
+  useEffect(()=>{if(imageImportRequest!==lastImageImportRequest.current){lastImageImportRequest.current=imageImportRequest;imageInputRef.current?.click();}},[imageImportRequest]);
+  const imageDrag=useRef<{id:number;start:SPoint;base:ReferenceImage;mode:"move"|"rotate"|"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w";startAngle?:number}|null>(null);
   const paintPast=useRef<PaintEdge[][]>([]),paintFuture=useRef<PaintEdge[][]>([]);
   const [,setPaintHistoryVersion]=useState(0);
   const clonePaint=(edges:PaintEdge[])=>edges.map(edge=>({...edge,a:{...edge.a},b:{...edge.b}}));
@@ -3017,7 +3021,7 @@ export default function ProfileEditor({
       return; // یک فریم برای تثبیت دوربین؛ از جهش نقطه پس از Pan جلوگیری می‌کند
     }
     const raw = toWorld(e.clientX, e.clientY);
-    if(imageDrag.current){const d=imageDrag.current;if(d.base.locked)return;const delta=quantStep(raw,d.start),dx=delta.z,dy=delta.r;let next={...d.base};if(d.mode==="move")next={...next,z:d.base.z+dx,r:d.base.r+dy};else{const right=d.base.z+d.base.width,bottom=d.base.r-d.base.height;if(d.mode.includes("e")){next.width=Math.max(.5,right-(d.base.z+dx));next.z=d.base.z+dx;}if(d.mode.includes("w"))next.width=Math.max(.5,d.base.width+dx);if(d.mode.includes("n")){next.height=Math.max(.5,d.base.height-dy);next.r=d.base.r+dy;}if(d.mode.includes("s"))next.height=Math.max(.5,d.base.height+dy);if(d.mode.length===2){const ratio=d.base.width/d.base.height;next.height=next.width/ratio;if(d.mode.includes("s"))next.r=bottom+next.height;}}onReferenceImages(referenceImages.map(img=>img.id===d.id?next:img));return;}
+    if(imageDrag.current){const d=imageDrag.current;if(d.base.locked)return;const delta=quantStep(raw,d.start),dx=delta.z,dy=delta.r;let next={...d.base};if(d.mode==="rotate"){const center={z:d.base.z+d.base.width/2,r:d.base.r-d.base.height/2},angle=Math.atan2(raw.r-center.r,raw.z-center.z);next.rotation=(d.base.rotation??0)+(angle-(d.startAngle??angle))*180/Math.PI;}else if(d.mode==="move")next={...next,z:d.base.z+dx,r:d.base.r+dy};else{const right=d.base.z+d.base.width,bottom=d.base.r-d.base.height;if(d.mode.includes("e")){next.width=Math.max(.5,right-(d.base.z+dx));next.z=d.base.z+dx;}if(d.mode.includes("w"))next.width=Math.max(.5,d.base.width+dx);if(d.mode.includes("n")){next.height=Math.max(.5,d.base.height-dy);next.r=d.base.r+dy;}if(d.mode.includes("s"))next.height=Math.max(.5,d.base.height+dy);if(d.mode.length===2){const ratio=d.base.width/d.base.height;next.height=next.width/ratio;if(d.mode.includes("s"))next.r=bottom+next.height;}else if(boxScaleLocked){const ratio=d.base.width/d.base.height;if(d.mode==="e"||d.mode==="w")next.height=next.width/ratio;else{next.width=next.height*ratio;}}}onReferenceImages(referenceImages.map(img=>img.id===d.id?next:img));return;}
     /* Pan راست/وسط باید پیش از منطق Move پردازش شود. */
     const cameraGesture = drag.current;
     if (cameraGesture?.mode === "pan") {
@@ -3751,6 +3755,7 @@ export default function ProfileEditor({
         r1: Math.max(w0.r, w1.r),
       };
       const mode: "window" | "crossing" = loc.x >= d.sx ? "window" : "crossing";
+      if(!editOpen){const hits=referenceImages.filter(img=>{const iz0=img.z,iz1=img.z+img.width,ir0=img.r-img.height,ir1=img.r;return mode==="window"?iz0>=rectW.z0&&iz1<=rectW.z1&&ir0>=rectW.r0&&ir1<=rectW.r1:iz1>=rectW.z0&&iz0<=rectW.z1&&ir1>=rectW.r0&&ir0<=rectW.r1;});if(hits.length)setSelectedImageId(hits[hits.length-1].id);else if(!e.shiftKey)setSelectedImageId(null);}
       /* خطوط و نقاط نقاشی نیز دقیقاً با Window/Crossing باکس Select می‌شوند. */
       if(!editOpen&&showCanvasPaintTool){
         const inside=(p:SPoint)=>p.z>=rectW.z0&&p.z<=rectW.z1&&p.r>=rectW.r0&&p.r<=rectW.r1;
@@ -4372,8 +4377,7 @@ export default function ProfileEditor({
         editOpen ? "bg-[#08111f]" : "bg-[#120e09]"
       )}
     >
-      <input ref={imageInputRef} type="file" accept="image/*,.webp,.avif,.svg,.tif,.tiff" multiple hidden onChange={e=>{void importReferenceFiles([...e.target.files??[]]);e.currentTarget.value="";}}/>
-      <button onClick={()=>imageInputRef.current?.click()} className="absolute top-2 left-2 z-30 rounded-md border border-edge2 bg-panel/90 px-2.5 py-1.5 text-[10px] font-bold text-ink shadow" title="واردکردن عکس مرجع">وارد کردن عکس</button>
+      <input ref={imageInputRef} type="file" accept="image/*,.webp,.avif,.svg,.tif,.tiff" multiple hidden onChange={e=>{void importReferenceFiles([...(e.target.files??[])]);e.currentTarget.value="";}}/>
       <svg
         ref={svgRef}
         width={size.w}
@@ -4437,12 +4441,13 @@ export default function ProfileEditor({
         {/* عکس‌های مرجع پایین‌تر از گرید و تمام خطوط قرار می‌گیرند. */}
         {referenceImages.map(img=>{
           const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s,selected=selectedImageId===img.id;
-          return <g key={img.id}>
+          return <g key={img.id} transform={`rotate(${img.rotation??0} ${x+w/2} ${y+h/2})`}>
             <image data-ref-image="true" href={img.src} x={x} y={y} width={w} height={h} opacity={img.opacity} filter={`url(#ref-level-${img.id})`} onPointerDown={e=>{
-              if(e.button!==0)return;e.stopPropagation();setSelectedImageId(img.id);if(!img.locked){const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top);imageDrag.current={id:img.id,start,base:{...img},mode:"move"};e.currentTarget.setPointerCapture?.(e.pointerId);}
+              if(e.button!==0||!(tool==="select"||tool==="move"||tool==="boxscale"))return;e.stopPropagation();setSelectedImageId(img.id);if(!img.locked){const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top);imageDrag.current={id:img.id,start,base:{...img},mode:"move"};e.currentTarget.setPointerCapture?.(e.pointerId);}
             }}/>
-            {selected&&<><rect x={x} y={y} width={w} height={h} fill="none" stroke={img.locked?"#ef4444":"#45b394"} strokeWidth="1.5" strokeDasharray="5 3" pointerEvents="none"/>
-              {(["nw","ne","sw","se","n","s","e","w"] as const).map(mode=>{const hx=mode.includes("w")?x:mode.includes("e")?x+w:x+w/2,hy=mode.includes("n")?y:mode.includes("s")?y+h:y+h/2;return <rect data-ref-image="true" key={mode} x={hx-4} y={hy-4} width="8" height="8" fill="#08111f" stroke="#fff" strokeWidth="1.5" className={img.locked?"cursor-not-allowed":"cursor-pointer"} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect();imageDrag.current={id:img.id,start:worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),base:{...img},mode};}}/>;})}
+            {selected&&<><rect x={x} y={y} width={w} height={h} fill="none" stroke={img.locked?"#ef4444":"#28dfc2"} strokeWidth="1.2" strokeDasharray="5 4" pointerEvents="none"/>
+              {(["nw","ne","sw","se","n","s","e","w"] as const).map(mode=>{const hx=mode.includes("w")?x:mode.includes("e")?x+w:x+w/2,hy=mode.includes("n")?y:mode.includes("s")?y+h:y+h/2;return <rect data-ref-image="true" key={mode} x={hx-4} y={hy-4} width="8" height="8" rx="1" fill="#071018" stroke="#28dfc2" strokeWidth="1.5" className={img.locked?"cursor-not-allowed":"cursor-pointer"} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect();imageDrag.current={id:img.id,start:worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),base:{...img},mode};}}/>;})}
+              {[{x:x-7,y:y-7},{x:x+w+7,y:y-7},{x:x+w+7,y:y+h+7},{x:x-7,y:y+h+7}].map((p,i)=><circle data-ref-image="true" key={`rotate-${i}`} cx={p.x} cy={p.y} r="5" fill="transparent" style={{cursor:BOX_ROTATE_CURSORS[i]}} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),center={z:img.z+img.width/2,r:img.r-img.height/2};imageDrag.current={id:img.id,start,base:{...img},mode:"rotate",startAngle:Math.atan2(start.r-center.r,start.z-center.z)};}}/>)}
             </>}
           </g>;
         })}
@@ -5185,7 +5190,7 @@ export default function ProfileEditor({
         })}
 
       </svg>
-      {selectedImageId!=null&&(()=>{const img=referenceImages.find(x=>x.id===selectedImageId);if(!img)return null;const patch=(p:Partial<ReferenceImage>)=>onReferenceImages(referenceImages.map(x=>x.id===img.id?{...x,...p}:x));return <div dir="rtl" className="absolute right-3 bottom-3 z-40 w-64 rounded-lg border border-edge2 bg-panel/95 p-3 text-[10px] text-ink shadow-2xl"><div className="flex items-center justify-between gap-2"><b className="truncate">{img.name}</b><div className="flex shrink-0 gap-1"><button onClick={()=>patch({locked:!img.locked})} className={cn("rounded border px-2 py-1",img.locked?"border-danger text-danger":"border-edge text-mute")}>{img.locked?"بازکردن قفل":"قفل"}</button><button onClick={()=>{onReferenceImages(referenceImages.filter(x=>x.id!==img.id));setSelectedImageId(null);}} className="rounded border border-danger/50 px-2 py-1 text-danger">حذف</button></div></div><div className="mt-3 grid gap-2">{[["black","نقطه سیاه",0,254,1],["gamma","میدتون",.1,3,.05],["white","نقطه سفید",1,255,1],["opacity","شفافیت",0,1,.01]].map(([key,label,min,max,step])=><label key={String(key)}><span className="flex justify-between"><span>{label}</span><b className="font-mono text-teal">{Number(img[key as keyof ReferenceImage]).toFixed(key==="gamma"||key==="opacity"?2:0)}</b></span><input type="range" min={Number(min)} max={Number(max)} step={Number(step)} value={Number(img[key as keyof ReferenceImage])} onChange={e=>{const value=Number(e.target.value);if(key==="black")patch({black:Math.min(value,img.white-1)});else if(key==="white")patch({white:Math.max(value,img.black+1)});else patch({[key]:value});}} className="w-full accent-[#45b394]"/></label>)}</div></div>;})()}
+      {selectedImageId!=null&&(()=>{const img=referenceImages.find(x=>x.id===selectedImageId);if(!img)return null;const patch=(p:Partial<ReferenceImage>)=>onReferenceImages(referenceImages.map(x=>x.id===img.id?{...x,...p}:x));return <div dir="rtl" className="absolute right-3 bottom-3 z-40 w-64 rounded-lg border border-edge2 bg-panel/95 p-3 text-[10px] text-ink shadow-2xl"><div className="flex items-center justify-between gap-2"><b className="truncate">{img.name}</b><div className="flex shrink-0 gap-1"><button onClick={()=>patch({locked:!img.locked})} className={cn("rounded border px-2 py-1",img.locked?"border-danger text-danger":"border-edge text-mute")}>{img.locked?"بازکردن قفل":"قفل"}</button><button onClick={()=>{onReferenceImages(referenceImages.filter(x=>x.id!==img.id));setSelectedImageId(null);}} className="rounded border border-danger/50 px-2 py-1 text-danger">حذف</button></div></div><div className="mt-3 grid grid-cols-2 gap-2"><label>عرض mm<input type="number" min="0.5" step="0.1" value={Number(img.width.toFixed(2))} onChange={e=>{const width=Math.max(.5,Number(e.target.value));patch(boxScaleLocked?{width,height:width*img.height/img.width}:{width});}} className="field-input mt-1"/></label><label>ارتفاع mm<input type="number" min="0.5" step="0.1" value={Number(img.height.toFixed(2))} onChange={e=>{const height=Math.max(.5,Number(e.target.value));patch(boxScaleLocked?{height,width:height*img.width/img.height}:{height});}} className="field-input mt-1"/></label></div><div className="mt-2 grid grid-cols-2 gap-2"><label className="flex items-center gap-1"><input type="checkbox" checked={boxScaleLocked} onChange={e=>setBoxScaleLocked(e.target.checked)} className="accent-[#28dfc2]"/>قفل تناسب</label><label>چرخش °<input type="number" step="1" value={img.rotation??0} onChange={e=>patch({rotation:Number(e.target.value)||0})} className="field-input mt-1"/></label></div><div className="mt-3 grid gap-2">{[["black","نقطه سیاه",0,254,1],["gamma","میدتون",.1,3,.05],["white","نقطه سفید",1,255,1],["opacity","شفافیت",0,1,.01]].map(([key,label,min,max,step])=><label key={String(key)}><span className="flex justify-between"><span>{label}</span><b className="font-mono text-teal">{Number(img[key as keyof ReferenceImage]).toFixed(key==="gamma"||key==="opacity"?2:0)}</b></span><input type="range" min={Number(min)} max={Number(max)} step={Number(step)} value={Number(img[key as keyof ReferenceImage])} onChange={e=>{const value=Number(e.target.value);if(key==="black")patch({black:Math.min(value,img.white-1)});else if(key==="white")patch({white:Math.max(value,img.black+1)});else patch({[key]:value});}} className="w-full accent-[#45b394]"/></label>)}</div></div>;})()}
 
       {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>commitPaint(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];const menuLeft=Math.max(8,Math.min(paintMenu.x,window.innerWidth-184)),menuTop=Math.max(8,Math.min(paintMenu.y,window.innerHeight-380));return <div className="fixed z-[90] w-60 origin-top-left scale-[0.72] rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:menuLeft,top:menuTop}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
         <div className="mb-2 flex items-center justify-between text-[13.75px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>

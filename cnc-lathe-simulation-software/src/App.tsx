@@ -110,6 +110,7 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
 export default function App() {
   const [showAiImport, setShowAiImport] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
+  const [imageImportRequest,setImageImportRequest]=useState(0);
   const [saveAsName,setSaveAsName]=useState<string|null>(null);
   const saveAsResolver=useRef<((name:string|null)=>void)|null>(null);
   const [preferences, setPreferences] = useState<AppPreferences>(() => {
@@ -971,6 +972,7 @@ export default function App() {
         onSaveProject={() => void saveProject()}
         onSaveProjectAs={() => void saveProjectAs()}
         onImportAi={() => setShowAiImport(true)}
+        onImportImage={() => setImageImportRequest(v=>v+1)}
         onExportGcode={downloadGCode}
         onExportDxf={downloadDxf}
         onPreferences={() => setShowPreferences(true)}
@@ -1085,6 +1087,7 @@ export default function App() {
               projectId={activeProjectId}
               referenceImages={referenceImages}
               onReferenceImages={setReferenceImages}
+              imageImportRequest={imageImportRequest}
               segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
               edit={editOpen ? editBuf : null}
@@ -1172,10 +1175,10 @@ export default function App() {
   );
 }
 
-function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onCloseProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
+function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onCloseProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onImportImage, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
   projects: {id:string;name:string;dirty:boolean}[]; activeProjectId:string; onSwitchProject:(id:string)=>void; onCloseProject:(id:string)=>void;
   onOpenProject: () => void; onSaveProject: () => void; onSaveProjectAs: () => void;
-  onImportAi: () => void; onExportGcode: () => void; onExportDxf: () => void; onPreferences: () => void;
+  onImportAi: () => void; onImportImage: () => void; onExportGcode: () => void; onExportDxf: () => void; onPreferences: () => void;
   onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
 }) {
   const [open, setOpen] = useState<"file" | "edit" | null>(null);
@@ -1200,6 +1203,7 @@ function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onClosePro
       <MenuItem label="ذخیره با نام…" hint="Ctrl+Shift+S" onClick={()=>run(onSaveProjectAs)} />
       <div className="my-1 border-t border-edge" />
       <MenuItem label="ورود فایل AI…" hint="Import" onClick={()=>run(onImportAi)} />
+      <MenuItem label="وارد کردن عکس…" onClick={()=>run(onImportImage)} />
       <div className="my-1 border-t border-edge" />
       <MenuItem label="خروجی G-code…" hint="NC" onClick={()=>run(onExportGcode)} />
       <MenuItem label="خروجی DXF…" hint="DXF" onClick={()=>run(onExportDxf)} />
