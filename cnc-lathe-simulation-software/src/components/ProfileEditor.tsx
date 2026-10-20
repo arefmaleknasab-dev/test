@@ -2031,8 +2031,11 @@ export default function ProfileEditor({
   const commit = (next: SketchSeg[]) => onSegs(next, true);
 
   const convertSelectedPolylineVertices=(fallback:{segId:number;part:"a"|"b"})=>{
-    const chosen=selPoints.filter((p):p is {segId:number;part:"a"|"b"}=>p.part==="a"||p.part==="b");
-    const points=chosen.length?chosen:[fallback];
+    const endpointSelection=selPoints.filter((p):p is {segId:number;part:"a"|"b"}=>p.part==="a"||p.part==="b");
+    const fallbackSelected=endpointSelection.some(p=>p.segId===fallback.segId&&p.part===fallback.part);
+    /* راست‌کلیک روی نقطهٔ انتخاب‌نشده فقط همان نقطه را تبدیل می‌کند؛ تنها وقتی
+       خود نقطه عضو انتخاب باشد، عملیات روی مجموعهٔ نقاط انتخابی اعمال می‌شود. */
+    const points=fallbackSelected?endpointSelection:[fallback];
     let next=segs.map(s=>({...s}));
     const done=new Set<string>();
     for(const pick of points){
@@ -2051,7 +2054,7 @@ export default function ProfileEditor({
         const other=atA?s.b:s.a;
         const sign=((other.z-vertex.z)*ux+(other.r-vertex.r)*ur)>=0?1:-1;
         const handle={z:vertex.z+ux*arm*sign,r:vertex.r+ur*arm*sign};
-        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:baseC1),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:baseC2):handle};
+        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:baseC1),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:baseC2):handle,[atA?"smoothA":"smoothB"]:true};
       });
     }
     commit(next);setCtxMenu(null);
@@ -2883,6 +2886,7 @@ export default function ProfileEditor({
        کلیک ساده همچنان در pointerup به‌عنوان ورودی ابزار رسم پردازش می‌شود. */
     const drawingHandle = !editOpen ? hitHandle(raw) : null;
     if (drawingHandle) {
+      if(tool==="select"&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey)onSelected([]);
       const cluster = drawingHandle.part === "a" || drawingHandle.part === "b"
         ? clusterOf(drawingHandle.segId, drawingHandle.part)
         : [drawingHandle];
@@ -3584,8 +3588,9 @@ export default function ProfileEditor({
         const movedRef=merged.find(s=>s.id===d.ref.segId);
         if(movedRef?.polylineId!=null){
           const anchor=d.ref.part==="c1"?movedRef.a:movedRef.b,handle=movedRef[d.ref.part];
-          if(handle){
-            const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&(dist(s.a,anchor)<1e-8||dist(s.b,anchor)<1e-8));
+          const refSmooth=d.ref.part==="c1"?movedRef.smoothA:movedRef.smoothB;
+          if(handle&&refSmooth){
+            const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&((dist(s.a,anchor)<1e-8&&s.smoothA)||(dist(s.b,anchor)<1e-8&&s.smoothB)));
             if(other){const part=dist(other.a,anchor)<1e-8?"c1":"c2";const mirror={z:2*anchor.z-handle.z,r:2*anchor.r-handle.r};merged=merged.map(s=>s.id===other.id?{...s,[part]:mirror}:s);}
           }
         }
@@ -3702,7 +3707,7 @@ export default function ProfileEditor({
     if (h && (h.part === "a" || h.part === "b")) {
       const rect = wrapRef.current!.getBoundingClientRect();
       const cluster = clusterOf(h.segId, h.part);
-      if (!selected.includes(h.segId)) onSelected([h.segId]);
+      /* انتخاب و منوی نقطه نباید انتخاب/هایلایت خطوط را تغییر دهد. */
       setSegmentCtxMenu(null);
       setCtxMenu({
         x: clientX - rect.left,

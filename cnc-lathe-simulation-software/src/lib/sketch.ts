@@ -26,6 +26,9 @@ export interface SketchSeg {
   filletOf?: [number, number];
   /** تعداد پاره‌خط‌های نمایش/تبدیل کمان؛ در نبود آن مقدار خودکار استفاده می‌شود. */
   arcDivisions?: number;
+  /** رأس نرم Polyline؛ دسته‌های دو سوی این رأس به‌صورت متقارن حرکت می‌کنند. */
+  smoothA?: boolean;
+  smoothB?: boolean;
 }
 
 export const KIND_FA: Record<SketchKind, string> = {
