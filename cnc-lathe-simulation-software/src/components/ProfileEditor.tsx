@@ -3761,7 +3761,7 @@ export default function ProfileEditor({
     if (h && (h.part === "a" || h.part === "b")) {
       const rect = wrapRef.current!.getBoundingClientRect();
       const cluster = clusterOf(h.segId, h.part);
-      onSelected([]);
+      if(!selected.includes(h.segId))onSelected([]);
       const clickedPoint=segs.find(s=>s.id===h.segId)?.[h.part];
       const alreadyChosen=!!clickedPoint&&selPoints.some(point=>{if(point.part!=="a"&&point.part!=="b")return false;const segment=segs.find(s=>s.id===point.segId);return !!segment&&dist(segment[point.part],clickedPoint)<1e-8;});
       if(!alreadyChosen)setSelPoints([h]);
@@ -3780,7 +3780,7 @@ export default function ProfileEditor({
     const segment=hitSeg(raw);
     if(segment?.polylineId!=null){
       const rect=wrapRef.current!.getBoundingClientRect();
-      onSelected([segment.id]);
+      if(!selected.includes(segment.id))onSelected([segment.id]);
       setSegmentCtxMenu({x:clientX-rect.left,y:clientY-rect.top,segId:segment.id});
     }else setSegmentCtxMenu(null);
   };
