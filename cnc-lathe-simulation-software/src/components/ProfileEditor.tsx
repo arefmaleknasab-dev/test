@@ -879,6 +879,9 @@ export default function ProfileEditor({
   });
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
   const [selectedImageId,setSelectedImageId]=useState<number|null>(null);
+  const [imageTransformPreview,setImageTransformPreview]=useState<ReferenceImage|null>(null);
+  const imageTransformPreviewRef=useRef<ReferenceImage|null>(null),imagePreviewFrame=useRef<number|null>(null);
+  const displayImages=imageTransformPreview?referenceImages.map(img=>img.id===imageTransformPreview.id?imageTransformPreview:img):referenceImages;
   const imageInputRef=useRef<HTMLInputElement>(null);
   const [imageHistoryVersion,setImageHistoryVersion]=useState(0);
   const imagePast=useRef<ReferenceImage[][]>([]),imageFuture=useRef<ReferenceImage[][]>([]),imageGestureBase=useRef<ReferenceImage[]|null>(null),imageHistoryFocus=useRef(false);
@@ -3051,7 +3054,7 @@ export default function ProfileEditor({
            ثابت بماند؛ بنابراین Resize پس از Rotation به محورهای جهانی منحرف نمی‌شود. */
         const localCenterX=(d.mode.includes("e")||d.mode.includes("w"))?dx/2:0,localCenterUp=(d.mode.includes("n")||d.mode.includes("s"))?dy/2:0,newCenterZ=oldCenterZ+localCenterX*Math.cos(angleRad)+localCenterUp*Math.sin(angleRad),newCenterR=oldCenterR-localCenterX*Math.sin(angleRad)+localCenterUp*Math.cos(angleRad);next.z=newCenterZ-next.width/2;next.r=newCenterR+next.height/2;
       }
-      onReferenceImages(referenceImages.map(img=>img.id===d.id?next:img));return;
+      imageTransformPreviewRef.current=next;if(imagePreviewFrame.current==null)imagePreviewFrame.current=requestAnimationFrame(()=>{imagePreviewFrame.current=null;setImageTransformPreview(imageTransformPreviewRef.current);});return;
     }
     /* Pan راست/وسط باید پیش از منطق Move پردازش شود. */
     const cameraGesture = drag.current;
@@ -3611,7 +3614,7 @@ export default function ProfileEditor({
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
-    if(imageDrag.current){imageDrag.current=null;imageGestureBase.current=null;return;}
+    if(imageDrag.current){const preview=imageTransformPreviewRef.current;if(imagePreviewFrame.current!=null){cancelAnimationFrame(imagePreviewFrame.current);imagePreviewFrame.current=null;}if(preview)onReferenceImages(referenceImages.map(img=>img.id===preview.id?preview:img));imageDrag.current=null;imageGestureBase.current=null;imageTransformPreviewRef.current=null;setImageTransformPreview(null);return;}
     if (boxPivotDrag.current) { boxPivotDrag.current=false; return; }
     if (boxRotateDrag.current) { boxRotateDrag.current=null; requestAnimationFrame(()=>{boxRotateInputRef.current?.focus();boxRotateInputRef.current?.select();}); return; }
     if (boxScaleDrag.current) {
@@ -4470,7 +4473,7 @@ export default function ProfileEditor({
         </defs>
 
         {/* عکس‌های مرجع پایین‌تر از گرید و تمام خطوط قرار می‌گیرند. */}
-        {referenceImages.map(img=>{
+        {displayImages.map(img=>{
           const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s;
           return <g key={img.id} transform={`rotate(${img.rotation??0} ${x+w/2} ${y+h/2})`}>
             <image data-ref-image="true" href={img.src} x={x} y={y} width={w} height={h} preserveAspectRatio={img.aspectLocked!==false?"xMidYMid meet":"none"} opacity={img.opacity} filter={`url(#ref-level-${img.id})`} onPointerDown={e=>{
@@ -5191,7 +5194,7 @@ export default function ProfileEditor({
         })()}
 
         {/* بالاترین لایه بوم: خطوط نمایشی جهت‌دار، انتخاب و Handle نقاط. */}
-        {selectedImageId!=null&&(()=>{const img=referenceImages.find(v=>v.id===selectedImageId);if(!img)return null;const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s;return <g transform={`rotate(${img.rotation??0} ${x+w/2} ${y+h/2})`}><rect data-ref-image="true" x={x} y={y} width={w} height={h} fill="none" stroke={img.locked?"#ef4444":"#28dfc2"} strokeWidth="1.2" strokeDasharray="5 4"/>{(["nw","ne","sw","se","n","s","e","w"] as const).map(mode=>{const hx=mode.includes("w")?x:mode.includes("e")?x+w:x+w/2,hy=mode.includes("n")?y:mode.includes("s")?y+h:y+h/2;return <rect data-ref-image="true" key={mode} x={hx-4} y={hy-4} width="8" height="8" rx="1" fill="#071018" stroke="#28dfc2" strokeWidth="1.5" style={{cursor:img.locked?"not-allowed":resizeCursor(mode,img.rotation??0)}} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect();imageDrag.current={id:img.id,start:worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),base:{...img},mode};}}/>;})}{[{x:x-7,y:y-7},{x:x+w+7,y:y-7},{x:x+w+7,y:y+h+7},{x:x-7,y:y+h+7}].map((p,i)=><circle data-ref-image="true" key={`rotate-${i}`} cx={p.x} cy={p.y} r="5" fill="transparent" style={{cursor:rotationCursor([180,270,0,90][i]+(img.rotation??0))}} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),center={z:img.z+img.width/2,r:img.r-img.height/2};imageDrag.current={id:img.id,start,base:{...img},mode:"rotate",startAngle:Math.atan2(start.r-center.r,start.z-center.z)};}}/>)}</g>;})()}
+        {selectedImageId!=null&&(()=>{const img=displayImages.find(v=>v.id===selectedImageId);if(!img)return null;const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s;return <g transform={`rotate(${img.rotation??0} ${x+w/2} ${y+h/2})`}><rect data-ref-image="true" x={x} y={y} width={w} height={h} fill="none" stroke={img.locked?"#ef4444":"#28dfc2"} strokeWidth="1.2" strokeDasharray="5 4"/>{(["nw","ne","sw","se","n","s","e","w"] as const).map(mode=>{const hx=mode.includes("w")?x:mode.includes("e")?x+w:x+w/2,hy=mode.includes("n")?y:mode.includes("s")?y+h:y+h/2;return <rect data-ref-image="true" key={mode} x={hx-4} y={hy-4} width="8" height="8" rx="1" fill="#071018" stroke="#28dfc2" strokeWidth="1.5" style={{cursor:img.locked?"not-allowed":resizeCursor(mode,img.rotation??0)}} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect();imageDrag.current={id:img.id,start:worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),base:{...img},mode};}}/>;})}{[{x:x-7,y:y-7},{x:x+w+7,y:y-7},{x:x+w+7,y:y+h+7},{x:x-7,y:y+h+7}].map((p,i)=><circle data-ref-image="true" key={`rotate-${i}`} cx={p.x} cy={p.y} r="5" fill="transparent" style={{cursor:rotationCursor([180,270,0,90][i]+(img.rotation??0))}} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),center={z:img.z+img.width/2,r:img.r-img.height/2};imageDrag.current={id:img.id,start,base:{...img},mode:"rotate",startAngle:Math.atan2(start.r-center.r,start.z-center.z)};}}/>)}</g>;})()}
 
         {showCanvasPaintTool&&paintEdges.map(edge=>{
           const ax=cam.ox+edge.a.z*cam.s,ay=cam.oy-edge.a.r*cam.s,bx=cam.ox+edge.b.z*cam.s,by=cam.oy-edge.b.r*cam.s;
