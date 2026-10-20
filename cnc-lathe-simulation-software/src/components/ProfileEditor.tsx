@@ -2897,7 +2897,18 @@ export default function ProfileEditor({
          فعال می‌شود؛ نقاط هم‌مکان صرفاً اتصال هندسی خود را حفظ می‌کنند. */
       if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
         onSelected([]);
-        setSelPoints([drawingHandle]);
+        /* هنگام گرفتن دستهٔ Bézier متعلق به رأس انتخاب‌شده، انتخاب رأس را حفظ
+           می‌کنیم تا خود نقطه و دستهٔ مقابل در تمام مدت Drag قابل مشاهده بمانند. */
+        const owner=segs.find(segment=>segment.id===drawingHandle.segId);
+        const anchor=drawingHandle.part==="c1"?owner?.a:drawingHandle.part==="c2"?owner?.b:null;
+        const anchorSelected=!!anchor&&selPoints.some(point=>{
+          if(point.part!=="a"&&point.part!=="b")return false;
+          const segment=segs.find(item=>item.id===point.segId);
+          return !!segment&&dist(segment[point.part],anchor)<1e-8;
+        });
+        /* انتخاب دسته فقط از طریق drag.current برجسته می‌شود؛ افزودن آن به
+           selPoints باعث می‌شد منطق جابه‌جایی چندنقطه‌ای خود رأس را هم حرکت دهد. */
+        if(!anchorSelected||!(drawingHandle.part==="c1"||drawingHandle.part==="c2"))setSelPoints([drawingHandle]);
       }
       return;
     }
@@ -3997,7 +4008,14 @@ export default function ProfileEditor({
              در محل قدیمی چشمک نزند؛ حرکت بعدی موس دوباره نشانگر را می‌سازد. */
           setCursor(null);
           onSegs(segs, true); // ثبت در تاریخچه
-          if (!e.shiftKey && !exists) setSelPoints([ref]); // نقطهٔ درگ‌شده انتخاب بماند
+          const owner=segs.find(segment=>segment.id===ref.segId);
+          const anchor=ref.part==="c1"?owner?.a:ref.part==="c2"?owner?.b:null;
+          const keepVertex=!!anchor&&selPoints.some(point=>{
+            if(point.part!=="a"&&point.part!=="b")return false;
+            const segment=segs.find(item=>item.id===point.segId);
+            return !!segment&&dist(segment[point.part],anchor)<1e-8;
+          });
+          if (!e.shiftKey && !exists && !keepVertex) setSelPoints([ref]); // نقطهٔ درگ‌شده انتخاب بماند
           return;
         }
         if (tool === "select") {
