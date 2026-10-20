@@ -1810,7 +1810,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* مسیریاب فقط داخل همان رنگ آبی حرکت می‌کند. در صورت نامعتبر بودن خط
            مستقیم، A* روی شبکه داخلی اجرا و سپس قطعات اضافی با آزمون دید مستقیم
            حذف می‌شوند؛ بنابراین تمام G0/G1های اتصال داخل چندضلعی می‌مانند. */
-        const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
+        const planBaseLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
           if(allowedLink(from,to))return [to];
           if(p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp"){
             /* دو میانبر قائم ممکن را پیش از مسیریابی مرزی امتحان می‌کند. هر دو
@@ -1880,6 +1880,26 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             out.push(raw[j]);anchor=raw[j];i=j+1;
           }
           return out;
+        };
+        const boundaryDistance=(q:AllowedPoint)=>{let d=Infinity;for(const e of polyEdges){const l2=e.ez*e.ez+e.er*e.er,t=l2?Math.max(0,Math.min(1,((q.z-e.a.z)*e.ez+(q.r-e.a.r)*e.er)/l2)):0;d=Math.min(d,Math.hypot(q.z-(e.a.z+t*e.ez),q.r-(e.a.r+t*e.er)));}return d;};
+        const clearanceSegment=(a:AllowedPoint,b:AllowedPoint,c:number)=>{if(!allowedLink(a,b))return false;const n=Math.max(1,Math.ceil(Math.hypot(b.z-a.z,b.r-a.r)));for(let i=1;i<n;i++){const t=i/n,q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};if(boundaryDistance(q)<c-1e-7)return false;}return true;};
+        const chainHasClearance=(chain:AllowedPoint[],c:number)=>{const lens=chain.slice(1).map((q,i)=>Math.hypot(q.z-chain[i].z,q.r-chain[i].r)),total=lens.reduce((s,v)=>s+v,0);let passed=0;for(let k=0;k<lens.length;k++){const a=chain[k],b=chain[k+1],n=Math.max(1,Math.ceil(lens[k]));for(let i=0;i<=n;i++){const t=i/n,along=passed+lens[k]*t,required=Math.min(c,along,total-along),q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};if(!allowedPoint(q.r,q.z)||boundaryDistance(q)<required-1e-7)return false;}passed+=lens[k];}return true;};
+        /* همه الگوریتم‌ها ابتدا فاصله ۳mm را برای هسته G0 می‌خواهند. فقط ساق
+           کوتاه خروج/ورود پاس مستثناست؛ در تنگنا فاصله نیم‌میلی‌متری تا صفر کم می‌شود. */
+        const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
+          const base=planBaseLink(from,to);if(!base)return null;
+          for(let clearance=3;clearance>=-.001;clearance-=.5){
+            const c=Math.max(0,clearance),chain=[from,...base];
+            if(chainHasClearance(chain,c))return base;
+            if(c<=0)return base;
+            const gs=Math.max(1,Math.min(3,p.innerDoc)),minZ=Math.min(...polygon.map(q=>q.z)),maxZ=Math.max(...polygon.map(q=>q.z)),maxR=Math.max(...polygon.map(q=>q.r)),nz=Math.ceil((maxZ-minZ)/gs)+1,nr=Math.ceil(maxR/gs)+1,total=nz*nr,valid=new Int8Array(total);valid.fill(-1);
+            const point=(id:number):AllowedPoint=>({z:minZ+Math.floor(id/nr)*gs,r:(id%nr)*gs}),ok=(id:number)=>{if(id<0||id>=total)return false;if(valid[id]>=0)return !!valid[id];const q=point(id);return !!(valid[id]=allowedPoint(q.r,q.z)&&boundaryDistance(q)>=c-1e-7?1:0);};
+            const nearest=(q:AllowedPoint)=>{let best=-1,dist=Infinity;for(let id=0;id<total;id++)if(ok(id)){const p0=point(id),d=Math.hypot(p0.z-q.z,p0.r-q.r);if(d<dist&&allowedLink(q,p0)){best=id;dist=d;}}return best;},start=nearest(from),goal=nearest(to);if(start<0||goal<0)continue;
+            const parent=new Int32Array(total);parent.fill(-2);parent[start]=-1;const queue=[start],dirs=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];let head=0;
+            while(head<queue.length&&parent[goal]===-2){const id=queue[head++],iz=Math.floor(id/nr),ir=id%nr,a=point(id);for(const[dz,dr]of dirs){const z=iz+dz,r=ir+dr,ni=z*nr+r;if(z<0||z>=nz||r<0||r>=nr||parent[ni]!==-2||!ok(ni)||!clearanceSegment(a,point(ni),c))continue;parent[ni]=id;queue.push(ni);}}
+            if(parent[goal]===-2)continue;const ids:number[]=[];for(let id=goal;id>=0;id=parent[id])ids.push(id);ids.reverse();const raw=ids.map(point),out:AllowedPoint[]=[];for(let i=0;i<raw.length;){out.push(raw[i]);if(i===raw.length-1)break;let j=raw.length-1;while(j>i+1&&!clearanceSegment(raw[i],raw[j],c))j--;i=j;}out.push(to);return out;
+          }
+          return base;
         };
 
         /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
