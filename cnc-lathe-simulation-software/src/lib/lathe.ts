@@ -143,7 +143,7 @@ export interface Params {
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
   safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
   fastInnerBoundaryRouting?: boolean; // سازگاری تنظیم ذخیره‌شده نسخه قبلی
-  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest" | "rawBoundary" | "rdp" | "shortCode";
+  innerBoundaryRoutingMode?: "linear" | "expBinary" | "compact" | "orthogonal" | "nearest" | "rawBoundary" | "rdp" | "shortCode" | "offsetOptimized";
   simpleFeed: boolean; // فیدر بهینه: همهٔ فیدرها به دو F اصلی (خشن/پرداخت) ساده شوند
   zoneOrder: number[]; // ترتیب دستی نواحی (اندیس ناحیه‌ها) — آرایه خالی = ترتیب خودکار
   zoneBounds: number[]; // مرزهای دستی داخلی نواحی (Z) — آرایه خالی = تقسیم خودکار
@@ -1830,7 +1830,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              در صورت پیدا نشدن دید، همه رأس‌ها به‌عنوان fallback بررسی می‌شوند. */
           let area2=0;for(let i=0;i<n;i++)area2+=polygon[i].z*polygon[(i+1)%n].r-polygon[(i+1)%n].z*polygon[i].r;
           const reflex:number[]=[];for(let i=0;i<n;i++){const a=polygon[(i+n-1)%n],b=polygon[i],c=polygon[(i+1)%n],az=b.z-a.z,ar=b.r-a.r,bz=c.z-b.z,br=c.r-b.r,turn=az*br-ar*bz,scale=Math.hypot(az,ar)*Math.hypot(bz,br);if(turn*area2 < -1e-8&&scale>1e-9&&Math.abs(turn)/scale>.2)reflex.push(i);}
-          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);const shortCode=p.innerBoundaryRoutingMode==="shortCode",compact=shortCode||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp";if(!shortCode){const stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);}[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,shortCode?2:compact?3:6).forEach(i=>set.add(i));return [...set];};
+          const candidates=(q:AllowedPoint)=>{const set=new Set(reflex);set.add(0);set.add(1);set.add(2);set.add(3);set.add(n-1);const shortCode=p.innerBoundaryRoutingMode==="shortCode",compact=shortCode||p.innerBoundaryRoutingMode==="offsetOptimized"||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.innerBoundaryRoutingMode==="rawBoundary"||p.innerBoundaryRoutingMode==="rdp";if(!shortCode){const stride=Math.max(1,Math.ceil(n/(compact?8:24)));for(let i=0;i<n;i+=stride)set.add(i);}[...Array(n).keys()].sort((i,j)=>Math.hypot(polygon[i].z-q.z,polygon[i].r-q.r)-Math.hypot(polygon[j].z-q.z,polygon[j].r-q.r)).slice(0,shortCode?2:compact?3:6).forEach(i=>set.add(i));return [...set];};
           const visible=(q:AllowedPoint,reverse=false)=>{let out=candidates(q).filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));if(!out.length)out=[...Array(n).keys()].filter(i=>reverse?allowedLink(polygon[i],q):allowedLink(q,polygon[i]));return out;};
           const nearestVisible=(q:AllowedPoint,reverse=false)=>{
             let nearest=0,best=Infinity;for(let i=0;i<n;i++){const d=(polygon[i].z-q.z)**2+(polygon[i].r-q.r)**2;if(d<best){best=d;nearest=i;}}
@@ -1867,7 +1867,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const out:AllowedPoint[]=[];let anchor=from,i=0;
           while(i<raw.length){
             let j=raw.length-1;
-            if(p.innerBoundaryRoutingMode==="expBinary"||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="shortCode"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.fastInnerBoundaryRouting){
+            if(p.innerBoundaryRoutingMode==="expBinary"||p.innerBoundaryRoutingMode==="compact"||p.innerBoundaryRoutingMode==="offsetOptimized"||p.innerBoundaryRoutingMode==="shortCode"||p.innerBoundaryRoutingMode==="orthogonal"||p.innerBoundaryRoutingMode==="nearest"||p.fastInnerBoundaryRouting){
               /* حالت سریع جدید: عقب‌گرد نمایی و سپس بازیابی دورترین نقطه امن
                  با جست‌وجوی دودویی. */
               let step=1,failed=raw.length;
@@ -1886,7 +1886,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
           const base=planBaseLink(from,to);if(!base)return null;
           const original=[from,...base],lengths=original.slice(1).map((q,i)=>Math.hypot(q.z-original[i].z,q.r-original[i].r)),total=lengths.reduce((s,v)=>s+v,0),dense:{q:AllowedPoint;along:number}[]=[{q:from,along:0}];let passed=0;
-          for(let k=0;k<lengths.length;k++){const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/1.5));for(let i=1;i<=n;i++){const t=i/n;dense.push({q:{z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t},along:passed+lengths[k]*t});}passed+=lengths[k];}
+          for(let k=0;k<lengths.length;k++){const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/(p.innerBoundaryRoutingMode==="offsetOptimized"?3:1.5)));for(let i=1;i<=n;i++){const t=i/n;dense.push({q:{z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t},along:passed+lengths[k]*t});}passed+=lengths[k];}
           const out:AllowedPoint[]=[],previousNormals:{z:number;r:number}[]=[];let previous=from;
           /* آفست واقعی در راستای نرمال محلی مسیر ساخته می‌شود؛ بنابراین بالا،
              پایین و دو سوی قوس همگی فاصله می‌گیرند. سمت نرمالی انتخاب می‌شود
@@ -1898,6 +1898,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(!chosen){const bridge=planBaseLink(previous,q);if(bridge)out.push(...bridge);else out.push(q);previous=q;continue;}
             if(chosenNormal)previousNormals.push(chosenNormal);out.push(chosen);previous=chosen;
           }
+          /* حالت ویژه کم‌خط: از هر رأس، دورترین وتر دقیق و مجاز را انتخاب می‌کند.
+             خطای عمودی حداکثر ۰٫۲۵mm است و آزمون محدوده فقط برای وترهای هندسی
+             قابل‌قبول اجرا می‌شود؛ در نتیجه هم کم‌خط و هم برای Preview سریع است. */
+          if(p.innerBoundaryRoutingMode==="offsetOptimized"&&out.length>2){const reduced:AllowedPoint[]=[out[0]];let i=0;while(i<out.length-1){let chosen=i+1;for(let j=out.length-1;j>i+1;j--){const a=out[i],b=out[j],dz=b.z-a.z,dr=b.r-a.r,len2=dz*dz+dr*dr;let valid=true;for(let k=i+1;k<j;k++){const q=out[k],t=len2?Math.max(0,Math.min(1,((q.z-a.z)*dz+(q.r-a.r)*dr)/len2)):0;if((q.z-a.z-dz*t)**2+(q.r-a.r-dr*t)**2>.0625){valid=false;break;}}if(valid&&allowedLink(a,b)){chosen=j;break;}}reduced.push(out[chosen]);i=chosen;}return reduced;}
           /* RDP ایمن نقاط نمونه‌برداری را کم می‌کند، بدون آنکه وتر جایگزین از
              محدوده آبی خارج شود یا فرم آفست قوس از بین برود. */
           if(out.length<=2)return out;const compact:AllowedPoint[]=[out[0]],simplify=(lo:number,hi:number)=>{const a=out[lo],b=out[hi],dz=b.z-a.z,dr=b.r-a.r,len2=dz*dz+dr*dr;let far=lo,maxD=-1;for(let k=lo+1;k<hi;k++){const q=out[k],t=len2?Math.max(0,Math.min(1,((q.z-a.z)*dz+(q.r-a.r)*dr)/len2)):0,d=(q.z-a.z-dz*t)**2+(q.r-a.r-dr*t)**2;if(d>maxD){maxD=d;far=k;}}if(maxD<=.04&&allowedLink(a,b)){compact.push(b);return;}if(far<=lo||far>=hi){compact.push(b);return;}simplify(lo,far);simplify(far,hi);};simplify(0,out.length-1);return compact;
