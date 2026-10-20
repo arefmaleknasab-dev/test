@@ -2031,7 +2031,34 @@ export default function ProfileEditor({
 
   const deleteSelected = () => {
     if (!selected.length) return;
-    commit(segs.filter((s) => !selected.includes(s.id)));
+    const removed=new Set(selected);
+    const next=segs.map(s=>({...s}));
+    const byGroup=new Map<number,SketchSeg[]>();
+    for(const s of next)if(s.polylineId!=null){const list=byGroup.get(s.polylineId)??[];list.push(s);byGroup.set(s.polylineId,list);}
+    const same=(a:SPoint,b:SPoint)=>Math.abs(a.z-b.z)<1e-8&&Math.abs(a.r-b.r)<1e-8;
+    const sharedPart=(a:SketchSeg,b:SketchSeg):"a"|"b"|null=>same(a.a,b.a)||same(a.a,b.b)?"a":same(a.b,b.a)||same(a.b,b.b)?"b":null;
+    /* با حذف یک یا چند ضلع متوالی Polyline، انتهای ضلع قبلی به نقطهٔ اتصال
+       ضلع بعدی کشیده می‌شود تا زنجیره باز نماند. */
+    for(const group of byGroup.values())for(let i=0;i<group.length;){
+      if(!removed.has(group[i].id)){i++;continue;}
+      const first=i;while(i+1<group.length&&removed.has(group[i+1].id))i++;const last=i;
+      const prev=first>0&&!removed.has(group[first-1].id)?group[first-1]:null;
+      const after=last+1<group.length&&!removed.has(group[last+1].id)?group[last+1]:null;
+      if(prev&&after){
+        const prevPart=sharedPart(prev,group[first]);
+        const afterPart=sharedPart(after,group[last]);
+        if(prevPart&&afterPart){
+          const target=after[afterPart],old=prev[prevPart],dz=target.z-old.z,dr=target.r-old.r;
+          prev[prevPart]={...target};
+          if(prev.kind==="cubic"){
+            if(prevPart==="a"&&prev.c1)prev.c1={z:prev.c1.z+dz,r:prev.c1.r+dr};
+            if(prevPart==="b"&&prev.c2)prev.c2={z:prev.c2.z+dz,r:prev.c2.r+dr};
+          }
+        }
+      }
+      i++;
+    }
+    commit(next.filter((s) => !removed.has(s.id)));
     onSelected([]);
   };
 
