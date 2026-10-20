@@ -3598,12 +3598,20 @@ export default function ProfileEditor({
       const skipIds = inMulti
         ? [...new Set(selPoints.map((sp) => sp.segId))]
         : d.cluster.map((c) => c.segId);
-      const { p, hit } = applySnap(raw, skipIds);
-      setSnapHit(hit);
+      const snapped = applySnap(raw, skipIds);
+      let p=snapped.p;
+      setSnapHit(snapped.hit);
 
       const refSeg = segs.find((s) => s.id === d.ref.segId);
       const refPt = refSeg ? refSeg[d.ref.part] : null;
       if (!refPt) return;
+      /* Shift روی دستهٔ Bézier فقط طول همان دسته را روی محور فعلی‌اش تغییر
+         می‌دهد؛ جهت ثابت می‌ماند و اتصال الاکلنگی نیز برای Dragهای بعدی حفظ می‌شود. */
+      if(e.shiftKey&&refSeg&&(d.ref.part==="c1"||d.ref.part==="c2")){
+        const anchor=d.ref.part==="c1"?refSeg.a:refSeg.b;
+        const az=refPt.z-anchor.z,ar=refPt.r-anchor.r,length=Math.hypot(az,ar);
+        if(length>1e-9){const uz=az/length,ur=ar/length,nextLength=Math.max(0,(raw.z-anchor.z)*uz+(raw.r-anchor.r)*ur);p={z:anchor.z+uz*nextLength,r:anchor.r+ur*nextLength};setSnapHit(null);}
+      }
 
       /* برای کنترل‌پوینت‌ها مقصد clamp نمی‌شود. کل جابه‌جایی (تکی یا چندانتخابی)
          فقط تا جایی اعمال می‌شود که هندسهٔ واقعی همهٔ منحنی‌های درگیر داخل خام بماند. */
@@ -3683,6 +3691,8 @@ export default function ProfileEditor({
               if(dist(s.b,anchor)<1e-8)return {...s,independentB:true};
               return s;
             });
+          }else if(e.shiftKey&&handle){
+            /* تغییر موقت طول فقط روی دستهٔ فعال؛ وضعیت پیوند شکسته نمی‌شود. */
           }else if(handle&&!refIndependent){
             const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&
               ((dist(s.a,anchor)<1e-8&&!s.independentA)||(dist(s.b,anchor)<1e-8&&!s.independentB)));
