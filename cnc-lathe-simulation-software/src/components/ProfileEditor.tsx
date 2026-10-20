@@ -2887,13 +2887,12 @@ export default function ProfileEditor({
         ? clusterOf(drawingHandle.segId, drawingHandle.part)
         : [drawingHandle];
       drag.current = { mode: "handle", ref: drawingHandle, cluster, moved: false };
-      /* اگر نقطه Dragشده از قبل جزو انتخاب است، انتخاب چندنقطه‌ای دست‌نخورده
-         می‌ماند. فقط Drag یک نقطه خارج از انتخاب، انتخاب قبلی را همان لحظه با
-         همان نقطه جایگزین می‌کند تا Dotهای قدیمی در طول Drag باقی نمانند. */
-      const drawingHandleSelected = cluster.some((member) => selPoints.some((point) =>
-        point.segId === member.segId && point.part === member.part
-      ));
-      if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !drawingHandleSelected) setSelPoints([drawingHandle]);
+      /* انتخاب نقطه مستقل از انتخاب Segment است. بدون کلید کمکی فقط خود نقطه
+         فعال می‌شود؛ نقاط هم‌مکان صرفاً اتصال هندسی خود را حفظ می‌کنند. */
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        onSelected([]);
+        setSelPoints([drawingHandle]);
+      }
       return;
     }
 
@@ -3702,7 +3701,10 @@ export default function ProfileEditor({
     if (h && (h.part === "a" || h.part === "b")) {
       const rect = wrapRef.current!.getBoundingClientRect();
       const cluster = clusterOf(h.segId, h.part);
-      if (!selected.includes(h.segId)) onSelected([h.segId]);
+      onSelected([]);
+      const clickedPoint=segs.find(s=>s.id===h.segId)?.[h.part];
+      const alreadyChosen=!!clickedPoint&&selPoints.some(point=>{if(point.part!=="a"&&point.part!=="b")return false;const segment=segs.find(s=>s.id===point.segId);return !!segment&&dist(segment[point.part],clickedPoint)<1e-8;});
+      if(!alreadyChosen)setSelPoints([h]);
       setSegmentCtxMenu(null);
       setCtxMenu({
         x: clientX - rect.left,
@@ -4362,7 +4364,12 @@ export default function ProfileEditor({
 
   /* المان‌هایی که دسته‌های کنترل و نقاطشان نمایش داده می‌شود: یا المان انتخاب شده
      یا حداقل یک نقطه‌اش مستقل انتخاب شده است */
-  const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id));
+  const selectedEndpointCoords=selPoints.flatMap(point=>{
+    if(point.part!=="a"&&point.part!=="b")return [];
+    const segment=segs.find(s=>s.id===point.segId);
+    return segment?[segment[point.part]]:[];
+  });
+  const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id) || selectedEndpointCoords.some(point=>dist(s.a,point)<1e-8||dist(s.b,point)<1e-8));
 
   /* پیش‌نمایش ترسیم */
   const straightDrawing = (tool === "line" && draft.length === 1) || ((tool === "polyline" || tool === "paint") && draft.length >= 1);
@@ -4947,25 +4954,29 @@ export default function ProfileEditor({
             const pointIsActive = (part: HandleRef["part"]) =>
               selPoints.some((point) => point.segId === s.id && point.part === part) ||
               (drag.current?.mode === "handle" && drag.current.ref.segId === s.id && drag.current.ref.part === part);
+            const endpointIsActive=(part:"a"|"b")=>selectedEndpointCoords.some(point=>dist(s[part],point)<1e-8);
+            const whole=selected.includes(s.id),showA=whole||endpointIsActive("a"),showB=whole||endpointIsActive("b");
+            const showC1=whole||pointIsActive("c1")||endpointIsActive("a"),showC2=whole||pointIsActive("c2")||endpointIsActive("b");
+            const showVia=whole||pointIsActive("via");
             return (
               <g key={`h${s.id}`}>
-                {s.c1 && (
+                {s.c1 && showC1 && (
                   <>
                     <line x1={ax} y1={ay} x2={P(s.c1.z, s.c1.r)[0]} y2={P(s.c1.z, s.c1.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
                   </>
                 )}
-                {s.c2 && (
+                {s.c2 && showC2 && (
                   <>
                     <line x1={bx} y1={by} x2={P(s.c2.z, s.c2.r)[0]} y2={P(s.c2.z, s.c2.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
                   </>
                 )}
-                {s.via && (
+                {s.via && showVia && (
                   <circle className="pt-hover" cx={P(s.via.z, s.via.r)[0]} cy={P(s.via.z, s.via.r)[1]} r={5} fill="#2b1f33" stroke="#b48ee0" strokeWidth={2} />
                 )}
-                <circle className="pt-hover" cx={ax} cy={ay} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
-                <circle className="pt-hover" cx={bx} cy={by} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
+                {showA&&<circle className="pt-hover" cx={ax} cy={ay} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />}
+                {showB&&<circle className="pt-hover" cx={bx} cy={by} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />}
                 {/* نقطه فعال داخل Handle و روی همه لایه‌های پایه رسم می‌شود. */}
                 {s.c1 && pointIsActive("c1") && <circle cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
                 {s.c2 && pointIsActive("c2") && <circle cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
