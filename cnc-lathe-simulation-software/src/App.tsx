@@ -1106,6 +1106,7 @@ export default function App() {
               keepEditDraft={preferences.keepEditDraft}
               showCanvasPaintTool={preferences.showCanvasPaintTool}
               rightClickToolToggle={preferences.rightClickToolToggle}
+              deferMarqueeControlPoints={preferences.deferMarqueeControlPoints}
               profileLineWidth={preferences.lineWidth}
               selected={selectedIds}
               onSelected={setSelectedIds}

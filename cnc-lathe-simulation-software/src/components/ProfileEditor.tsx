@@ -170,6 +170,7 @@ interface Props {
   keepEditDraft: boolean;
   showCanvasPaintTool: boolean;
   rightClickToolToggle: boolean;
+  deferMarqueeControlPoints: boolean;
   profileLineWidth: number;
 }
 
@@ -865,6 +866,7 @@ export default function ProfileEditor({
   keepEditDraft,
   showCanvasPaintTool,
   rightClickToolToggle,
+  deferMarqueeControlPoints,
   profileLineWidth,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -1959,7 +1961,7 @@ export default function ProfileEditor({
         const pt = s[pp];
         if (pt && pointInRectW(pt, rectW)) out.push({ segId: s.id, part: pp });
       }
-      if (selPointSegIds.includes(s.id) || selected.includes(s.id)) {
+      if (!deferMarqueeControlPoints || selPointSegIds.includes(s.id) || selected.includes(s.id)) {
         for (const pp of ["c1", "c2"] as const) {
           const pt = s[pp];
           if (pt && pointInRectW(pt, rectW)) out.push({ segId: s.id, part: pp });
