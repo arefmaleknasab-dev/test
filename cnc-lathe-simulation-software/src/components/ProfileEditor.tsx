@@ -2799,7 +2799,15 @@ export default function ProfileEditor({
       /* اگر خط هایلایت‌شده زیر/روی خطوط دیگر باشد، Drag نقطه فقط رأس‌های همان
          خط را می‌بیند و رأس هم‌مکان خطوط دیگر وارد انتخاب نمی‌شود. */
       const selectedHitLine=nearLines.find(id=>selL.includes(id))??selL.find(id=>{const line=lineById.get(id);return !!line&&nearVerts.some(v=>v===line.va||v===line.vb);});
-      if(selectedHitLine!=null){const line=lineById.get(selectedHitLine);if(line)nearVerts=nearVerts.filter(id=>id===line.va||id===line.vb);}
+      let detachedVertex:EVert|null=null;
+      if(selectedHitLine!=null){
+        const line=lineById.get(selectedHitLine);if(line){nearVerts=nearVerts.filter(id=>id===line.va||id===line.vb);
+          /* رأس مشترک باید برای خط هایلایت‌شده Clone شود؛ صرفاً فیلترکردن Hit
+             کافی نبود، چون چند خط با یک vertex-id مشترک به‌طور ذاتی با هم حرکت می‌کردند. */
+          const sourceId=nearVerts[0],source=sourceId==null?null:vById.get(sourceId),shared=sourceId==null?0:lines.filter(l=>l.va===sourceId||l.vb===sourceId).length;
+          if(edit&&source&&shared>1){const id=Math.max(0,...edit.verts.map(v=>v.id))+1;detachedVertex={...source,id};const nextLines=edit.lines.map(l=>l.id===selectedHitLine?{...l,va:l.va===sourceId?id:l.va,vb:l.vb===sourceId?id:l.vb}:l);onEditBuf({...edit,verts:[...edit.verts,detachedVertex],lines:nextLines},false);nearVerts=[id];}
+        }
+      }
       const endpointCandidate = nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
 
       /* نشان‌های ابتدا/انتها بر Segment زیرین اولویت دارند تا با یک کلیک ساده
@@ -2864,7 +2872,7 @@ export default function ProfileEditor({
       }
       setHitPicker(null);
       setPickerHover(null);
-      const bv = hitBufVx(ploc.x, ploc.y);
+      const bv = detachedVertex?.id ?? nearVerts[0] ?? hitBufVx(ploc.x, ploc.y);
       if (bv != null) {
         const chosen = selectedHitLine!=null ? [bv] : e.shiftKey
           ? (selV.includes(bv) ? selV.filter((id) => id !== bv) : [...selV, bv])
@@ -2875,7 +2883,7 @@ export default function ProfileEditor({
           mode: "evert",
           vids: chosen,
           start: raw,
-          base: new Map(chosen.map((id) => [id, { ...vz(id) }])),
+          base: new Map(chosen.map((id) => [id, { ...(detachedVertex?.id===id?detachedVertex:vz(id)) }])),
           sx: ploc.x,
           sy: ploc.y,
           moved: false,
