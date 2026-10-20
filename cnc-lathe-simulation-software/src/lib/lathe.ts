@@ -1898,8 +1898,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if(!chosen){const bridge=planBaseLink(previous,q);if(bridge)out.push(...bridge);else out.push(q);previous=q;continue;}
             if(chosenNormal)previousNormals.push(chosenNormal);out.push(chosen);previous=chosen;
           }
-          /* نقاط هم‌خط حذف می‌شوند، ولی تنها وقتی اتصال مستقیم همچنان داخل محدوده باشد. */
-          const compact:AllowedPoint[]=[];for(const q of out){while(compact.length>=2){const a=compact[compact.length-2],b=compact[compact.length-1],cross=(b.z-a.z)*(q.r-b.r)-(b.r-a.r)*(q.z-b.z);if(Math.abs(cross)>1e-7||!allowedLink(a,q))break;compact.pop();}compact.push(q);}return compact;
+          /* RDP ایمن نقاط نمونه‌برداری را کم می‌کند، بدون آنکه وتر جایگزین از
+             محدوده آبی خارج شود یا فرم آفست قوس از بین برود. */
+          if(out.length<=2)return out;const compact:AllowedPoint[]=[out[0]],simplify=(lo:number,hi:number)=>{const a=out[lo],b=out[hi],dz=b.z-a.z,dr=b.r-a.r,len2=dz*dz+dr*dr;let far=lo,maxD=-1;for(let k=lo+1;k<hi;k++){const q=out[k],t=len2?Math.max(0,Math.min(1,((q.z-a.z)*dz+(q.r-a.r)*dr)/len2)):0,d=(q.z-a.z-dz*t)**2+(q.r-a.r-dr*t)**2;if(d>maxD){maxD=d;far=k;}}if(maxD<=.04&&allowedLink(a,b)){compact.push(b);return;}if(far<=lo||far>=hi){compact.push(b);return;}simplify(lo,far);simplify(far,hi);};simplify(0,out.length-1);return compact;
         };
 
         /* روش‌های دوطرفهٔ داخل: همان منطق Active Region خشن بیرونی، با
@@ -2047,22 +2048,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           break;
         }
-        /* اتصال‌های G0 حالت یک‌طرفه هرگز مجاز نیستند از X عمق فعلی کمتر شوند.
-           ابتدا اتصال مستقیم/مورب امتحان می‌شود؛ اگر مسیریاب عمومی به سمت −X
-           منحرف شود، یک عقب‌نشینی +X و سپس جابه‌جایی شعاعی امن ساخته می‌شود. */
-        const planSameDepthCompact=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
-          if(allowedLink(from,to))return [to];
-          const tipZ=Math.max(...boundary.map(q=>q.z)),maxR=Math.max(...polygon.map(q=>q.r));
-          for(let safeZ=Math.min(mouthPlaneZ,tipZ+.1);safeZ<=mouthPlaneZ+1e-7;safeZ+=.5){
-            const a={r:from.r,z:safeZ},b={r:to.r,z:safeZ};
-            if(allowedLink(from,a)&&allowedLink(a,b)&&allowedLink(b,to))return [a,b,to];
-            for(let bridgeR=0;bridgeR<=maxR+1e-7;bridgeR+=.5){
-              const p1={r:bridgeR,z:from.z},p2={r:bridgeR,z:safeZ},p3={r:to.r,z:safeZ};
-              if(allowedLink(from,p1)&&allowedLink(p1,p2)&&allowedLink(p2,p3)&&allowedLink(p3,to))return [p1,p2,p3,to];
-            }
-          }
-          return null;
-        };
         const planClassicRapid=(from:AllowedPoint,to:AllowedPoint,minZ:number):AllowedPoint[]|null=>{
           if(to.z>=from.z-1e-7&&allowedLink(from,to))return [to];
           const planned=planAllowedLink(from,to);let previousZ=from.z;
@@ -2122,7 +2107,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                  نوک منحنی می‌چرخد و می‌تواند پس از +X دوباره −X شود. این حرکت
                  با G0 و کاملاً داخل محدوده آبی است، نه اتصال برشی مستقیم. */
               const from={r:endR,z:cutZ},to={r:nextStartR,z:cutZ};
-              const plan=planSameDepthCompact(from,to)??planAllowedLink(from,to);
+              /* حالت یک‌طرفه نیز باید از همان مسیریاب آفست موضعی ۳mm عبور کند؛
+                 میانبر قدیمی planSameDepthCompact آفست را کاملاً دور می‌زد. */
+              const plan=planAllowedLink(from,to);
               if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
