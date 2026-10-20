@@ -1862,16 +1862,22 @@ export default function ProfileEditor({
     };
     for (const s of segs) {
       const isSel = selected.includes(s.id);
-      /* اگر حتی یک نقطهٔ المان مستقل انتخاب شده باشد، دسته‌های کنترلش قابل دسترسی‌اند */
-      const hasSelPoint = selPointSegIds.includes(s.id);
+      const selectedPoint=(part:HandleRef["part"])=>selPoints.some(point=>point.segId===s.id&&point.part===part);
+      const selectedEndpointAt=(endpoint:SPoint)=>selPoints.some(point=>{
+        if(point.part!=="a"&&point.part!=="b")return false;
+        const owner=segs.find(segment=>segment.id===point.segId);
+        return !!owner&&dist(owner[point.part],endpoint)<1e-8;
+      });
+      const activeA=selectedEndpointAt(s.a),activeB=selectedEndpointAt(s.b);
+      const hasSelPoint = selPointSegIds.includes(s.id)||activeA||activeB;
       if (!filterAllows(s.kind) && !isSel && !hasSelPoint) continue;
       check(s.id, "a", s.a);
       check(s.id, "b", s.b);
-      if (s.via) check(s.id, "via", s.via);
-      if (isSel || hasSelPoint) {
-        check(s.id, "c1", s.c1);
-        check(s.id, "c2", s.c2);
-      }
+      if (s.via&&(isSel||selectedPoint("via"))) check(s.id, "via", s.via);
+      /* فقط دسته‌ای Hit-test می‌شود که واقعاً روی بوم نمایش داده شده است؛ دستهٔ
+         ضلع هم‌جوارِ رأس انتخابی نیز با تطبیق مختصات همان رأس قابل Drag است. */
+      if (s.c1&&(isSel||selectedPoint("c1")||activeA)) check(s.id, "c1", s.c1);
+      if (s.c2&&(isSel||selectedPoint("c2")||activeB)) check(s.id, "c2", s.c2);
     }
     return best;
   };
