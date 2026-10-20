@@ -2030,6 +2030,33 @@ export default function ProfileEditor({
   /* ---------- عملیات ویرایش ---------- */
   const commit = (next: SketchSeg[]) => onSegs(next, true);
 
+  const convertSelectedPolylineVertices=(fallback:{segId:number;part:"a"|"b"})=>{
+    const chosen=selPoints.filter((p):p is {segId:number;part:"a"|"b"}=>p.part==="a"||p.part==="b");
+    const points=chosen.length?chosen:[fallback];
+    let next=segs.map(s=>({...s}));
+    const done=new Set<string>();
+    for(const pick of points){
+      const source=next.find(s=>s.id===pick.segId);if(!source||source.polylineId==null)continue;
+      const vertex=source[pick.part],key=`${source.polylineId}:${vertex.z}:${vertex.r}`;if(done.has(key))continue;done.add(key);
+      const incident=next.filter(s=>s.polylineId===source.polylineId&&(dist(s.a,vertex)<1e-8||dist(s.b,vertex)<1e-8));
+      if(incident.length<2)continue;
+      const others=incident.slice(0,2).map(s=>dist(s.a,vertex)<1e-8?s.b:s.a);
+      const dz=others[1].z-others[0].z,dr=others[1].r-others[0].r,len=Math.hypot(dz,dr)||1;
+      const arm=Math.min(dist(vertex,others[0]),dist(vertex,others[1]))/3;
+      const ux=dz/len,ur=dr/len;
+      next=next.map(s=>{
+        if(!incident.some(i=>i.id===s.id))return s;
+        const atA=dist(s.a,vertex)<1e-8;
+        const [baseC1,baseC2]=defaultCubicHandles(s.a,s.b);
+        const other=atA?s.b:s.a;
+        const sign=((other.z-vertex.z)*ux+(other.r-vertex.r)*ur)>=0?1:-1;
+        const handle={z:vertex.z+ux*arm*sign,r:vertex.r+ur*arm*sign};
+        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:baseC1),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:baseC2):handle};
+      });
+    }
+    commit(next);setCtxMenu(null);
+  };
+
   const convertPolylineEdge=(id:number,kind:"arc"|"cubic")=>{
     commit(segs.map(segment=>{
       if(segment.id!==id||segment.polylineId==null)return segment;
@@ -3550,7 +3577,20 @@ export default function ProfileEditor({
       const rScale = allowedScale(afterZMoving, 0, dr);
       const finalMoving = moveSubset(afterZMoving, 0, dr * rScale);
       const movedById = new Map(finalMoving.map((segment) => [segment.id, segment]));
-      onSegs(segs.map((segment) => movedById.get(segment.id) ?? segment), false);
+      let merged=segs.map((segment) => movedById.get(segment.id) ?? segment);
+      /* دسته‌های دو سوی رأس نرم Polyline مانند الاکلنگ‌اند: دستهٔ مقابل
+         دقیقاً هم‌راستا، هم‌اندازه و در سمت مخالف رأس قرار می‌گیرد. */
+      if(d.ref.part==="c1"||d.ref.part==="c2"){
+        const movedRef=merged.find(s=>s.id===d.ref.segId);
+        if(movedRef?.polylineId!=null){
+          const anchor=d.ref.part==="c1"?movedRef.a:movedRef.b,handle=movedRef[d.ref.part];
+          if(handle){
+            const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&(dist(s.a,anchor)<1e-8||dist(s.b,anchor)<1e-8));
+            if(other){const part=dist(other.a,anchor)<1e-8?"c1":"c2";const mirror={z:2*anchor.z-handle.z,r:2*anchor.r-handle.r};merged=merged.map(s=>s.id===other.id?{...s,[part]:mirror}:s);}
+          }
+        }
+      }
+      onSegs(merged, false);
       return;
     }
 
@@ -5426,6 +5466,7 @@ export default function ProfileEditor({
           <div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">
             {ctxMenu.separated ? "نقطه جداشده" : ctxMenu.clusterSize > 1 ? `متصل به ${ctxMenu.clusterSize} نقطه` : "نقطهٔ تنها"}
           </div>
+          {segs.find(s=>s.id===ctxMenu.segId)?.polylineId!=null&&<button onClick={()=>convertSelectedPolylineVertices({segId:ctxMenu.segId,part:ctxMenu.part})} className="flex w-full items-center gap-2 border-b border-edge px-3 py-2 text-right text-[12px] font-semibold text-teal transition-colors hover:bg-teal/12">تبدیل نقطه به منحنی کنترلی</button>}
           {ctxMenu.separated ? (
             <button
               onClick={() => doJoin(ctxMenu.segId, ctxMenu.part)}
