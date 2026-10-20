@@ -1893,10 +1893,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                می‌شود؛ بنابراین مسیریاب هرگز برای گرفتن کلیرنس به +X نمی‌رود. */
             const dense:AllowedPoint[]=[from],lengths=original.slice(1).map((q,i)=>Math.hypot(q.z-original[i].z,q.r-original[i].r)),total=lengths.reduce((s,v)=>s+v,0);let passed=0;
             for(let k=0;k<lengths.length;k++){const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/3));for(let i=1;i<=n;i++){const t=i/n,along=passed+lengths[k]*t,required=Math.min(c,along,total-along),q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};dense.push({z:q.z,r:q.r-required});}passed+=lengths[k];}
-            /* سمت منفی مرز، فضای خالیِ سوراخ است و الزاماً داخل چندضلعی آبی
-               نیست؛ ردکردن آن با allowedPoint علت حذف کامل آفست بود. تنها حالت
-               ناممکن، عبور از محور است و در آن صورت کلیرنس پله‌ای کم می‌شود. */
-            if(dense.some(q=>q.r<-.001))continue;
+            /* آفست فقط در -X ساخته می‌شود، ولی تمام ساق‌های آن همچنان باید
+               داخل محدوده آبی بمانند. اگر این مقدار در یک فرورفتگی جا نشود،
+               حلقه مقدار کلیرنس را نیم‌میلی‌متر کاهش می‌دهد. */
+            if(dense.some(q=>q.r<-.001)||dense.slice(1).some((q,i)=>!allowedLink(dense[i],q)))continue;
             const out:AllowedPoint[]=[];for(let i=1;i<dense.length;i++){const a=out.length?out[out.length-1]:from,b=dense[i],next=dense[i+1];if(next){const cross=(b.z-a.z)*(next.r-b.r)-(b.r-a.r)*(next.z-b.z);if(Math.abs(cross)<1e-7)continue;}out.push(b);}return out;
           }
           return base;
