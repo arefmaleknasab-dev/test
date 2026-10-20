@@ -1477,7 +1477,9 @@ export default function ProfileEditor({
           return;
         }
       }
-      const k = e.key.toLowerCase();
+      /* میانبر ابزارها بر پایه موقعیت فیزیکی کلید است تا با فارسی، عربی و
+         سایر Layoutها نیز همان کلید لاتین تنظیم‌شده عمل کند. */
+      const k = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
       const undoKey = e.code === "KeyZ" || k === "z";
       const redoKey = e.code === "KeyY" || k === "y";
       if ((e.ctrlKey || e.metaKey) && undoKey && !e.shiftKey) {

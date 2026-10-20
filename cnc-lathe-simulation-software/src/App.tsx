@@ -946,7 +946,7 @@ export default function App() {
   useEffect(() => {
     const onProjectKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
-      const key=e.key.toLowerCase();
+      const key=/^Key[A-Z]$/.test(e.code)?e.code.slice(3).toLowerCase():e.key.toLowerCase();
       if(key==="s"){e.preventDefault();void (e.shiftKey?saveProjectAs():saveProject());}
       if(key==="o"){e.preventDefault();projectInputRef.current?.click();}
     };
