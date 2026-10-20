@@ -1881,8 +1881,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           return out;
         };
-        const boundaryDistance=(q:AllowedPoint)=>{let d=Infinity;for(const e of polyEdges){const l2=e.ez*e.ez+e.er*e.er,t=l2?Math.max(0,Math.min(1,((q.z-e.a.z)*e.ez+(q.r-e.a.r)*e.er)/l2)):0;d=Math.min(d,Math.hypot(q.z-(e.a.z+t*e.ez),q.r-(e.a.r+t*e.er)));}return d;};
-        const chainHasClearance=(chain:AllowedPoint[],c:number)=>{const lens=chain.slice(1).map((q,i)=>Math.hypot(q.z-chain[i].z,q.r-chain[i].r)),total=lens.reduce((s,v)=>s+v,0);let passed=0;for(let k=0;k<lens.length;k++){const a=chain[k],b=chain[k+1],n=Math.max(1,Math.ceil(lens[k]));for(let i=0;i<=n;i++){const t=i/n,along=passed+lens[k]*t,required=Math.min(c,along,total-along),q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};if(!allowedPoint(q.r,q.z)||boundaryDistance(q)<required-1e-7)return false;}passed+=lens[k];}return true;};
         /* همه الگوریتم‌ها ابتدا فاصله ۳mm را برای هسته G0 می‌خواهند. فقط ساق
            کوتاه خروج/ورود پاس مستثناست؛ در تنگنا فاصله نیم‌میلی‌متری تا صفر کم می‌شود. */
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
@@ -1895,8 +1893,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                می‌شود؛ بنابراین مسیریاب هرگز برای گرفتن کلیرنس به +X نمی‌رود. */
             const dense:AllowedPoint[]=[from],lengths=original.slice(1).map((q,i)=>Math.hypot(q.z-original[i].z,q.r-original[i].r)),total=lengths.reduce((s,v)=>s+v,0);let passed=0;
             for(let k=0;k<lengths.length;k++){const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/3));for(let i=1;i<=n;i++){const t=i/n,along=passed+lengths[k]*t,required=Math.min(c,along,total-along),q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};dense.push({z:q.z,r:q.r-required});}passed+=lengths[k];}
-            if(!chainHasClearance(dense,c))continue;
-            const out:AllowedPoint[]=[];let i=0;while(i<dense.length-1){let j=dense.length-1;while(j>i+1&&!allowedLink(dense[i],dense[j]))j--;out.push(dense[j]);i=j;}return chainHasClearance([from,...out],c)?out:dense.slice(1);
+            /* سمت منفی مرز، فضای خالیِ سوراخ است و الزاماً داخل چندضلعی آبی
+               نیست؛ ردکردن آن با allowedPoint علت حذف کامل آفست بود. تنها حالت
+               ناممکن، عبور از محور است و در آن صورت کلیرنس پله‌ای کم می‌شود. */
+            if(dense.some(q=>q.r<-.001))continue;
+            const out:AllowedPoint[]=[];for(let i=1;i<dense.length;i++){const a=out.length?out[out.length-1]:from,b=dense[i],next=dense[i+1];if(next){const cross=(b.z-a.z)*(next.r-b.r)-(b.r-a.r)*(next.z-b.z);if(Math.abs(cross)<1e-7)continue;}out.push(b);}return out;
           }
           return base;
         };
