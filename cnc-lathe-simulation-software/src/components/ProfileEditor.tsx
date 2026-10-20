@@ -2188,6 +2188,15 @@ export default function ProfileEditor({
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
+  const returnFocusRef=useRef<{screenX:number;screenY:number;profile:SPoint}|null>(null),wasEditOpenRef=useRef(editOpen);
+  useEffect(()=>{
+    if(editOpen&&cam&&size.w>0&&size.h>0){
+      const preferred=activeLine==null?selL:[activeLine,...selL.filter(id=>id!==activeLine)],innerLine=preferred.map(id=>lineById.get(id)).find(l=>l&&(l.kind==="bore"||l.kind==="boreoff"||l.kind==="borefin"));
+      if(innerLine){const a=vById.get(innerLine.va),b=vById.get(innerLine.vb);if(a&&b){const center=worldPt(cam,size.w/2,size.h/2),az=a.z,ar=a.x/2,bz=b.z,br=b.x/2,dz=bz-az,dr=br-ar,len2=dz*dz+dr*dr,t=len2?Math.max(0,Math.min(1,((center.z-az)*dz+(center.r-ar)*dr)/len2)):0,toolPoint={z:az+dz*t,r:ar+dr*t};let profile:SPoint|null=null,best=Infinity;for(const seg of segs){if(split.enabled&&segSide.get(seg.id)!=="inner")continue;const hit=nearestOnSeg(seg,toolPoint);if(hit.distance<best){best=hit.distance;profile=hit.point;}}if(profile){const [screenX,screenY]=screenPt(cam,toolPoint.z,toolPoint.r);returnFocusRef.current={screenX,screenY,profile};}}}
+    }
+    if(!editOpen&&wasEditOpenRef.current&&returnFocusRef.current){const anchor=returnFocusRef.current;setCam(c=>c?{s:c.s,ox:anchor.screenX-anchor.profile.z*c.s,oy:anchor.screenY+anchor.profile.r*c.s}:c);returnFocusRef.current=null;}
+    wasEditOpenRef.current=editOpen;
+  },[editOpen,cam,size.w,size.h,activeLine,selL,lineById,vById,segs,split.enabled,segSide]);
   const vertexLineCount = useMemo(() => {
     const count = new Map<number, number>();
     for (const line of lines) {
