@@ -4915,8 +4915,7 @@ export default function ProfileEditor({
           })}
           {segs.map((s) => {
             const sel = selected.includes(s.id);
-            const hov = hoverId === s.id;
-            const hasSelPt = selPointSegIds.includes(s.id);
+            const hov = selPoints.length === 0 && hoverId === s.id;
             const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
             const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : "#f3c26b";
             return (
@@ -4924,11 +4923,11 @@ export default function ProfileEditor({
                 key={s.id}
                 d={segPath(s, cam)}
                 fill="none"
-                stroke={sel ? "#45b394" : hasSelPt ? "#ffd27a" : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
-                strokeWidth={iso ? 2.4 : sel ? 3.2 : hasSelPt ? 3.4 : hov ? 3 : 2.4}
+                stroke={sel ? "#45b394" : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
+                strokeWidth={iso ? 2.4 : sel ? 3.2 : hov ? 3 : 2.4}
                 strokeOpacity={mirrorDimmed ? 0.2 : 1}
                 strokeLinecap="round"
-                filter={!mirrorDimmed && !iso && (sel || hasSelPt) ? "url(#curveGlow)" : undefined}
+                filter={!mirrorDimmed && !iso && sel ? "url(#curveGlow)" : undefined}
               />
             );
           })}
