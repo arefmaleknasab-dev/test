@@ -3052,7 +3052,7 @@ export default function ProfileEditor({
         else if(d.base.aspectLocked!==false||shiftRef.current){if(d.mode==="e"||d.mode==="w")next.height=next.width/ratio;else next.width=next.height*ratio;}
         /* مرکز کادر در راستای محورهای محلیِ چرخیده جابه‌جا می‌شود تا ضلع مقابل
            ثابت بماند؛ بنابراین Resize پس از Rotation به محورهای جهانی منحرف نمی‌شود. */
-        const localCenterX=(d.mode.includes("e")||d.mode.includes("w"))?dx/2:0,localCenterUp=(d.mode.includes("n")||d.mode.includes("s"))?dy/2:0,newCenterZ=oldCenterZ+localCenterX*Math.cos(angleRad)+localCenterUp*Math.sin(angleRad),newCenterR=oldCenterR-localCenterX*Math.sin(angleRad)+localCenterUp*Math.cos(angleRad);next.z=newCenterZ-next.width/2;next.r=newCenterR+next.height/2;
+        const dw=next.width-d.base.width,dh=next.height-d.base.height,localCenterX=d.mode.includes("e")?dw/2:d.mode.includes("w")?-dw/2:0,localCenterUp=d.mode.includes("n")?dh/2:d.mode.includes("s")?-dh/2:0,newCenterZ=oldCenterZ+localCenterX*Math.cos(angleRad)+localCenterUp*Math.sin(angleRad),newCenterR=oldCenterR-localCenterX*Math.sin(angleRad)+localCenterUp*Math.cos(angleRad);next.z=newCenterZ-next.width/2;next.r=newCenterR+next.height/2;
       }
       imageTransformPreviewRef.current=next;if(imagePreviewFrame.current==null)imagePreviewFrame.current=requestAnimationFrame(()=>{imagePreviewFrame.current=null;setImageTransformPreview(imageTransformPreviewRef.current);});return;
     }
