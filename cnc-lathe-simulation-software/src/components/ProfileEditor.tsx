@@ -180,6 +180,9 @@ interface Props {
   profileLineWidth: number;
   pointScale: number;
   disableSelectionGlow: boolean;
+  profileColor: string;
+  selectedColor: string;
+  guideLineColor: string;
 }
 
 interface PaintEdge {
@@ -878,6 +881,9 @@ export default function ProfileEditor({
   profileLineWidth,
   pointScale,
   disableSelectionGlow,
+  profileColor,
+  selectedColor,
+  guideLineColor,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -5037,26 +5043,26 @@ export default function ProfileEditor({
             return <>
               <path d={pathOf(divided.outer, true)} fill="none" stroke={split.swapped ? "#4cc9f0" : "#e3a94e"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
               <path d={pathOf(divided.inner, true)} fill="none" stroke={split.swapped ? "#e3a94e" : "#4cc9f0"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
-              <path d={pathOf(divided.outer)} fill="none" stroke={split.swapped ? "#4cc9f0" : "#f3c26b"} strokeWidth={2.4} strokeLinecap="round" />
-              <path d={pathOf(divided.inner)} fill="none" stroke={split.swapped ? "#f3c26b" : "#4cc9f0"} strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.outer)} fill="none" stroke={split.swapped ? guideLineColor : profileColor} strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.inner)} fill="none" stroke={split.swapped ? profileColor : guideLineColor} strokeWidth={2.4} strokeLinecap="round" />
             </>;
           })()}
           {/* بدون Split، رنگ معمول هر المان استفاده می‌شود. */}
           {!split.enabled && segs.map((s) => {
             const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
-            return <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke="#e3a94e" strokeOpacity={mirrorDimmed ? 0.07 : 0.28} strokeWidth={1.6} strokeLinecap="round" />;
+            return <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke={profileColor} strokeOpacity={mirrorDimmed ? 0.07 : 0.28} strokeWidth={1.6} strokeLinecap="round" />;
           })}
           {segs.map((s) => {
             const sel = selected.includes(s.id);
             const hov = selPoints.length === 0 && hoverId === s.id;
             const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
-            const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : "#f3c26b";
+            const base = segSide.get(s.id) === "inner" ? guideLineColor : profileColor;
             return (
               <path
                 key={s.id}
                 d={segPath(s, cam)}
                 fill="none"
-                stroke={sel ? "#45b394" : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
+                stroke={sel ? selectedColor : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
                 strokeWidth={iso ? 2.4 : sel ? 3.2 : hov ? 3 : 2.4}
                 strokeOpacity={mirrorDimmed ? 0.2 : 1}
                 strokeLinecap="round"
@@ -5390,7 +5396,7 @@ export default function ProfileEditor({
           const [x2, y2] = P(mirrorSession.cursor!.z, mirrorSession.cursor!.r);
           const horizontal = Math.abs(mirrorSession.cursor!.r - mirrorSession.p1!.r) < 1e-9;
           const vertical = Math.abs(mirrorSession.cursor!.z - mirrorSession.p1!.z) < 1e-9;
-          const guideColor = horizontal ? "#754052" : vertical ? "#3b7373" : "#28dfc2";
+          const guideColor = horizontal ? "#754052" : vertical ? "#3b7373" : guideLineColor;
           return (
             <g pointerEvents="none">
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
@@ -5404,7 +5410,7 @@ export default function ProfileEditor({
         {copySession && (() => {
           const [x1, y1] = P(copySession.origin.z, copySession.origin.r);
           const [x2, y2] = P(copySession.pointer.z, copySession.pointer.r);
-          const guideColor = copySession.axis === "x" ? "#754052" : copySession.axis === "y" ? "#3b7373" : "#28dfc2";
+          const guideColor = copySession.axis === "x" ? "#754052" : copySession.axis === "y" ? "#3b7373" : guideLineColor;
           return (
             <g pointerEvents="none">
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
@@ -5439,7 +5445,7 @@ export default function ProfileEditor({
             ? "#754052"
             : moveSession.axis === "y"
               ? "#3b7373"
-              : moveSession.mode === "absolute" ? "#a99cff" : "#28dfc2";
+              : moveSession.mode === "absolute" ? "#a99cff" : guideLineColor;
           return (
             <g pointerEvents="none">
               <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />

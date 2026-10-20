@@ -1111,6 +1111,9 @@ export default function App() {
               profileLineWidth={preferences.lineWidth}
               pointScale={preferences.pointScale}
               disableSelectionGlow={preferences.disableSelectionGlow}
+              profileColor={preferences.profileColor}
+              selectedColor={preferences.selectedColor}
+              guideLineColor={preferences.guideColor}
               selected={selectedIds}
               onSelected={setSelectedIds}
               params={generationParams}
