@@ -3555,6 +3555,13 @@ export default function ProfileEditor({
       } else {
         for (const h of d.cluster) toMove.set(`${h.segId}:${h.part}`, h);
       }
+      /* دستهٔ وابسته به هر رأس باید همراه خود رأس ترجمه شود؛ در غیر این صورت
+         با جابه‌جایی نقطه، فرم منحنی و فاصلهٔ دسته از رأس ناخواسته تغییر می‌کرد. */
+      for(const h of [...toMove.values()]){
+        const segment=segs.find(s=>s.id===h.segId);
+        if(h.part==="a"&&segment?.c1)toMove.set(`${h.segId}:c1`,{segId:h.segId,part:"c1"});
+        if(h.part==="b"&&segment?.c2)toMove.set(`${h.segId}:c2`,{segId:h.segId,part:"c2"});
+      }
 
       const bySeg = new Map<number, SketchPointPart[]>();
       for (const h of toMove.values()) {
