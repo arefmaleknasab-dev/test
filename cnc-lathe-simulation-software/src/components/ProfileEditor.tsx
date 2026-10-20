@@ -3008,11 +3008,12 @@ export default function ProfileEditor({
     const s = editOpen ? null : hitSeg(raw);
     if (s) {
       const objectIds = sketchObjectIds(s.id);
-      const drillSingle=s.polylineId!=null&&objectIds.length>1&&objectIds.every(id=>selected.includes(id));
-      /* کلیک اول کل Polyline و کلیک دوم ضلع زیر نشانگر را فعال می‌کند. ضلع منفرد
-         Polyline قفل نمی‌شود؛ هنگام Move اتصال دو همسایه به‌صورت هندسی حفظ می‌شود. */
-      const allowed = drillSingle?[s.id]:(selected.includes(s.id) ? [...selected] : objectIds);
-      if (!drillSingle&&allowed.some((id) => segLocked(id, allowed))) {
+      /* صرفِ کلیک دوم یک ضلع را انتخاب می‌کند، اما Drag روی Polyline کاملاً
+         انتخاب‌شده همچنان باید کل Polyline را حرکت دهد. ضلع فقط پس از آنکه با
+         یک کلیک مستقل انتخاب شد، به‌تنهایی Drag می‌شود. */
+      const allowed = selected.includes(s.id) ? [...selected] : objectIds;
+      const movingSinglePolylineEdge=s.polylineId!=null&&allowed.length===1&&allowed[0]===s.id;
+      if (!movingSinglePolylineEdge&&allowed.some((id) => segLocked(id, allowed))) {
         if (e.shiftKey) onSelected(selected.includes(s.id) ? selected.filter((x) => !objectIds.includes(x)) : [...selected, ...objectIds.filter((id) => !selected.includes(id))]);
         else if (e.ctrlKey || e.metaKey) onSelected(selected.filter((x) => !objectIds.includes(x)));
         else if (!selected.includes(s.id)) onSelected(objectIds);
