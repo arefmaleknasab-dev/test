@@ -1885,19 +1885,18 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            کوتاه خروج/ورود پاس مستثناست؛ در تنگنا فاصله نیم‌میلی‌متری تا صفر کم می‌شود. */
         const planAllowedLink=(from:AllowedPoint,to:AllowedPoint):AllowedPoint[]|null=>{
           const base=planBaseLink(from,to);if(!base)return null;
-          const original=[from,...base],lengths=original.slice(1).map((q,i)=>Math.hypot(q.z-original[i].z,q.r-original[i].r)),total=lengths.reduce((s,v)=>s+v,0),out:AllowedPoint[]=[];let passed=0,previous=from;
-          /* آفست برای هر بخش مستقل است: هر نمونه ابتدا ۳mm به سمت -X می‌رود و
-             فقط همان نمونه، در صورت خروج از محدوده آبی، پله‌ای تا صفر برمی‌گردد.
-             بنابراین یک گلوگاه دیگر آفست تمام مسیر را صفر نمی‌کند. */
-          for(let k=0;k<lengths.length;k++){
-            const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/1.5));
-            for(let i=1;i<=n;i++){
-              const t=i/n,along=passed+lengths[k]*t,ramp=Math.min(3,along,total-along),q={z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t};let chosen:AllowedPoint|null=null;
-              for(let shift=Math.floor((ramp+1e-9)*2)/2;shift>=0;shift-=.5){const candidate={z:q.z,r:q.r-shift};if(candidate.r>=-.001&&allowedPoint(candidate.r,candidate.z)&&allowedLink(previous,candidate)){chosen=candidate;break;}}
-              if(!chosen){const bridge=planBaseLink(previous,q);if(bridge)out.push(...bridge);else out.push(q);previous=q;continue;}
-              out.push(chosen);previous=chosen;
-            }
-            passed+=lengths[k];
+          const original=[from,...base],lengths=original.slice(1).map((q,i)=>Math.hypot(q.z-original[i].z,q.r-original[i].r)),total=lengths.reduce((s,v)=>s+v,0),dense:{q:AllowedPoint;along:number}[]=[{q:from,along:0}];let passed=0;
+          for(let k=0;k<lengths.length;k++){const a=original[k],b=original[k+1],n=Math.max(1,Math.ceil(lengths[k]/1.5));for(let i=1;i<=n;i++){const t=i/n;dense.push({q:{z:a.z+(b.z-a.z)*t,r:a.r+(b.r-a.r)*t},along:passed+lengths[k]*t});}passed+=lengths[k];}
+          const out:AllowedPoint[]=[],previousNormals:{z:number;r:number}[]=[];let previous=from;
+          /* آفست واقعی در راستای نرمال محلی مسیر ساخته می‌شود؛ بنابراین بالا،
+             پایین و دو سوی قوس همگی فاصله می‌گیرند. سمت نرمالی انتخاب می‌شود
+             که داخل محدوده آبی بماند و مقدار هر نقطه مستقل تا صفر کاهش می‌یابد. */
+          for(let i=1;i<dense.length;i++){
+            const q=dense[i].q,before=dense[Math.max(0,i-1)].q,after=dense[Math.min(dense.length-1,i+1)].q,tz=after.z-before.z,tr=after.r-before.r,len=Math.hypot(tz,tr)||1,n0={z:-tr/len,r:tz/len},last=previousNormals[previousNormals.length-1],normals=last&&last.z*n0.z+last.r*n0.r<0?[{z:-n0.z,r:-n0.r},n0]:[n0,{z:-n0.z,r:-n0.r}];
+            const ramp=Math.min(3,dense[i].along,total-dense[i].along);let chosen:AllowedPoint|null=null,chosenNormal:AllowedPoint|null=null;
+            for(let shift=Math.floor((ramp+1e-9)*2)/2;shift>=0&&!chosen;shift-=.5)for(const normal of normals){const candidate={z:q.z+normal.z*shift,r:q.r+normal.r*shift};if(candidate.r>=-.001&&allowedPoint(candidate.r,candidate.z)&&allowedLink(previous,candidate)){chosen=candidate;chosenNormal=normal;break;}}
+            if(!chosen){const bridge=planBaseLink(previous,q);if(bridge)out.push(...bridge);else out.push(q);previous=q;continue;}
+            if(chosenNormal)previousNormals.push(chosenNormal);out.push(chosen);previous=chosen;
           }
           /* نقاط هم‌خط حذف می‌شوند، ولی تنها وقتی اتصال مستقیم همچنان داخل محدوده باشد. */
           const compact:AllowedPoint[]=[];for(const q of out){while(compact.length>=2){const a=compact[compact.length-2],b=compact[compact.length-1],cross=(b.z-a.z)*(q.r-b.r)-(b.r-a.r)*(q.z-b.z);if(Math.abs(cross)>1e-7||!allowedLink(a,q))break;compact.pop();}compact.push(q);}return compact;
