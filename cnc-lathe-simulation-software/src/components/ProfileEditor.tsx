@@ -2059,7 +2059,7 @@ export default function ProfileEditor({
         /* فقط رأس انتخاب‌شده دسته می‌گیرد. کنترل سمت دیگر Segment دقیقاً روی
            نقطهٔ انتهایی می‌ماند تا روی دو رأس هم‌جوار منحنی کنترلی ایجاد نشود.
            اگر آن رأس قبلاً مستقلاً منحنی شده باشد، کنترل موجودش حفظ می‌شود. */
-        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:{...s.a}),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:{...s.b}):handle};
+        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:{...s.a}),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:{...s.b}):handle,[atA?"independentA":"independentB"]:false};
       });
     }
     commit(next);setCtxMenu(null);
@@ -3644,8 +3644,19 @@ export default function ProfileEditor({
         const movedRef=merged.find(s=>s.id===d.ref.segId);
         if(movedRef?.polylineId!=null){
           const anchor=d.ref.part==="c1"?movedRef.a:movedRef.b,handle=movedRef[d.ref.part];
-          if(handle){
-            const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&(dist(s.a,anchor)<1e-8||dist(s.b,anchor)<1e-8));
+          const refIndependent=d.ref.part==="c1"?movedRef.independentA:movedRef.independentB;
+          if((e.ctrlKey||e.metaKey)&&handle){
+            /* Ctrl در نخستین Drag اتصال الاکلنگی این رأس را دائماً می‌شکند؛
+               پس از رهاکردن Ctrl نیز هر دو دسته مستقل باقی می‌مانند. */
+            merged=merged.map(s=>{
+              if(s.polylineId!==movedRef.polylineId)return s;
+              if(dist(s.a,anchor)<1e-8)return {...s,independentA:true};
+              if(dist(s.b,anchor)<1e-8)return {...s,independentB:true};
+              return s;
+            });
+          }else if(handle&&!refIndependent){
+            const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&
+              ((dist(s.a,anchor)<1e-8&&!s.independentA)||(dist(s.b,anchor)<1e-8&&!s.independentB)));
             if(other){const part=dist(other.a,anchor)<1e-8?"c1":"c2";const mirror={z:2*anchor.z-handle.z,r:2*anchor.r-handle.r};merged=merged.map(s=>s.id===other.id?{...s,[part]:mirror}:s);}
           }
         }

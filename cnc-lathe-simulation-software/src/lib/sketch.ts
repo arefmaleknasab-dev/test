@@ -26,6 +26,9 @@ export interface SketchSeg {
   filletOf?: [number, number];
   /** تعداد پاره‌خط‌های نمایش/تبدیل کمان؛ در نبود آن مقدار خودکار استفاده می‌شود. */
   arcDivisions?: number;
+  /** دستهٔ این انتها از قرینگی رأس نرم جدا شده و مستقل حرکت می‌کند. */
+  independentA?: boolean;
+  independentB?: boolean;
 }
 
 export const KIND_FA: Record<SketchKind, string> = {
