@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { EditBuf, ELine, EVert, GenResult, Holder2State, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
 import { continuousPathOffset, deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, sampleOrderedProfile, translateHolder2Edit } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
@@ -178,6 +178,7 @@ interface Props {
   rightClickToolToggle: boolean;
   deferMarqueeControlPoints: boolean;
   profileLineWidth: number;
+  pointScale: number;
 }
 
 interface PaintEdge {
@@ -874,6 +875,7 @@ export default function ProfileEditor({
   rightClickToolToggle,
   deferMarqueeControlPoints,
   profileLineWidth,
+  pointScale,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -4662,9 +4664,9 @@ export default function ProfileEditor({
         ref={svgRef}
         width={size.w}
         height={size.h}
-        style={imageDragCursor?{cursor:imageDragCursor}:undefined}
+        style={{...(imageDragCursor?{cursor:imageDragCursor}:{}),"--point-scale":pointScale} as CSSProperties}
         className={cn(
-          "block touch-none select-none",
+          "canvas-point-scale block touch-none select-none",
           panMode
             ? "cursor-grab"
             : tool === "move"

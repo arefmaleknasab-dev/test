@@ -1,3 +1,4 @@
+import "./point-scale.css";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import ControlsPanel from "./components/ControlsPanel";
 import AIImportDialog from "./components/AIImportDialog";
@@ -1108,6 +1109,7 @@ export default function App() {
               rightClickToolToggle={preferences.rightClickToolToggle}
               deferMarqueeControlPoints={preferences.deferMarqueeControlPoints}
               profileLineWidth={preferences.lineWidth}
+              pointScale={preferences.pointScale}
               selected={selectedIds}
               onSelected={setSelectedIds}
               params={generationParams}
