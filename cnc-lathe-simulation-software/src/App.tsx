@@ -4,7 +4,7 @@ import AIImportDialog from "./components/AIImportDialog";
 import { DockPanel, DockSplitter, MAX_PANEL, MIN_PANEL, WindowMenu, defaultLayout, normalizeLayout } from "./components/Dock";
 import type { LayoutState, PanelId, PanelState, PanelVis, WindowMenuItem } from "./components/Dock";
 import GCodePanel from "./components/GCodePanel";
-import ProfileEditor, { type EdSettings } from "./components/ProfileEditor";
+import ProfileEditor, { type EdSettings, type ReferenceImage } from "./components/ProfileEditor";
 import SimulationView from "./components/SimulationView";
 import PreferencesDialog, { DEFAULT_PREFERENCES, type AppPreferences } from "./components/PreferencesDialog";
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconSim, IconSettings, IconSpindle, IconWarn } from "./components/icons";
@@ -25,11 +25,12 @@ interface Saved {
   preferences?: Partial<AppPreferences>;
   layout?: LayoutState;
   activePreset?: string | null;
+  referenceImages?: ReferenceImage[];
   gcodeOvr?: Record<string, { s?: { z: number; x: number }; e?: { z: number; x: number }; via?: { z: number; x: number }[]; moves?: { motion: 0 | 1; feed: number }[]; bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>; del?: boolean }>;
   version?: number;
 }
 
-const SAVE_VERSION = 7;
+const SAVE_VERSION = 8;
 
 let SAVED: Saved | null = null;
 try {
@@ -49,13 +50,14 @@ interface ProjectTab {
   sketch: SketchSeg[];
   params: Params;
   gcodeOvr: GcodeOvrMap;
+  referenceImages: ReferenceImage[];
   activePreset: string | null;
   savedSnapshot: string | null;
   past: HistEntry[];
   future: HistEntry[];
 }
 
-const projectSnapshot = (sketch: SketchSeg[], params: Params, gcodeOvr: GcodeOvrMap) => JSON.stringify({ sketch, params, gcodeOvr });
+const projectSnapshot = (sketch: SketchSeg[], params: Params, gcodeOvr: GcodeOvrMap, images: ReferenceImage[] = []) => JSON.stringify({ sketch, params, gcodeOvr, images });
 
 interface HistEntry {
   sketch: SketchSeg[];
@@ -200,9 +202,10 @@ export default function App() {
 
   /* حالت ویرایش مسیر: فایل = برنامهٔ پایه + اوررایدِ تأییدشده (پیش از «تأیید» فایل دست‌نخورده است) */
   const [gcodeOvr, setGcodeOvr] = useState<GcodeOvrMap>(() => normGcodeOvr(SAVED?.gcodeOvr));
+  const [referenceImages,setReferenceImages]=useState<ReferenceImage[]>(()=>SAVED?.referenceImages??[]);
   const initialProjectId = useRef(`project-${Date.now()}`);
   const [activeProjectId, setActiveProjectId] = useState(initialProjectId.current);
-  const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), activePreset, savedSnapshot: null, past: [], future: [] }]);
+  const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), referenceImages, activePreset, savedSnapshot: null, past: [], future: [] }]);
   const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
   const [pendingEditExit, setPendingEditExit] = useState(false);
   const [saveThenCloseProject, setSaveThenCloseProject] = useState<string|null>(null);
@@ -233,23 +236,23 @@ export default function App() {
   const stateRef = useRef({ sketch, gcodeOvr, editBuf, editOpen, params });
   stateRef.current = { sketch, gcodeOvr, editBuf, editOpen, params };
   useEffect(() => {
-    setProjectTabs(tabs => tabs.map(tab => tab.id===activeProjectId ? { ...tab, sketch, params, gcodeOvr, activePreset } : tab));
-  }, [activeProjectId, sketch, params, gcodeOvr, activePreset]);
+    setProjectTabs(tabs => tabs.map(tab => tab.id===activeProjectId ? { ...tab, sketch, params, gcodeOvr, referenceImages, activePreset } : tab));
+  }, [activeProjectId, sketch, params, gcodeOvr, referenceImages, activePreset]);
   const switchProject = (id: string) => {
     if(id===activeProjectId)return;const tab=projectTabs.find(t=>t.id===id);if(!tab)return;
     /* تاریخچه تب مبدأ پیش از سوییچ ذخیره و تاریخچه مستقل مقصد بازیابی می‌شود. */
     setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t));
-    setActiveProjectId(id);setSketch(tab.sketch);setGenerationSketch(tab.sketch);setParams(tab.params);setGcodeOvr(tab.gcodeOvr);setActivePreset(tab.activePreset);
+    setActiveProjectId(id);setSketch(tab.sketch);setGenerationSketch(tab.sketch);setParams(tab.params);setGcodeOvr(tab.gcodeOvr);setReferenceImages(tab.referenceImages??[]);setActivePreset(tab.activePreset);
     const limit=Math.min(200,Math.max(1,Math.round(preferences.historyLimit)));
     setSelectedIds([]);setEditBuf(null);setEditOpen(false);past.current=tab.past.slice(-limit);future.current=tab.future.slice(-limit);setHistVer(v=>v+1);
   };
   const finishCloseProject = (id:string) => {
     const remaining=projectTabs.filter(t=>t.id!==id);projectHandlesRef.current.delete(id);
-    if(remaining.length){setProjectTabs(remaining);if(id===activeProjectId){const next=remaining[Math.max(0,projectTabs.findIndex(t=>t.id===id)-1)]??remaining[0];setActiveProjectId(next.id);setSketch(next.sketch);setGenerationSketch(next.sketch);setParams(next.params);setGcodeOvr(next.gcodeOvr);setActivePreset(next.activePreset);past.current=[...next.past];future.current=[...next.future];setHistVer(v=>v+1);}}
-    else { const p=PRESETS[0], nextSketch=sketchFromPoints(presetPoints(p)), id2=`project-${Date.now()}`;const nextParams=normalizeParams({...params,blankD:p.blankD,blankL:p.blankL},false);setProjectTabs([{id:id2,name:"پروژه بدون نام",sketch:nextSketch,params:nextParams,gcodeOvr:{},activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);setActiveProjectId(id2);setSketch(nextSketch);setGenerationSketch(nextSketch);setParams(nextParams);setGcodeOvr({});setActivePreset(p.id);past.current=[];future.current=[];setHistVer(v=>v+1);}
+    if(remaining.length){setProjectTabs(remaining);if(id===activeProjectId){const next=remaining[Math.max(0,projectTabs.findIndex(t=>t.id===id)-1)]??remaining[0];setActiveProjectId(next.id);setSketch(next.sketch);setGenerationSketch(next.sketch);setParams(next.params);setGcodeOvr(next.gcodeOvr);setReferenceImages(next.referenceImages??[]);setActivePreset(next.activePreset);past.current=[...next.past];future.current=[...next.future];setHistVer(v=>v+1);}}
+    else { const p=PRESETS[0], nextSketch=sketchFromPoints(presetPoints(p)), id2=`project-${Date.now()}`;const nextParams=normalizeParams({...params,blankD:p.blankD,blankL:p.blankL},false);setProjectTabs([{id:id2,name:"پروژه بدون نام",sketch:nextSketch,params:nextParams,gcodeOvr:{},referenceImages:[],activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);setActiveProjectId(id2);setSketch(nextSketch);setGenerationSketch(nextSketch);setParams(nextParams);setGcodeOvr({});setReferenceImages([]);setActivePreset(p.id);past.current=[];future.current=[];setHistVer(v=>v+1);}
     setPendingCloseProject(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);
   };
-  const requestCloseProject=(id:string)=>{const tab=projectTabs.find(t=>t.id===id);if(!tab)return;const dirty=tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr);if(dirty)setPendingCloseProject(id);else finishCloseProject(id);};
+  const requestCloseProject=(id:string)=>{const tab=projectTabs.find(t=>t.id===id);if(!tab)return;const dirty=tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr,tab.referenceImages);if(dirty)setPendingCloseProject(id);else finishCloseProject(id);};
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -377,11 +380,11 @@ export default function App() {
   /* ذخیره محلی */
   useEffect(() => {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ sketch, params, settings, preferences, activePreset, layout, gcodeOvr, version: SAVE_VERSION }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ sketch, params, settings, preferences, activePreset, layout, gcodeOvr, referenceImages, version: SAVE_VERSION }));
     } catch {
       /* ignore */
     }
-  }, [sketch, params, settings, preferences, activePreset, layout, gcodeOvr]);
+  }, [sketch, params, settings, preferences, activePreset, layout, gcodeOvr, referenceImages]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -733,7 +736,7 @@ export default function App() {
           : sketchFromPoints(presetPoints(p));
     const hadEditDraft = !!editBufRef.current;
     const newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    setProjectTabs(tabs=>[...tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t),{id:newProjectId,name:p.name,sketch:nextSketch,params,gcodeOvr:{},activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);
+    setProjectTabs(tabs=>[...tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t),{id:newProjectId,name:p.name,sketch:nextSketch,params,gcodeOvr:{},referenceImages:[],activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);
     setActiveProjectId(newProjectId);
 
     /* هر پیش‌تنظیم پروژه‌ای مستقل است و تاریخچه پروژه قبلی وارد آن نمی‌شود. */
@@ -743,6 +746,7 @@ export default function App() {
     setSketch(nextSketch);
     setGenerationSketch(nextSketch);
     setGcodeOvr({});
+    setReferenceImages([]);
     if (hadEditDraft) {
       presetReseedRef.current = true;
       /* یک render بدون بافر، camera-fit و stateهای تعاملی ویرایشگر را نیز برای
@@ -859,7 +863,7 @@ export default function App() {
     format: "KharraatCode Project", version: SAVE_VERSION, savedAt: new Date().toISOString(),
     /* فایل اشتراکی فقط داده‌های مهندسی پروژه را حمل می‌کند؛ تنظیمات شخصی رابط
        کاربر (تم، رنگ، میانبر، حساسیت اسنپ، لایه‌ها و چیدمان) محلی می‌مانند. */
-    project: { sketch, params, gcodeOvr },
+    project: { sketch, params, gcodeOvr, referenceImages },
     output: { postProcessor: preferences.postProcessor, gcodeUnits: preferences.gcodeUnits, sequenceNumbers: preferences.sequenceNumbers, gcodeFormat: preferences.gcodeFormat, continuousPaths: preferences.continuousPaths, optimizeFeeds: preferences.optimizeFeeds, spreadRapid: preferences.spreadRapid, spindleSpeed: preferences.spindleSpeed, operationFeeds: preferences.operationFeeds },
   }, null, 2);
   const downloadProject = (name = "project.kharraat") => {
@@ -869,7 +873,7 @@ export default function App() {
   const askProjectName=()=>new Promise<string|null>(resolve=>{saveAsResolver.current=resolve;setSaveAsName(projectTabs.find(t=>t.id===activeProjectId)?.name||"project");});
   const saveProjectAs = async (): Promise<boolean> => {
     try {
-      if(!preferences.useWindowsSaveDialog){const entered=await askProjectName();if(!entered)return false;const clean=entered.trim().replace(/[\\/:*?"<>|]+/g,"-").replace(/\.kharraat$/i,"")||"project";downloadProject(`${clean}.kharraat`);setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,name:clean,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr)}:t));showToast("پروژه ذخیره شد");return true;}
+      if(!preferences.useWindowsSaveDialog){const entered=await askProjectName();if(!entered)return false;const clean=entered.trim().replace(/[\\/:*?"<>|]+/g,"-").replace(/\.kharraat$/i,"")||"project";downloadProject(`${clean}.kharraat`);setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,name:clean,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr,referenceImages)}:t));showToast("پروژه ذخیره شد");return true;}
       const picker = (window as unknown as { showSaveFilePicker?: (options: unknown) => Promise<{ name?: string; createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
       if (picker) {
         const handle = await picker({ suggestedName: "project.kharraat", types: [{ description: "KharraatCode Project", accept: { "application/json": [".kharraat"] } }] });
@@ -877,14 +881,14 @@ export default function App() {
         const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close();
         if(handle.name)setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,name:handle.name!.replace(/\.kharraat$/i,"")}:t));
       } else {const entered=await askProjectName();if(!entered)return false;downloadProject(`${entered.trim().replace(/[\\/:*?"<>|]+/g,"-").replace(/\.kharraat$/i,"")||"project"}.kharraat`);}
-      setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr)}:t));
+      setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr,referenceImages)}:t));
       showToast("پروژه ذخیره شد"); return true;
     } catch (error) { if ((error as {name?:string}).name !== "AbortError") showToast("ذخیره پروژه ممکن نشد", "warn"); return false; }
   };
   const saveProject = async (): Promise<boolean> => {
     const handle = projectHandlesRef.current.get(activeProjectId);
     if (!handle) return saveProjectAs();
-    try { const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close(); setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr)}:t)); showToast("پروژه ذخیره شد"); return true; }
+    try { const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close(); setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr,referenceImages)}:t)); showToast("پروژه ذخیره شد"); return true; }
     catch { showToast("ذخیره مستقیم ممکن نشد؛ از Save As استفاده کنید", "warn"); return false; }
   };
   useEffect(() => {
@@ -898,17 +902,17 @@ export default function App() {
     try {
       const raw = JSON.parse(await file.text()) as Saved & {
         format?: string;
-        project?: { sketch?: SketchSeg[]; params?: Partial<Params>; gcodeOvr?: Saved["gcodeOvr"] };
+        project?: { sketch?: SketchSeg[]; params?: Partial<Params>; gcodeOvr?: Saved["gcodeOvr"]; referenceImages?: ReferenceImage[] };
         output?: { postProcessor?: string; gcodeUnits?: string; sequenceNumbers?: boolean };
       };
       const data = raw.project ?? raw; // پشتیبانی از فایل‌های پروژه نسخهٔ قبلی
       if (raw.format !== "KharraatCode Project" || !data.sketch) throw new Error("invalid-project");
       const nextSketch = normalizeSketch(data.sketch); if (!nextSketch) throw new Error("invalid-sketch");
-      const nextParams=normalizeParams(data.params,false), nextOvr=normGcodeOvr(data.gcodeOvr), newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-      setProjectTabs(tabs=>[...tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t),{id:newProjectId,name:file.name.replace(/\.kharraat$/i,""),sketch:nextSketch,params:nextParams,gcodeOvr:nextOvr,activePreset:null,savedSnapshot:projectSnapshot(nextSketch,nextParams,nextOvr),past:[],future:[]}]);setActiveProjectId(newProjectId);
+      const nextParams=normalizeParams(data.params,false), nextOvr=normGcodeOvr(data.gcodeOvr), nextImages=data.referenceImages??[], newProjectId=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+      setProjectTabs(tabs=>[...tabs.map(t=>t.id===activeProjectId?{...t,past:[...past.current],future:[...future.current]}:t),{id:newProjectId,name:file.name.replace(/\.kharraat$/i,""),sketch:nextSketch,params:nextParams,gcodeOvr:nextOvr,referenceImages:nextImages,activePreset:null,savedSnapshot:projectSnapshot(nextSketch,nextParams,nextOvr,nextImages),past:[],future:[]}]);setActiveProjectId(newProjectId);
       setSketch(nextSketch); setGenerationSketch(nextSketch); setParams(nextParams);
       /* settings/preferences/layout عمداً بارگذاری نمی‌شوند تا محیط شخصی گیرنده تغییر نکند. */
-      setActivePreset(null); setGcodeOvr(nextOvr);
+      setActivePreset(null); setGcodeOvr(nextOvr); setReferenceImages(nextImages);
       setSelectedIds([]); setEditBuf(null); setEditOpen(false); setMode("design");
       past.current=[]; future.current=[]; setHistVer(v=>v+1);
       const outputDiffers = !!raw.output && (raw.output.postProcessor !== preferences.postProcessor || raw.output.gcodeUnits !== preferences.gcodeUnits || raw.output.sequenceNumbers !== preferences.sequenceNumbers);
@@ -959,7 +963,7 @@ export default function App() {
       {pendingEditExit && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات تأییدنشده ویرایش مسیر</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییراتی در مسیر انجام شده که هنوز تأیید نشده‌اند. آیا می‌خواهید تغییرات را تأیید و سپس از حالت ویرایش مسیر خارج شوید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingEditExit(false)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>{setPendingEditExit(false);discardEdit();}} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{confirmEdit();setEditBuf(null);setEditOpen(false);setPendingEditExit(false);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       {pendingCloseProject && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات ذخیره‌نشده</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییرات پروژه «{projectTabs.find(t=>t.id===pendingCloseProject)?.name}» ذخیره نشده است. آیا می‌خواهید پیش از بستن پروژه آن را ذخیره کنید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingCloseProject(null)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>finishCloseProject(pendingCloseProject)} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{const id=pendingCloseProject;setSaveThenCloseProject(id);if(id!==activeProjectId)switchProject(id);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       <DesktopMenuBar
-        projects={projectTabs.map(tab=>({id:tab.id,name:tab.name,dirty:tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr)}))}
+        projects={projectTabs.map(tab=>({id:tab.id,name:tab.name,dirty:tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr,tab.referenceImages)}))}
         activeProjectId={activeProjectId}
         onSwitchProject={switchProject}
         onCloseProject={requestCloseProject}
@@ -1079,6 +1083,8 @@ export default function App() {
             <ProfileEditor
               key={activeProjectId}
               projectId={activeProjectId}
+              referenceImages={referenceImages}
+              onReferenceImages={setReferenceImages}
               segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
               edit={editOpen ? editBuf : null}

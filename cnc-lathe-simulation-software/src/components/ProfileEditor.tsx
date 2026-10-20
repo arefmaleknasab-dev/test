@@ -132,8 +132,12 @@ const STEP_HINT: Record<Tool, string[]> = {
   split: ["کلیک روی پروفیل برای قرار دادن نقطه Split"],
 };
 
+export interface ReferenceImage { id:number; src:string; name:string; z:number; r:number; width:number; height:number; locked:boolean; black:number; gamma:number; white:number; opacity:number; }
+
 interface Props {
   projectId: string;
+  referenceImages: ReferenceImage[];
+  onReferenceImages: (images:ReferenceImage[])=>void;
   segs: SketchSeg[];
   onSegs: (next: SketchSeg[], commit: boolean) => void;
   selected: number[];
@@ -827,6 +831,8 @@ type MoveSession = {
 
 export default function ProfileEditor({
   projectId,
+  referenceImages,
+  onReferenceImages,
   segs,
   onSegs,
   selected,
@@ -869,6 +875,9 @@ export default function ProfileEditor({
     try{return JSON.parse(localStorage.getItem(paintStorageKey)||"[]") as PaintEdge[];}catch{return [];}
   });
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
+  const [selectedImageId,setSelectedImageId]=useState<number|null>(null);
+  const imageInputRef=useRef<HTMLInputElement>(null);
+  const imageDrag=useRef<{id:number;start:SPoint;base:ReferenceImage;mode:"move"|"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w"}|null>(null);
   const paintPast=useRef<PaintEdge[][]>([]),paintFuture=useRef<PaintEdge[][]>([]);
   const [,setPaintHistoryVersion]=useState(0);
   const clonePaint=(edges:PaintEdge[])=>edges.map(edge=>({...edge,a:{...edge.a},b:{...edge.b}}));
@@ -883,6 +892,7 @@ export default function ProfileEditor({
   const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
   useEffect(()=>{localStorage.setItem(paintStorageKey,JSON.stringify(paintEdges));},[paintEdges,paintStorageKey]);
+  const importReferenceFiles=async(files:File[])=>{const valid=files.filter(file=>file.type.startsWith("image/")||/\.(avif|bmp|gif|jpe?g|png|svg|webp|ico|tiff?)$/i.test(file.name)),added=await Promise.all(valid.map(file=>new Promise<ReferenceImage|null>(resolve=>{const reader=new FileReader();reader.onerror=()=>resolve(null);reader.onload=()=>{const src=String(reader.result||""),probe=new Image();probe.onerror=()=>resolve(null);probe.onload=()=>{const width=100,height=100*(probe.naturalHeight||1)/(probe.naturalWidth||1);resolve({id:Date.now()+Math.random(),src,name:file.name,z:(params.blankL-width)/2,r:height/2,width,height,locked:false,black:0,gamma:1,white:255,opacity:.65});};probe.src=src;};reader.readAsDataURL(file);})));const images=added.filter((x):x is ReferenceImage=>!!x);if(images.length){onReferenceImages([...referenceImages,...images]);setSelectedImageId(images[images.length-1].id);}};
   const addPaintDraft=(points:SPoint[])=>{
     if(points.length<2)return;
     const stamp=Date.now();
@@ -3007,6 +3017,7 @@ export default function ProfileEditor({
       return; // یک فریم برای تثبیت دوربین؛ از جهش نقطه پس از Pan جلوگیری می‌کند
     }
     const raw = toWorld(e.clientX, e.clientY);
+    if(imageDrag.current){const d=imageDrag.current;if(d.base.locked)return;const delta=quantStep(raw,d.start),dx=delta.z,dy=delta.r;let next={...d.base};if(d.mode==="move")next={...next,z:d.base.z+dx,r:d.base.r+dy};else{const right=d.base.z+d.base.width,bottom=d.base.r-d.base.height;if(d.mode.includes("e")){next.width=Math.max(.5,right-(d.base.z+dx));next.z=d.base.z+dx;}if(d.mode.includes("w"))next.width=Math.max(.5,d.base.width+dx);if(d.mode.includes("n")){next.height=Math.max(.5,d.base.height-dy);next.r=d.base.r+dy;}if(d.mode.includes("s"))next.height=Math.max(.5,d.base.height+dy);if(d.mode.length===2){const ratio=d.base.width/d.base.height;next.height=next.width/ratio;if(d.mode.includes("s"))next.r=bottom+next.height;}}onReferenceImages(referenceImages.map(img=>img.id===d.id?next:img));return;}
     /* Pan راست/وسط باید پیش از منطق Move پردازش شود. */
     const cameraGesture = drag.current;
     if (cameraGesture?.mode === "pan") {
@@ -3565,6 +3576,7 @@ export default function ProfileEditor({
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if(imageDrag.current){imageDrag.current=null;return;}
     if (boxPivotDrag.current) { boxPivotDrag.current=false; return; }
     if (boxRotateDrag.current) { boxRotateDrag.current=null; requestAnimationFrame(()=>{boxRotateInputRef.current?.focus();boxRotateInputRef.current?.select();}); return; }
     if (boxScaleDrag.current) {
@@ -4353,11 +4365,15 @@ export default function ProfileEditor({
   return (
     <div
       ref={wrapRef}
+      onDragOver={e=>{if(e.dataTransfer.types.includes("Files"))e.preventDefault();}}
+      onDrop={e=>{if(e.dataTransfer.files.length){e.preventDefault();void importReferenceFiles([...e.dataTransfer.files]);}}}
       className={cn(
         "relative h-full w-full overflow-hidden rounded-lg border border-edge",
         editOpen ? "bg-[#08111f]" : "bg-[#120e09]"
       )}
     >
+      <input ref={imageInputRef} type="file" accept="image/*,.webp,.avif,.svg,.tif,.tiff" multiple hidden onChange={e=>{void importReferenceFiles([...e.target.files??[]]);e.currentTarget.value="";}}/>
+      <button onClick={()=>imageInputRef.current?.click()} className="absolute top-2 left-2 z-30 rounded-md border border-edge2 bg-panel/90 px-2.5 py-1.5 text-[10px] font-bold text-ink shadow" title="واردکردن عکس مرجع">وارد کردن عکس</button>
       <svg
         ref={svgRef}
         width={size.w}
@@ -4382,9 +4398,8 @@ export default function ProfileEditor({
         )}
         onPointerDownCapture={e=>{
           if(paintMenu)setPaintMenu(null);
-          if(!(e.target as Element).closest("[data-paint-hit]")&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){
-            setSelectedPaint([]);setSelectedPaintPoints([]);
-          }
+          if(!(e.target as Element).closest("[data-paint-hit]")&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){setSelectedPaint([]);setSelectedPaintPoints([]);}
+          if(!(e.target as Element).closest("[data-ref-image]")&&!e.shiftKey)setSelectedImageId(null);
         }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -4416,7 +4431,21 @@ export default function ProfileEditor({
             <rect width="7" height="7" fill="rgba(227,169,78,0.05)" />
             <line x1="0" y1="0" x2="0" y2="7" stroke="rgba(227,169,78,0.10)" strokeWidth="1.4" />
           </pattern>
+          {referenceImages.map(img=><filter key={img.id} id={`ref-level-${img.id}`}><feComponentTransfer><feFuncR type="gamma" amplitude="1" exponent={1/img.gamma} offset="0"/><feFuncG type="gamma" amplitude="1" exponent={1/img.gamma} offset="0"/><feFuncB type="gamma" amplitude="1" exponent={1/img.gamma} offset="0"/></feComponentTransfer><feComponentTransfer><feFuncR type="linear" slope={255/Math.max(1,img.white-img.black)} intercept={-img.black/Math.max(1,img.white-img.black)}/><feFuncG type="linear" slope={255/Math.max(1,img.white-img.black)} intercept={-img.black/Math.max(1,img.white-img.black)}/><feFuncB type="linear" slope={255/Math.max(1,img.white-img.black)} intercept={-img.black/Math.max(1,img.white-img.black)}/></feComponentTransfer></filter>)}
         </defs>
+
+        {/* عکس‌های مرجع پایین‌تر از گرید و تمام خطوط قرار می‌گیرند. */}
+        {referenceImages.map(img=>{
+          const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s,selected=selectedImageId===img.id;
+          return <g key={img.id}>
+            <image data-ref-image="true" href={img.src} x={x} y={y} width={w} height={h} opacity={img.opacity} filter={`url(#ref-level-${img.id})`} onPointerDown={e=>{
+              if(e.button!==0)return;e.stopPropagation();setSelectedImageId(img.id);if(!img.locked){const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top);imageDrag.current={id:img.id,start,base:{...img},mode:"move"};e.currentTarget.setPointerCapture?.(e.pointerId);}
+            }}/>
+            {selected&&<><rect x={x} y={y} width={w} height={h} fill="none" stroke={img.locked?"#ef4444":"#45b394"} strokeWidth="1.5" strokeDasharray="5 3" pointerEvents="none"/>
+              {(["nw","ne","sw","se","n","s","e","w"] as const).map(mode=>{const hx=mode.includes("w")?x:mode.includes("e")?x+w:x+w/2,hy=mode.includes("n")?y:mode.includes("s")?y+h:y+h/2;return <rect data-ref-image="true" key={mode} x={hx-4} y={hy-4} width="8" height="8" fill="#08111f" stroke="#fff" strokeWidth="1.5" className={img.locked?"cursor-not-allowed":"cursor-pointer"} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;const rect=svgRef.current!.getBoundingClientRect();imageDrag.current={id:img.id,start:worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),base:{...img},mode};}}/>;})}
+            </>}
+          </g>;
+        })}
 
         {/* گرید: در حالت ادیت تمام فضای ماشین را می‌پوشاند؛ در طراحی فقط محدوده قطعه */}
         {gridVisible && (
@@ -5156,6 +5185,7 @@ export default function ProfileEditor({
         })}
 
       </svg>
+      {selectedImageId!=null&&(()=>{const img=referenceImages.find(x=>x.id===selectedImageId);if(!img)return null;const patch=(p:Partial<ReferenceImage>)=>onReferenceImages(referenceImages.map(x=>x.id===img.id?{...x,...p}:x));return <div dir="rtl" className="absolute right-3 bottom-3 z-40 w-64 rounded-lg border border-edge2 bg-panel/95 p-3 text-[10px] text-ink shadow-2xl"><div className="flex items-center justify-between gap-2"><b className="truncate">{img.name}</b><div className="flex shrink-0 gap-1"><button onClick={()=>patch({locked:!img.locked})} className={cn("rounded border px-2 py-1",img.locked?"border-danger text-danger":"border-edge text-mute")}>{img.locked?"بازکردن قفل":"قفل"}</button><button onClick={()=>{onReferenceImages(referenceImages.filter(x=>x.id!==img.id));setSelectedImageId(null);}} className="rounded border border-danger/50 px-2 py-1 text-danger">حذف</button></div></div><div className="mt-3 grid gap-2">{[["black","نقطه سیاه",0,254,1],["gamma","میدتون",.1,3,.05],["white","نقطه سفید",1,255,1],["opacity","شفافیت",0,1,.01]].map(([key,label,min,max,step])=><label key={String(key)}><span className="flex justify-between"><span>{label}</span><b className="font-mono text-teal">{Number(img[key as keyof ReferenceImage]).toFixed(key==="gamma"||key==="opacity"?2:0)}</b></span><input type="range" min={Number(min)} max={Number(max)} step={Number(step)} value={Number(img[key as keyof ReferenceImage])} onChange={e=>{const value=Number(e.target.value);if(key==="black")patch({black:Math.min(value,img.white-1)});else if(key==="white")patch({white:Math.max(value,img.black+1)});else patch({[key]:value});}} className="w-full accent-[#45b394]"/></label>)}</div></div>;})()}
 
       {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>commitPaint(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];const menuLeft=Math.max(8,Math.min(paintMenu.x,window.innerWidth-184)),menuTop=Math.max(8,Math.min(paintMenu.y,window.innerHeight-380));return <div className="fixed z-[90] w-60 origin-top-left scale-[0.72] rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:menuLeft,top:menuTop}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
         <div className="mb-2 flex items-center justify-between text-[13.75px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
