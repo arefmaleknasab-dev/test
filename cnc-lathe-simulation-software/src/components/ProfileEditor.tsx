@@ -1876,8 +1876,8 @@ export default function ProfileEditor({
       if (s.via&&(isSel||selectedPoint("via"))) check(s.id, "via", s.via);
       /* فقط دسته‌ای Hit-test می‌شود که واقعاً روی بوم نمایش داده شده است؛ دستهٔ
          ضلع هم‌جوارِ رأس انتخابی نیز با تطبیق مختصات همان رأس قابل Drag است. */
-      if (s.c1&&(isSel||selectedPoint("c1")||activeA)) check(s.id, "c1", s.c1);
-      if (s.c2&&(isSel||selectedPoint("c2")||activeB)) check(s.id, "c2", s.c2);
+      if (s.c1&&dist(s.c1,s.a)>1e-8&&(isSel||selectedPoint("c1")||activeA)) check(s.id, "c1", s.c1);
+      if (s.c2&&dist(s.c2,s.b)>1e-8&&(isSel||selectedPoint("c2")||activeB)) check(s.id, "c2", s.c2);
     }
     return best;
   };
@@ -2063,6 +2063,27 @@ export default function ProfileEditor({
       });
     }
     commit(next);setCtxMenu(null);
+  };
+
+  const simplifyPolylineVertex=(fallback:{segId:number;part:"a"|"b"})=>{
+    const source=segs.find(s=>s.id===fallback.segId);if(!source||source.polylineId==null)return;
+    const vertex=source[fallback.part];
+    const next=segs.map(segment=>{
+      if(segment.polylineId!==source.polylineId||segment.kind!=="cubic")return segment;
+      const atA=dist(segment.a,vertex)<1e-8,atB=dist(segment.b,vertex)<1e-8;if(!atA&&!atB)return segment;
+      const c1=atA?{...segment.a}:segment.c1;
+      const c2=atB?{...segment.b}:segment.c2;
+      const noStart=!c1||dist(c1,segment.a)<1e-8,noEnd=!c2||dist(c2,segment.b)<1e-8;
+      return noStart&&noEnd?{...segment,kind:"line" as const,c1:undefined,c2:undefined}:{...segment,c1,c2};
+    });
+    commit(next);setSelPoints([fallback]);onSelected([]);setCtxMenu(null);
+  };
+
+  const vertexHasControl=(segId:number,part:"a"|"b")=>{
+    const source=segs.find(s=>s.id===segId);if(!source||source.polylineId==null)return false;
+    const vertex=source[part];
+    return segs.some(segment=>segment.polylineId===source.polylineId&&segment.kind==="cubic"&&
+      ((dist(segment.a,vertex)<1e-8&&!!segment.c1&&dist(segment.a,segment.c1)>1e-8)||(dist(segment.b,vertex)<1e-8&&!!segment.c2&&dist(segment.b,segment.c2)>1e-8)));
   };
 
   const convertPolylineEdge=(id:number,kind:"arc"|"cubic")=>{
@@ -4992,13 +5013,13 @@ export default function ProfileEditor({
             const showVia=whole||pointIsActive("via");
             return (
               <g key={`h${s.id}`}>
-                {s.c1 && showC1 && (
+                {s.c1 && dist(s.c1,s.a)>1e-8 && showC1 && (
                   <>
                     <line x1={ax} y1={ay} x2={P(s.c1.z, s.c1.r)[0]} y2={P(s.c1.z, s.c1.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
                   </>
                 )}
-                {s.c2 && showC2 && (
+                {s.c2 && dist(s.c2,s.b)>1e-8 && showC2 && (
                   <>
                     <line x1={bx} y1={by} x2={P(s.c2.z, s.c2.r)[0]} y2={P(s.c2.z, s.c2.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
@@ -5504,12 +5525,13 @@ export default function ProfileEditor({
       {ctxMenu && (
         <div
           className="anim-in absolute z-20 w-44 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
-          style={{ left: Math.min(ctxMenu.x, size.w - 180), top: Math.min(ctxMenu.y, size.h - 120) }}
+          style={{ left: Math.min(ctxMenu.x, size.w - 180), top: Math.min(ctxMenu.y, size.h - 170) }}
         >
           <div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">
             {ctxMenu.separated ? "نقطه جداشده" : ctxMenu.clusterSize > 1 ? `متصل به ${ctxMenu.clusterSize} نقطه` : "نقطهٔ تنها"}
           </div>
           {segs.find(s=>s.id===ctxMenu.segId)?.polylineId!=null&&<button onClick={()=>convertSelectedPolylineVertices({segId:ctxMenu.segId,part:ctxMenu.part})} className="flex w-full items-center gap-2 border-b border-edge px-3 py-2 text-right text-[12px] font-semibold text-teal transition-colors hover:bg-teal/12">تبدیل نقطه به منحنی کنترلی</button>}
+          {vertexHasControl(ctxMenu.segId,ctxMenu.part)&&<button onClick={()=>simplifyPolylineVertex({segId:ctxMenu.segId,part:ctxMenu.part})} className="flex w-full items-center gap-2 border-b border-edge px-3 py-2 text-right text-[12px] font-semibold text-copper transition-colors hover:bg-copper/12">تبدیل به نقطه ساده</button>}
           {ctxMenu.separated ? (
             <button
               onClick={() => doJoin(ctxMenu.segId, ctxMenu.part)}
