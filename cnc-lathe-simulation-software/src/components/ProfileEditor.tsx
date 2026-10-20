@@ -2798,7 +2798,8 @@ export default function ProfileEditor({
       const nearLines = hitBufLines(ploc.x, ploc.y);
       /* اگر خط هایلایت‌شده زیر/روی خطوط دیگر باشد، Drag نقطه فقط رأس‌های همان
          خط را می‌بیند و رأس هم‌مکان خطوط دیگر وارد انتخاب نمی‌شود. */
-      const selectedHitLine=nearLines.find(id=>selL.includes(id))??selL.find(id=>{const line=lineById.get(id);return !!line&&nearVerts.some(v=>v===line.va||v===line.vb);});
+      const preferredLineIds=activeLine==null?selL:[activeLine,...selL.filter(id=>id!==activeLine)];
+      const selectedHitLine=nearLines.find(id=>preferredLineIds.includes(id))??preferredLineIds.find(id=>{const line=lineById.get(id);return !!line&&nearVerts.some(v=>v===line.va||v===line.vb);});
       if(selectedHitLine!=null){const line=lineById.get(selectedHitLine);if(line)nearVerts=nearVerts.filter(id=>id===line.va||id===line.vb);}
       const endpointCandidate = nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
 
