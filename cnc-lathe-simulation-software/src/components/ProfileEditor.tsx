@@ -3696,7 +3696,17 @@ export default function ProfileEditor({
           }else if(handle&&!refIndependent){
             const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&
               ((dist(s.a,anchor)<1e-8&&!s.independentA)||(dist(s.b,anchor)<1e-8&&!s.independentB)));
-            if(other){const part=dist(other.a,anchor)<1e-8?"c1":"c2";const mirror={z:2*anchor.z-handle.z,r:2*anchor.r-handle.r};merged=merged.map(s=>s.id===other.id?{...s,[part]:mirror}:s);}
+            if(other){
+              const part=dist(other.a,anchor)<1e-8?"c1":"c2",otherHandle=other[part];
+              const oldActive=refSeg?.[d.ref.part],oldActiveLength=oldActive?dist(anchor,oldActive):0;
+              const otherLength=otherHandle?dist(anchor,otherHandle):oldActiveLength;
+              const newLength=dist(anchor,handle),ratio=oldActiveLength>1e-9?otherLength/oldActiveLength:1;
+              const uz=newLength>1e-9?(handle.z-anchor.z)/newLength:0,ur=newLength>1e-9?(handle.r-anchor.r)/newLength:0;
+              /* طول‌های ایجادشده با Shift نسبت خود را حفظ می‌کنند؛ Drag عادی
+                 فقط محور الاکلنگ را می‌چرخاند و هر دو بازو را متناسب Scale می‌کند. */
+              const mirror={z:anchor.z-uz*newLength*ratio,r:anchor.r-ur*newLength*ratio};
+              merged=merged.map(s=>s.id===other.id?{...s,[part]:mirror}:s);
+            }
           }
         }
       }
