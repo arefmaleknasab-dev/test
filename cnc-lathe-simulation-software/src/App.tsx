@@ -1110,6 +1110,7 @@ export default function App() {
               deferMarqueeControlPoints={preferences.deferMarqueeControlPoints}
               profileLineWidth={preferences.lineWidth}
               pointScale={preferences.pointScale}
+              disableSelectionGlow={preferences.disableSelectionGlow}
               selected={selectedIds}
               onSelected={setSelectedIds}
               params={generationParams}

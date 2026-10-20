@@ -179,6 +179,7 @@ interface Props {
   deferMarqueeControlPoints: boolean;
   profileLineWidth: number;
   pointScale: number;
+  disableSelectionGlow: boolean;
 }
 
 interface PaintEdge {
@@ -876,6 +877,7 @@ export default function ProfileEditor({
   deferMarqueeControlPoints,
   profileLineWidth,
   pointScale,
+  disableSelectionGlow,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -4667,6 +4669,7 @@ export default function ProfileEditor({
         style={{...(imageDragCursor?{cursor:imageDragCursor}:{}),"--point-scale":pointScale} as CSSProperties}
         className={cn(
           "canvas-point-scale block touch-none select-none",
+          disableSelectionGlow && "disable-selection-glow",
           panMode
             ? "cursor-grab"
             : tool === "move"

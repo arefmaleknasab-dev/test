@@ -4,3 +4,8 @@
   transform-origin: center;
   scale: var(--point-scale, 1);
 }
+
+/* فقط Glow انتخاب حذف می‌شود؛ فیلترهای Levels تصاویر مرجع دست‌نخورده‌اند. */
+.canvas-point-scale.disable-selection-glow [filter="url(#curveGlow)"] {
+  filter: none !important;
+}
