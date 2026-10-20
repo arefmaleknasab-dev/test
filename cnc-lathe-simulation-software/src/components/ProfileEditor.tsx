@@ -1273,6 +1273,7 @@ export default function ProfileEditor({
   const [separated, setSeparated] = useState<Set<string>>(new Set());
   /* منوی راست‌کلیک برای اتصال/جداسازی نقطه */
   const [splitCtxMenu, setSplitCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [segmentCtxMenu,setSegmentCtxMenu]=useState<{x:number;y:number;segId:number}|null>(null);
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
     y: number;
@@ -2029,6 +2030,20 @@ export default function ProfileEditor({
   /* ---------- عملیات ویرایش ---------- */
   const commit = (next: SketchSeg[]) => onSegs(next, true);
 
+  const convertPolylineEdge=(id:number,kind:"arc"|"cubic")=>{
+    commit(segs.map(segment=>{
+      if(segment.id!==id||segment.polylineId==null)return segment;
+      if(kind==="cubic"){
+        const [c1,c2]=defaultCubicHandles(segment.a,segment.b);
+        return {...segment,kind:"cubic" as const,c1,c2,via:undefined};
+      }
+      const dz=segment.b.z-segment.a.z,dr=segment.b.r-segment.a.r,length=Math.hypot(dz,dr);
+      const via={z:(segment.a.z+segment.b.z)/2-(length?dr/length:0)*length*.18,r:(segment.a.r+segment.b.r)/2+(length?dz/length:0)*length*.18};
+      return {...segment,kind:"arc" as const,via,c1:undefined,c2:undefined};
+    }));
+    onSelected([id]);setSelPoints([]);setSegmentCtxMenu(null);
+  };
+
   const deleteSelected = () => {
     if (!selected.length) return;
     const removed=new Set(selected);
@@ -2613,6 +2628,7 @@ export default function ProfileEditor({
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!camRef.current) return;
     setCtxMenu(null);
+    setSegmentCtxMenu(null);
     setSplitCtxMenu(null);
     setSpeedMenu(null);
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
@@ -3647,6 +3663,7 @@ export default function ProfileEditor({
       const rect = wrapRef.current!.getBoundingClientRect();
       const cluster = clusterOf(h.segId, h.part);
       if (!selected.includes(h.segId)) onSelected([h.segId]);
+      setSegmentCtxMenu(null);
       setCtxMenu({
         x: clientX - rect.left,
         y: clientY - rect.top,
@@ -3655,7 +3672,15 @@ export default function ProfileEditor({
         separated: separated.has(handleKey(h.segId, h.part)),
         clusterSize: cluster.length,
       });
+      return;
     }
+    setCtxMenu(null);
+    const segment=hitSeg(raw);
+    if(segment?.polylineId!=null){
+      const rect=wrapRef.current!.getBoundingClientRect();
+      onSelected([segment.id]);
+      setSegmentCtxMenu({x:clientX-rect.left,y:clientY-rect.top,segId:segment.id});
+    }else setSegmentCtxMenu(null);
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
@@ -5389,6 +5414,8 @@ export default function ProfileEditor({
           </button>
         </div>
       )}
+
+      {segmentCtxMenu&&(()=>{const segment=segs.find(s=>s.id===segmentCtxMenu.segId);if(!segment)return null;return <div className="anim-in absolute z-30 w-48 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm" style={{left:Math.min(segmentCtxMenu.x,size.w-200),top:Math.min(segmentCtxMenu.y,size.h-120)}}><div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">تبدیل ضلع Polyline</div><button disabled={segment.kind==="arc"} onClick={()=>convertPolylineEdge(segment.id,"arc")} className="block w-full px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به کمان (Arc)</button><button disabled={segment.kind==="cubic"} onClick={()=>convertPolylineEdge(segment.id,"cubic")} className="block w-full border-t border-edge px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به منحنی کنترلی</button><p className="border-t border-edge px-3 py-1.5 text-[9px] leading-4 text-dim">ضلع تبدیل‌شده همچنان عضو همان Polyline باقی می‌ماند.</p></div>})()}
 
       {/* ---------- منوی راست‌کلیک: اتصال / جداسازی نقطه ---------- */}
       {ctxMenu && (
