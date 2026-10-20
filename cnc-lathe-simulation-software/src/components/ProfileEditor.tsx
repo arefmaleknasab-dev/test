@@ -3037,9 +3037,9 @@ export default function ProfileEditor({
     }
     const raw = toWorld(e.clientX, e.clientY);
     if(imageDrag.current){
-      const d=imageDrag.current;if(d.base.locked)return;if(!imageGestureBase.current){imageHistoryFocus.current=true;imageGestureBase.current=cloneImages(referenceImages);imagePast.current.push(cloneImages(referenceImages));if(imagePast.current.length>100)imagePast.current.shift();imageFuture.current=[];setImageHistoryVersion(v=>v+1);}const delta=quantStep(raw,d.start),dx=delta.z,dy=delta.r;let next={...d.base};
+      const d=imageDrag.current;if(d.base.locked)return;if(!imageGestureBase.current){imageHistoryFocus.current=true;imageGestureBase.current=cloneImages(referenceImages);imagePast.current.push(cloneImages(referenceImages));if(imagePast.current.length>100)imagePast.current.shift();imageFuture.current=[];setImageHistoryVersion(v=>v+1);}const delta=quantStep(raw,d.start),worldDx=delta.z,worldDy=delta.r,angleRad=(d.base.rotation??0)*Math.PI/180,dx=worldDx*Math.cos(angleRad)-worldDy*Math.sin(angleRad),dy=worldDx*Math.sin(angleRad)+worldDy*Math.cos(angleRad);let next={...d.base};
       if(d.mode==="rotate"){const center={z:d.base.z+d.base.width/2,r:d.base.r-d.base.height/2},angle=Math.atan2(raw.r-center.r,raw.z-center.z);next.rotation=(d.base.rotation??0)+((d.startAngle??angle)-angle)*180/Math.PI;}
-      else if(d.mode==="move")next={...next,z:d.base.z+dx,r:d.base.r+dy};
+      else if(d.mode==="move")next={...next,z:d.base.z+worldDx,r:d.base.r+worldDy};
       else {const bottom=d.base.r-d.base.height,oldCenterZ=d.base.z+d.base.width/2,oldCenterR=d.base.r-d.base.height/2;
         if(d.mode.includes("e"))next.width=Math.max(.5,d.base.width+dx);
         if(d.mode.includes("w")){next.z=d.base.z+dx;next.width=Math.max(.5,d.base.width-dx);}
@@ -3047,7 +3047,10 @@ export default function ProfileEditor({
         if(d.mode.includes("s"))next.height=Math.max(.5,d.base.height-dy);
         const ratio=d.base.width/d.base.height;
         if(d.mode.length===2&&(d.base.aspectLocked!==false||shiftRef.current)){next.height=next.width/ratio;if(d.mode.includes("n"))next.r=bottom+next.height;else next.r=d.base.r;}
-        else if(d.base.aspectLocked!==false||shiftRef.current){if(d.mode==="e"||d.mode==="w"){next.height=next.width/ratio;next.r=oldCenterR+next.height/2;}else{next.width=next.height*ratio;next.z=oldCenterZ-next.width/2;}}
+        else if(d.base.aspectLocked!==false||shiftRef.current){if(d.mode==="e"||d.mode==="w")next.height=next.width/ratio;else next.width=next.height*ratio;}
+        /* مرکز کادر در راستای محورهای محلیِ چرخیده جابه‌جا می‌شود تا ضلع مقابل
+           ثابت بماند؛ بنابراین Resize پس از Rotation به محورهای جهانی منحرف نمی‌شود. */
+        const localCenterX=(d.mode.includes("e")||d.mode.includes("w"))?dx/2:0,localCenterUp=(d.mode.includes("n")||d.mode.includes("s"))?dy/2:0,newCenterZ=oldCenterZ+localCenterX*Math.cos(angleRad)+localCenterUp*Math.sin(angleRad),newCenterR=oldCenterR-localCenterX*Math.sin(angleRad)+localCenterUp*Math.cos(angleRad);next.z=newCenterZ-next.width/2;next.r=newCenterR+next.height/2;
       }
       onReferenceImages(referenceImages.map(img=>img.id===d.id?next:img));return;
     }
