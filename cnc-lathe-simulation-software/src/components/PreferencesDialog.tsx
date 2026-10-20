@@ -44,7 +44,7 @@ export interface AppPreferences {
 }
 
 export const DEFAULT_PREFERENCES: AppPreferences = {
-  theme: "lathe", profileColor: "#e3a94e", selectedColor: "#45b394", guideColor: "#e3a94e",
+  theme: "lathe", profileColor: "#e3a94e", selectedColor: "#45b394", guideColor: "#ffffff",
   lineWidth: 2, pointScale: 1, disableSelectionGlow: true, toolbarScale: 1, keepEditDraft: false, showCanvasPaintTool: true, useWindowsSaveDialog: false, rightClickToolToggle: true, deferMarqueeControlPoints: false, historyLimit: 40,
   showHeaderImportAi: true, showHeaderExportDxf: true, showHeaderCopyGcode: true, showHeaderDownloadNc: true,
   shortcuts: { select:"v", move:"m", rotate:"r", boxscale:"b", scale:"s", copy:"c", mirror:"i", fillet:"f", line:"l", polyline:"p", quad:"q", cubic:"u", arc:"a", split:"x" },

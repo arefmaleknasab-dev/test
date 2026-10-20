@@ -4994,7 +4994,7 @@ export default function ProfileEditor({
                 از Gaussian blur پرهزینه برای تک‌تک Segmentها استفاده نمی‌شود. */}
             {selectedLinesPath && (
               <>
-                {!iso && <path d={selectedLinesPath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
+                {!iso && !disableSelectionGlow && <path d={selectedLinesPath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
                 {showPathBySpeed ? [...selectedSpeedPaths].map(([color, d]) => (
                   <path key={color} d={d} fill="none" stroke={color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3.2} strokeLinecap="round" pointerEvents="none" />
                 )) : (
