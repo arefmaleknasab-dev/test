@@ -108,6 +108,8 @@ function normGcodeOvr(raw: Saved["gcodeOvr"]): GcodeOvrMap {
 export default function App() {
   const [showAiImport, setShowAiImport] = useState(false);
   const [showPreferences, setShowPreferences] = useState(false);
+  const [saveAsName,setSaveAsName]=useState<string|null>(null);
+  const saveAsResolver=useRef<((name:string|null)=>void)|null>(null);
   const [preferences, setPreferences] = useState<AppPreferences>(() => {
     const saved = SAVED?.preferences;
     /* تنظیمات خروجی پیش‌تر در Params بودند. فقط پس از اولین ذخیره نسخه جدید،
@@ -210,6 +212,7 @@ export default function App() {
   const editOpenRef = useRef(editOpen);
   editOpenRef.current = editOpen;
   const editBufRef = useRef<EditBuf | null>(editBuf);
+  const editBaselineRef = useRef<string>("");
   editBufRef.current = editBuf;
   /* تغییر preset هندسه و پارامترهای مولد را هم‌زمان عوض می‌کند؛ اگر پیش‌نویس
      مسیر وجود داشته باشد باید بعد از تولید برنامهٔ جدید از نو seed شود. */
@@ -308,20 +311,11 @@ export default function App() {
      حرکت حتی روی برنامه‌های چند هزار خطی روان بماند. */
   const editChanges = useMemo(() => {
     if (!editOpen || !editBuf) return 0;
-    const draftHolder2 = editBuf.holder2 ?? params.holder2;
-    const holder2Changed =
-      draftHolder2.xOff !== params.holder2.xOff || draftHolder2.yOff !== params.holder2.yOff;
-    let n = holder2Changed ? 1 : 0;
-    if (!holder2Changed) {
-      const next = deriveGcodeOvr(editBuf.verts, editBuf.lines, genBase.segs, gcodeOvr, params);
-      if (JSON.stringify(next) !== JSON.stringify(gcodeOvr)) n++;
-    }
-    /* ProfileEditor ممکن است حتی بدون تغییر هندسی، آرایهٔ Sketch را با مرجع
-       تازه بازگرداند. مقایسهٔ مرجع باعث هشدار خروج کاذب می‌شد؛ فقط اختلاف
-       واقعی محتوا باید پیش‌نویس را Dirty کند. */
-    if (JSON.stringify(editBuf.sketch) !== JSON.stringify(sketch)) n++;
-    return n;
-  }, [editOpen, editBuf, params, genBase.segs, gcodeOvr, sketch]);
+    /* Pan، Zoom، Scroll و انتخاب‌ها جزو هندسه پیش‌نویس نیستند. Dirty فقط از
+       رأس‌ها، خطوط، Sketch و آفست هلدر محاسبه می‌شود و با Seed لحظه ورود سنجیده می‌شود. */
+    const geometry=JSON.stringify({verts:editBuf.verts,lines:editBuf.lines,sketch:editBuf.sketch,holder2:editBuf.holder2});
+    return geometry===editBaselineRef.current?0:1;
+  }, [editOpen, editBuf]);
 
   /* پارامترهای برداشت مستقیماً توپولوژی مسیر را تغییر می‌دهند. پیش‌نویس فعلی
      ابتدا نسبت به برنامه قبلی به override تبدیل، سپس روی برنامه جدید اعمال
@@ -373,7 +367,9 @@ export default function App() {
     if (!presetReseedRef.current) return;
     presetReseedRef.current = false;
     const seed = seedGcodeEdit(gen.segs, params);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null });
+    const nextEdit: EditBuf = { verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null };
+    editBaselineRef.current = JSON.stringify({ verts: nextEdit.verts, lines: nextEdit.lines, sketch: nextEdit.sketch, holder2: nextEdit.holder2 });
+    setEditBuf(nextEdit);
     commitRef.current = null;
     setHistVer((v) => v + 1);
   }, [gen, params, sketch]);
@@ -497,7 +493,9 @@ export default function App() {
     }
     pushPast(snap());
     const seed = seedGcodeEdit(gen.segs, params);
-    setEditBuf({ verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null });
+    const nextEdit: EditBuf = { verts: seed.verts, lines: seed.lines, sketch, off: {}, holder2: { ...params.holder2 }, selLines: [], activeLine: null };
+    editBaselineRef.current = JSON.stringify({ verts: nextEdit.verts, lines: nextEdit.lines, sketch: nextEdit.sketch, holder2: nextEdit.holder2 });
+    setEditBuf(nextEdit);
     setEditOpen(true);
     setHistVer((v) => v + 1);
   };
@@ -868,15 +866,17 @@ export default function App() {
     const url = URL.createObjectURL(new Blob([projectData()], { type: "application/json;charset=utf-8" }));
     const a = document.createElement("a"); a.href = url; a.download = name; a.click(); URL.revokeObjectURL(url);
   };
+  const askProjectName=()=>new Promise<string|null>(resolve=>{saveAsResolver.current=resolve;setSaveAsName(projectTabs.find(t=>t.id===activeProjectId)?.name||"project");});
   const saveProjectAs = async (): Promise<boolean> => {
     try {
+      if(!preferences.useWindowsSaveDialog){const entered=await askProjectName();if(!entered)return false;const clean=entered.trim().replace(/[\\/:*?"<>|]+/g,"-").replace(/\.kharraat$/i,"")||"project";downloadProject(`${clean}.kharraat`);setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,name:clean,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr)}:t));showToast("پروژه ذخیره شد");return true;}
       const picker = (window as unknown as { showSaveFilePicker?: (options: unknown) => Promise<{ name?: string; createWritable: () => Promise<{ write: (data: string) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
       if (picker) {
         const handle = await picker({ suggestedName: "project.kharraat", types: [{ description: "KharraatCode Project", accept: { "application/json": [".kharraat"] } }] });
         if (!handle) return false; projectHandlesRef.current.set(activeProjectId,handle);
         const writable = await handle.createWritable(); await writable.write(projectData()); await writable.close();
         if(handle.name)setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,name:handle.name!.replace(/\.kharraat$/i,"")}:t));
-      } else downloadProject();
+      } else {const entered=await askProjectName();if(!entered)return false;downloadProject(`${entered.trim().replace(/[\\/:*?"<>|]+/g,"-").replace(/\.kharraat$/i,"")||"project"}.kharraat`);}
       setProjectTabs(tabs=>tabs.map(t=>t.id===activeProjectId?{...t,savedSnapshot:projectSnapshot(sketch,params,gcodeOvr)}:t));
       showToast("پروژه ذخیره شد"); return true;
     } catch (error) { if ((error as {name?:string}).name !== "AbortError") showToast("ذخیره پروژه ممکن نشد", "warn"); return false; }
@@ -955,6 +955,7 @@ export default function App() {
       <input ref={projectInputRef} type="file" accept=".kharraat,application/json" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void openProjectFile(file);e.currentTarget.value="";}} />
       {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
       {showPreferences && <PreferencesDialog value={preferences} snapTolerance={settings.snapTolerancePx} onChange={setPreferences} onSnapTolerance={(snapTolerancePx) => setSettings((s) => ({ ...s, snapTolerancePx }))} onClose={() => setShowPreferences(false)} />}
+      {saveAsName!==null&&<div className="fixed inset-0 z-[130] grid place-items-center bg-black/45 p-4" dir="rtl"><form onSubmit={e=>{e.preventDefault();const value=saveAsName;setSaveAsName(null);saveAsResolver.current?.(value);saveAsResolver.current=null;}} className="w-full max-w-sm rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">ذخیره پروژه با نام</h3><label className="mt-4 block text-[11px] text-mute">نام پروژه<input autoFocus value={saveAsName} onChange={e=>setSaveAsName(e.target.value)} onFocus={e=>e.currentTarget.select()} className="field-input mt-2 w-full"/></label><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={()=>{setSaveAsName(null);saveAsResolver.current?.(null);saveAsResolver.current=null;}} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button type="submit" className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">ذخیره</button></div></form></div>}
       {pendingEditExit && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات تأییدنشده ویرایش مسیر</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییراتی در مسیر انجام شده که هنوز تأیید نشده‌اند. آیا می‌خواهید تغییرات را تأیید و سپس از حالت ویرایش مسیر خارج شوید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingEditExit(false)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>{setPendingEditExit(false);discardEdit();}} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{confirmEdit();setEditBuf(null);setEditOpen(false);setPendingEditExit(false);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       {pendingCloseProject && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات ذخیره‌نشده</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییرات پروژه «{projectTabs.find(t=>t.id===pendingCloseProject)?.name}» ذخیره نشده است. آیا می‌خواهید پیش از بستن پروژه آن را ذخیره کنید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingCloseProject(null)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>finishCloseProject(pendingCloseProject)} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{const id=pendingCloseProject;setSaveThenCloseProject(id);if(id!==activeProjectId)switchProject(id);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       <DesktopMenuBar
@@ -1076,6 +1077,8 @@ export default function App() {
           >
             {mode === "design" ? (
             <ProfileEditor
+              key={activeProjectId}
+              projectId={activeProjectId}
               segs={editOpen && editBuf ? editBuf.sketch : sketch}
               onSegs={onSketchChange}
               edit={editOpen ? editBuf : null}

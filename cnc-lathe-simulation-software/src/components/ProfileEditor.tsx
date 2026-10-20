@@ -133,6 +133,7 @@ const STEP_HINT: Record<Tool, string[]> = {
 };
 
 interface Props {
+  projectId: string;
   segs: SketchSeg[];
   onSegs: (next: SketchSeg[], commit: boolean) => void;
   selected: number[];
@@ -824,6 +825,7 @@ type MoveSession = {
 };
 
 export default function ProfileEditor({
+  projectId,
   segs,
   onSegs,
   selected,
@@ -860,8 +862,9 @@ export default function ProfileEditor({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cam, setCam] = useState<Cam | null>(null);
   const [tool, setTool] = useState<Tool>("select");
+  const paintStorageKey=`kharraat-canvas-paint-v1:${projectId}`;
   const [paintEdges,setPaintEdges]=useState<PaintEdge[]>(()=>{
-    try{return JSON.parse(localStorage.getItem("kharraat-canvas-paint-v1")||"[]") as PaintEdge[];}catch{return [];}
+    try{return JSON.parse(localStorage.getItem(paintStorageKey)||"[]") as PaintEdge[];}catch{return [];}
   });
   const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
   const paintPast=useRef<PaintEdge[][]>([]),paintFuture=useRef<PaintEdge[][]>([]);
@@ -877,7 +880,7 @@ export default function ProfileEditor({
   const [paintMarqueeHits,setPaintMarqueeHits]=useState<number[]>([]);
   const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
-  useEffect(()=>{localStorage.setItem("kharraat-canvas-paint-v1",JSON.stringify(paintEdges));},[paintEdges]);
+  useEffect(()=>{localStorage.setItem(paintStorageKey,JSON.stringify(paintEdges));},[paintEdges,paintStorageKey]);
   const addPaintDraft=(points:SPoint[])=>{
     if(points.length<2)return;
     const stamp=Date.now();
@@ -1338,7 +1341,7 @@ export default function ProfileEditor({
           setLineLengthText((value) => value.slice(0, -1));
           return;
         }
-        if (e.key === "Enter" && measuredLineEnd) {
+        if ((e.key === "Enter" || e.code === "Space") && measuredLineEnd) {
           e.preventDefault();
           if ((tool === "polyline" || tool === "paint")) {
             setDraft([...draft, measuredLineEnd]);
@@ -1353,7 +1356,7 @@ export default function ProfileEditor({
           setLineLengthText("");
           return;
         }
-        if (e.key === "Enter" && tool === "line" && lineCursor) {
+        if ((e.key === "Enter" || e.code === "Space") && tool === "line" && lineCursor) {
           e.preventDefault();
           const seg = makeSeg("line", [draft[0], lineCursor]);
           if (seg) {
@@ -1364,7 +1367,7 @@ export default function ProfileEditor({
           setLineLengthText("");
           return;
         }
-        if (e.key === "Enter" && (tool === "polyline" || tool === "paint") && draft.length >= 2) {
+        if ((e.key === "Enter" || e.code === "Space") && (tool === "polyline" || tool === "paint") && draft.length >= 2) {
           e.preventDefault();
           if(tool==="paint")addPaintDraft(draft);
           else {
@@ -1608,6 +1611,7 @@ export default function ProfileEditor({
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
       if (e.code !== "Space" || e.repeat) return;
+      if (draft.length) return;
       e.preventDefault();
       const previous = previousToolRef.current;
       if (editOpen && previous !== "select" && previous !== "move") return;
@@ -1616,7 +1620,7 @@ export default function ProfileEditor({
     };
     window.addEventListener("keydown", toggleLastTool);
     return () => window.removeEventListener("keydown", toggleLastTool);
-  }, [editOpen]);
+  }, [editOpen, draft.length]);
 
   /* ---------- اسنپ ---------- */
   const snapPts = useMemo(() => snapCandidates(segs), [segs]);
@@ -2788,8 +2792,12 @@ export default function ProfileEditor({
     /* --- حالت ویرایش مسیر — رأسِ انتخابی، سرِ افست، منحنی افست، بدنهٔ خط --- */
     if (editOpen) {
       const ploc = toLocal(e.clientX, e.clientY);
-      const nearVerts = hitBufVerts(ploc.x, ploc.y);
+      let nearVerts = hitBufVerts(ploc.x, ploc.y);
       const nearLines = hitBufLines(ploc.x, ploc.y);
+      /* اگر خط هایلایت‌شده زیر/روی خطوط دیگر باشد، Drag نقطه فقط رأس‌های همان
+         خط را می‌بیند و رأس هم‌مکان خطوط دیگر وارد انتخاب نمی‌شود. */
+      const selectedHitLine=nearLines.find(id=>selL.includes(id));
+      if(selectedHitLine!=null){const line=lineById.get(selectedHitLine);if(line)nearVerts=nearVerts.filter(id=>id===line.va||id===line.vb);}
       const endpointCandidate = nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
 
       /* نشان‌های ابتدا/انتها بر Segment زیرین اولویت دارند تا با یک کلیک ساده
