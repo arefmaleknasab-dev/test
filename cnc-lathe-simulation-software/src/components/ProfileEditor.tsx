@@ -4421,7 +4421,8 @@ export default function ProfileEditor({
   let selectedLinesPath = "";
   let activeLinePath = "";
   let activeLineStrokeWidth = 1.5;
-  const selectedSpeedPaths = new Map<string, string>();
+  const selectedSpeedPaths = new Map<string, { color: string; width: number; d: string }>();
+  const selectedPathsByWidth = new Map<number, string>();
   if (editOpen && toolpathLayersVisible && selectedLineIds.size) {
     for (const line of lines) {
       if (!selectedLineIds.has(line.id)) continue;
@@ -4431,8 +4432,11 @@ export default function ProfileEditor({
         activeLineStrokeWidth = line.motion === 0 ? 1.1 : line.kind === "finish" ? 1.8 : 1.5;
       } else {
         selectedLinesPath += d;
-        const color = speedStroke(line.motion, line.feed);
-        selectedSpeedPaths.set(color, `${selectedSpeedPaths.get(color) ?? ""}${d}`);
+        const width = line.motion === 0 ? 1.1 : line.kind === "finish" ? 1.8 : 1.5;
+        selectedPathsByWidth.set(width, `${selectedPathsByWidth.get(width) ?? ""}${d}`);
+        const color = speedStroke(line.motion, line.feed), key = `${color}:${width}`;
+        const grouped = selectedSpeedPaths.get(key);
+        selectedSpeedPaths.set(key, { color, width, d: `${grouped?.d ?? ""}${d}` });
       }
     }
   }
@@ -4994,12 +4998,11 @@ export default function ProfileEditor({
                 از Gaussian blur پرهزینه برای تک‌تک Segmentها استفاده نمی‌شود. */}
             {selectedLinesPath && (
               <>
-                {!iso && !disableSelectionGlow && <path d={selectedLinesPath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />}
-                {showPathBySpeed ? [...selectedSpeedPaths].map(([color, d]) => (
-                  <path key={color} d={d} fill="none" stroke={color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3.2} strokeLinecap="round" pointerEvents="none" />
-                )) : (
-                  <path d={selectedLinesPath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : 3} strokeLinecap="round" pointerEvents="none" />
-                )}
+                {showPathBySpeed ? [...selectedSpeedPaths].map(([key, group]) => (
+                  <path key={key} d={group.d} fill="none" stroke={group.color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : group.width} strokeLinecap="round" filter={disableSelectionGlow?undefined:"url(#curveGlow)"} pointerEvents="none" />
+                )) : [...selectedPathsByWidth].map(([width, d]) => (
+                  <path key={width} d={d} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : width} strokeLinecap="round" filter={disableSelectionGlow?undefined:"url(#curveGlow)"} pointerEvents="none" />
+                ))}
               </>
             )}
             {/* خط Active فقط با رنگ آبی روشن مشخص می‌شود؛ بدون Glow یا تغییر ضخامت. */}
