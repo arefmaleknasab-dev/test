@@ -2284,7 +2284,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     const firstCutIndex=segs.findIndex(segment=>segment.motion===1);
     if(firstCutIndex>=0){
       const firstCut=segs[firstCutIndex];
-      const startX=firstCut.x1+10,startZ=firstCut.z1;
+      /* سر واقعی عملیات مقصد نخستین G1 است، نه مبدأ قدیمی همان G1 که خودش
+         قبلاً نقطهٔ رترکت بود. نقطه شروع را دقیقاً ۵mm بالای همین سر می‌گذاریم. */
+      const startX=firstCut.x2+10,startZ=firstCut.z2;
       const leadingNotes=segs.slice(0,firstCutIndex).flatMap(segment=>segment.note??[]);
       const initial:Seg={motion:0,x1:startX,z1:startZ,x2:startX,z2:startZ,feed:RAPID_RATE,line:-1,kind:"rapid",op:firstCut.op,opId:firstCut.opId,holder:firstCut.holder,note:leadingNotes.length?leadingNotes:undefined};
       firstCut.x1=startX;firstCut.z1=startZ;
