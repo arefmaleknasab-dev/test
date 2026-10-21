@@ -3267,7 +3267,10 @@ export function seedGcodeEdit(segs: Seg[], p: Params): Pick<EditBuf, "verts" | "
   const lines: ELine[] = [];
   const plan = planBridges(segs, p);
   const bridgeAt = new Map(plan.bridges.map((b) => [b.atIndex, b]));
-  let current = { ...plan.home };
+  /* آیکن S باید دقیقاً روی نقطه آغاز واقعی G-code باشد، نه Home قدیمی.
+     با Reverse نیز شروع سگمنت اول عوض می‌شود و S خودکار به سر مقابل می‌رود. */
+  const initialStart=segs.length?execUV(segs[0],false,p):plan.home;
+  let current = { ...initialStart };
   let nextLineId = 1;
   const addV = (u: number, v: number) => { const id = verts.length; verts.push({ id, z: u, x: 2 * v }); return id; };
   let lastV = addV(current.u, current.v);
