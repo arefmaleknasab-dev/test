@@ -1025,6 +1025,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   const note = (s: string) => notes.push(s);
 
   const pushSeg = (motion: 0 | 1, x: number, z: number, feed: number, kind: SegKind) => {
+    if(Math.abs(x-cur.x)<1e-9&&Math.abs(z-cur.z)<1e-9)return;
     segs.push({
       motion,
       x1: cur.x,
@@ -1135,6 +1136,25 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   const nextIsInnerPath = (opId:number) => {
     const type=nextEnabledOp(opId)?.type;
     return type==="inner-offset"||type==="inner-finish"||type==="inner-rough";
+  };
+  const isOuterPathType=(type:OpType|undefined)=>type==="round"||type==="face"||type==="rough-d"||type==="offset"||type==="finish";
+  const nextIsOuterPath=(opId:number)=>isOuterPathType(nextEnabledOp(opId)?.type);
+  /* اتصال عمومی عملیات‌های بیرونی: خط مستقیم فقط وقتی از پروفیل/قله عبور
+     نمی‌کند G1 است. در غیر این صورت ارتفاع عبور دقیقاً بیشینه ماده + مقدار
+     Safety کاربر است؛ هیچ حاشیه ثابت یا بازگشت به رترکت سراسری افزوده نمی‌شود. */
+  const enterOuterPath=(targetR:number,targetZ:number,feed:number,kind:SegKind)=>{
+    const fromR=cur.x/2;
+    const radialOut=Math.abs(cur.z-targetZ)<1e-7&&targetR>=fromR-1e-7;
+    const frontOutside=targetR>=fromR-1e-7&&cur.z<=z0+1e-7&&targetZ<=z0+1e-7;
+    if(radialOut||frontOutside||rampIsSafe(cur.z,fromR,targetZ,targetR)){
+      mv(1,2*targetR,targetZ,feed,kind);
+      return;
+    }
+    const safeR=minSafeRadius(cur.z,targetZ);
+    const travelR=Math.max(fromR,safeR);
+    if(travelR>fromR+1e-7)rawRapid(2*travelR,cur.z);
+    if(Math.abs(cur.z-targetZ)>1e-7)rawRapid(2*travelR,targetZ);
+    mv(1,2*targetR,targetZ,feed,kind);
   };
   /* کوتاه‌ترین خروج امن به محور: ابتدا فقط به‌اندازه‌ای در +X حرکت می‌کنیم که
      از بلندترین قله میان شعاع فعلی و محور، به‌علاوه Safety، عبور کنیم؛ سپس در
@@ -1301,7 +1321,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           cornersCleared = true;
           physR.fill(R); // گوشه‌ها برداشته شد — سطح مبنا از این پس قطر واقعی است
           note(`ROUND DONE AT X${f2(R)} (${shName})`);
-          mv(0, retractX, atZ, 0, "rapid"); // جمع‌کردن پایانی
+          if(!nextIsOuterPath(op.id)) mv(0,2*(R+p.safety),atZ,0,"rapid");
         }
         break;
       }
@@ -1311,10 +1331,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (!hasOuter) break;
         if (R - r0 > 0.05) {
           note("FACING");
-          /* نزدیک‌شدن در ارتفاع امن (بیرون پوشش دورانی + فاصله امن)، سپس فرورفتن با فیدر */
-          mv(0, retractX, z0, 0, "face");
-          mv(1, 2 * r0, z0, p.feedRough * 0.8, "face");
-          mv(0, retractX, z0, 0, "rapid");
+          enterOuterPath(r0,z0,p.feedRough*.8,"face");
+          if(!nextIsOuterPath(op.id)) mv(0,2*(Math.max(r0,radiusAt(z0))+p.safety),z0,0,"rapid");
         }
         break;
       }
@@ -1467,8 +1485,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               for (const iv of active) {
                 const startZ = forward ? iv.a : iv.b;
                 const endZ = forward ? iv.b : iv.a;
+                const cStart = Math.max(offsetRadiusAt(startZ), layer);
                 if (first) {
-                  mv(0, retractX, startZ, 0, "rapid"); // موقعیت‌یابی اولیه
+                  enterOuterPath(cStart,startZ,p.feedRough*.7,"rough");
                   first = false;
                 } else {
                   /* عبور امن از ناحیهٔ تمام‌شدهٔ بین دو بازه — با حداقل فاصله امن (+Y)   */
@@ -1481,7 +1500,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                   rawRapid(2 * travelR, startZ);
                 }
                 /* فرورفتن تا منحنی لایه در نقطهٔ ورود و دنبال‌کردن منحنی درون بازه */
-                const cStart = Math.max(offsetRadiusAt(startZ), layer);
                 mv(1, 2 * cStart, startZ, p.feedRough * 0.7, "rough");
                 const lo = Math.min(startZ, endZ);
                 const hi = Math.max(startZ, endZ);
@@ -1500,7 +1518,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               forward = !forward; // گذر بعد در جهت مخالف
             }
             if (!Number.isNaN(lastEndZ)) {
-              mv(0, retractX, lastEndZ, 0, "rapid"); // جمع‌کردن پایانی
+              if(!nextIsOuterPath(op.id)) mv(0,2*(lastEndR+p.safety),lastEndZ,0,"rapid");
               /* گذر آخر زیگزاگ تا خط آفست واقعی می‌رسد. */
               radialRoughEndR = offsetRadiusAt(radialEndZ);
             }
@@ -1577,10 +1595,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               lastR = c.r;
             }
             const startZ=op.reverse?c.b:c.a,endZ=op.reverse?c.a:c.b;
-            mv(0, retractX, startZ, 0, "rapid");
-            mv(1, 2 * c.r, startZ, p.feedRough * 0.7, "rough");
+            enterOuterPath(c.r,startZ,p.feedRough*.7,"rough");
             if (c.b - c.a > 0.01) mv(1, 2 * c.r, endZ, p.feedRough, "rough");
-            mv(0, retractX, endZ, 0, "rapid");
           }
           break;
         }
@@ -1611,10 +1627,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* ایمنی اتصال مورب: اگر خط مستقیمِ بین انتهای مسیر قبل و ابتدای خط بعد   */
           /* با خط آفست (و در نتیجه منحنی اصلی) تداخل داشته باشد، اتصال پیوسته      */
           /* لغو و از مسیر امن G0 استفاده می‌شود تا شکل اصلی تراشیده نشود.          */
-          const rampOk = p.ramp && rampIsSafe(curZ, curR, startZ, c.r);
+          const rampOk = !Number.isNaN(curZ) && rampIsSafe(curZ, curR, startZ, c.r);
           if (Number.isNaN(curZ)) {
-            /* اولین برش — جابه‌جایی امن از موقعیت فعلی (خانه یا پایان عملیات قبل) */
-            mv(0, retractX, startZ, 0, "rapid");
+            enterOuterPath(c.r,startZ,p.feedRough*.7,"rough");
           } else if (!rampOk) {
             /* جابه‌جایی امن: شعاع عبور با حداقل فاصله امن بالای تمام موادِ مسیر است */
             const safeR = minSafeRadius(curZ, startZ);
@@ -1634,7 +1649,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           curZ = endZ;
           curR = c.r;
         }
-        if (!Number.isNaN(curZ)) mv(0, retractX, curZ, 0, "rapid"); // جمع‌کردن پایانی
+        if (!Number.isNaN(curZ) && !nextIsOuterPath(op.id)) mv(0,2*(curR+p.safety),curZ,0,"rapid");
         break;
       }
       /* خشن محوری — فرورفتن شعاعی در گام‌های طولی (G72) */
@@ -2237,9 +2252,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            خط آفست با فاصله امن کامل)، سپس فرورفتن مورب کوتاه با فیدر.
            با گسترش G0 صفحه ورود ۳mm جلوتر است تا روی ورود آفست نیفتد. */
         {
-          const apX = op.reverse ? Math.max(zEnd-p.safety-(p.spreadG0?3:0),z0) : Math.min(z0 + p.safety + (p.spreadG0 ? 3 : 0), zEnd);
-          const apR = Math.max(r0, radiusAt(apX)) + OD + p.safety;
-          mv(0, 2 * apR, apX, 0, "rapid");
+          const path=op.reverse?[...outerFinishPath].reverse():outerFinishPath;
+          if(path.length)enterOuterPath(path[0].r,path[0].z,p.feedFinish,"finish");
         }
         profilePath("finish", p.feedFinish, !!op.reverse);
         break;
@@ -2253,14 +2267,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* ورود کوتاه: سریع تا بالای نقطه شروع (جلوتر از صفحه پیشانی)، سپس
              فرورفتن مورب کوتاه با فیدر — بدون فیدر طولانی روی صفحه تراش‌خورده */
           const offsetPath=op.reverse?[...offSamples].reverse():offSamples;
-          {
-            const apX = op.reverse ? Math.max(zEnd-p.safety,z0) : Math.min(z0 + p.safety, zEnd);
-            const apR = Math.max(offsetPath[0].r, offsetRadiusAt(apX)) + p.safety;
-            mv(0, 2 * apR, apX, 0, "rapid");
-          }
-          mv(1, 2 * offsetPath[0].r, offsetPath[0].z, p.feedFinish, "offset");
+          enterOuterPath(offsetPath[0].r,offsetPath[0].z,p.feedFinish,"offset");
           for (let i = 1; i < offsetPath.length; i++) mv(1, 2 * offsetPath[i].r, offsetPath[i].z, p.feedFinish, "offset");
-          mv(0, retractX, zEnd, 0, "rapid");
+          if(!nextIsOuterPath(op.id)) mv(0,2*(offsetPath[offsetPath.length-1].r+p.safety),offsetPath[offsetPath.length-1].z,0,"rapid");
         }
         break;
       }
