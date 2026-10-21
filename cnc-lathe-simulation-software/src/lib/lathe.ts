@@ -1305,7 +1305,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           cornersCleared = true;
           physR.fill(R); // گوشه‌ها برداشته شد — سطح مبنا از این پس قطر واقعی است
           note(`ROUND DONE AT X${f2(R)} (${shName})`);
-          mv(0, retractX, atZ, 0, "rapid"); // جمع‌کردن پایانی
+          /* اگر عملیات بعدی خشن شعاعی است، ابزار روی استوانهٔ تازه گردشده باقی
+             می‌ماند تا مستقیماً وارد نخستین پاس شود؛ جمع‌کردن G0 فقط برای سایر
+             عملیات‌ها لازم است. */
+          if (nextEnabledOp(op.id)?.type !== "rough-d") mv(0, retractX, atZ, 0, "rapid");
         }
         break;
       }
@@ -1471,8 +1474,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               for (const iv of active) {
                 const startZ = forward ? iv.a : iv.b;
                 const endZ = forward ? iv.b : iv.a;
+                const cStart = Math.max(offsetRadiusAt(startZ), layer);
                 if (first) {
-                  mv(0, retractX, startZ, 0, "rapid"); // موقعیت‌یابی اولیه
+                  /* بعد از گردکردن، اگر ابزار همین حالا در انتهای ورودی پاس است،
+                     حرکت مستقیم G1 بعدی کافی است و retract سریع اضافه ممنوع است. */
+                  const directFromRound = cornersCleared && curOpId === op.id &&
+                    Math.abs(cur.z - startZ) < 1e-6 && cur.x / 2 >= cStart - 1e-6;
+                  if (!directFromRound) mv(0, retractX, startZ, 0, "rapid");
                   first = false;
                 } else {
                   /* عبور امن از ناحیهٔ تمام‌شدهٔ بین دو بازه — با حداقل فاصله امن (+Y)   */
@@ -1485,7 +1493,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                   rawRapid(2 * travelR, startZ);
                 }
                 /* فرورفتن تا منحنی لایه در نقطهٔ ورود و دنبال‌کردن منحنی درون بازه */
-                const cStart = Math.max(offsetRadiusAt(startZ), layer);
                 mv(1, 2 * cStart, startZ, p.feedRough * 0.7, "rough");
                 const lo = Math.min(startZ, endZ);
                 const hi = Math.max(startZ, endZ);
@@ -1574,6 +1581,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* روش کلاسیکِ یک‌طرفه */
           let nL = 0;
           let lastR = NaN;
+          let firstClassicCut = true;
           for (const c of cuts) {
             if (c.r !== lastR) {
               nL++;
@@ -1581,7 +1589,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               lastR = c.r;
             }
             const startZ=op.reverse?c.b:c.a,endZ=op.reverse?c.a:c.b;
-            mv(0, retractX, startZ, 0, "rapid");
+            const directFromRound = firstClassicCut && cornersCleared &&
+              Math.abs(cur.z - startZ) < 1e-6 && cur.x / 2 >= c.r - 1e-6 && cur.x / 2 <= R + 1e-6;
+            if (!directFromRound) mv(0, retractX, startZ, 0, "rapid");
+            firstClassicCut = false;
             mv(1, 2 * c.r, startZ, p.feedRough * 0.7, "rough");
             if (c.b - c.a > 0.01) mv(1, 2 * c.r, endZ, p.feedRough, "rough");
             mv(0, retractX, endZ, 0, "rapid");
@@ -1617,8 +1628,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* لغو و از مسیر امن G0 استفاده می‌شود تا شکل اصلی تراشیده نشود.          */
           const rampOk = p.ramp && rampIsSafe(curZ, curR, startZ, c.r);
           if (Number.isNaN(curZ)) {
-            /* اولین برش — جابه‌جایی امن از موقعیت فعلی (خانه یا پایان عملیات قبل) */
-            mv(0, retractX, startZ, 0, "rapid");
+            /* اتصال مستقیم پایان گردکردن به اولین خشن شعاعی: استوانه تا R پاک شده
+               و اگر ورودی در همان X طولی باشد، G1 فرورفتن بعدی مسیر امن است. */
+            const directFromRound = cornersCleared && Math.abs(cur.z - startZ) < 1e-6 &&
+              cur.x / 2 >= c.r - 1e-6 && cur.x / 2 <= R + 1e-6;
+            if (!directFromRound) mv(0, retractX, startZ, 0, "rapid");
           } else if (!rampOk) {
             /* جابه‌جایی امن: شعاع عبور با حداقل فاصله امن بالای تمام موادِ مسیر است */
             const safeR = minSafeRadius(curZ, startZ);
