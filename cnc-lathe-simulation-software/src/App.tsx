@@ -564,6 +564,11 @@ export default function App() {
       setSketch(eb.sketch);
       setGenerationSketch(eb.sketch);
     }
+    /* تأیید، وضعیت فعلی را به Baseline جدید تبدیل می‌کند. کپی سطحی EditBuf
+       وابستگی useMemo را نیز تغییر می‌دهد تا editChanges همان لحظه صفر شود و
+       خروج بعد از تأیید، هشدار تغییرات تأییدنشده نشان ندهد. */
+    editBaselineRef.current = JSON.stringify({ verts: eb.verts, lines: eb.lines, sketch: eb.sketch, holder2: eb.holder2 });
+    setEditBuf({ ...eb });
     setHistVer((v) => v + 1);
     showToast(holder2Changed
       ? "جی‌کد و آفست هلدر دوم به‌روز شد ✓ (ویرایش مسیر باز ماند)"
