@@ -1025,6 +1025,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   const note = (s: string) => notes.push(s);
 
   const pushSeg = (motion: 0 | 1, x: number, z: number, feed: number, kind: SegKind) => {
+    /* حرکت صفرطول خط ماشین‌کاری نیست؛ Noteها برای نخستین حرکت واقعی بعدی باقی
+       می‌مانند تا مرز عملیات‌ها خطوط تکراری و شماره‌های خالی تولید نکند. */
+    if (Math.abs(x - cur.x) < 1e-9 && Math.abs(z - cur.z) < 1e-9) return;
     segs.push({
       motion,
       x1: cur.x,
@@ -1262,6 +1265,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* وضعیت اتصال مرحله‌ای کف به خشن داخل: +X امن انجام شده و Y/−X باقی است. */
   let bottomToInnerRoughReady = false;
   let bottomToInnerRoughDirect = false;
+  /* آزمون دید مستقیم ناحیهٔ تخلیه‌شدهٔ داخل، پس از ساخت هندسهٔ خشن برای
+     اتصال عملیات‌های بعدی نیز نگه داشته می‌شود. */
+  let directInnerLinkIsSafe: ((a: { r: number; z: number }, b: { r: number; z: number }) => boolean) | null = null;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1826,6 +1832,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           return allowedPoint(a.r,a.z)&&allowedPoint(b.r,b.z);
         };
         const allowedLink=rawAllowedLink;
+        directInnerLinkIsSafe = rawAllowedLink;
         /* مسیریاب فقط داخل همان رنگ آبی حرکت می‌کند. در صورت نامعتبر بودن خط
            مستقیم، A* روی شبکه داخلی اجرا و سپس قطعات اضافی با آزمون دید مستقیم
            حذف می‌شوند؛ بنابراین تمام G0/G1های اتصال داخل چندضلعی می‌مانند. */
@@ -2163,8 +2170,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         innerCleared = true;
         /* اگر این آخرین عملیات داخل است، بدون هیچ حرکت واسط مستقیماً +X می‌رود. */
         if (!finishLastInner(op.id)) {
-          moveInnerToAxisSafely();
+          /* میان دو عملیات داخلی در همان نقطه می‌مانیم؛ عملیات بعدی ابتدا اتصال
+             مستقیم را می‌آزماید و فقط در صورت وجود قله مسیر محور را می‌سازد. */
           if (!nextIsInnerPath(op.id)) {
+            moveInnerToAxisSafely();
             rawRapid(2 * rEntry, mouthX);
             mv(0, retractX, mouthX, 0, "rapid");
           }
@@ -2186,26 +2195,30 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const mouthX = zRimF + p.innerStartClearance;
         if (!innerCleared || curHolder !== 2) enterFirstInner(2 * rEntry, mouthX);
         if (innerCleared) {
-          /* از پایان خشن، با کوتاه‌ترین مسیر امن از قله‌ها به محور می‌رسیم؛ سپس
-             روی محور تا کف می‌رویم و از همان‌جا پاس آفست را آغاز می‌کنیم. */
-          moveInnerToAxisSafely();
-          /* محور حفره پس از خشن‌کاری خالی است؛ انتقال تا سر آفست مستقیم و
-             برشی است و هیچ G0 اضافی میان دو عملیات ساخته نمی‌شود. */
-          mv(1,0,startInnerZ,p.feedRough*.7,"bore");
-          mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
+          const from={r:Math.max(0,cur.x/2),z:cur.z},to={r:innerOff[0].r,z:innerOff[0].z};
+          /* اگر سر آفست از انتهای خشن دید مستقیم دارد، همان یک G1 آغاز پاس است؛
+             رفتن به محور و برگشتن از محور فقط در حضور قلهٔ مزاحم انجام می‌شود. */
+          const clearAxis = from.r < 1e-7 && to.r < 1e-7;
+          if (clearAxis || directInnerLinkIsSafe?.(from,to)) mv(1,2*to.r,to.z,p.feedFinish,"boreoff");
+          else {
+            moveInnerToAxisSafely();
+            mv(1,0,startInnerZ,p.feedRough*.7,"bore");
+            mv(1,2*to.r,to.z,p.feedFinish,"boreoff");
+          }
         } else {
           mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "bore");
-          mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
+          mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
         }
-        /* خط بنفش فقط خود مسیر آفست دقیق است. */
-        mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
+        /* نقطهٔ صفر آفست همین حالا طی شده؛ ادامه از نقطهٔ بعدی است. */
         for (let i = 1; i < innerOff.length; i++) {
           mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
         }
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
-            moveInnerToAxisSafely();
-            if (!nextIsInnerPath(op.id)) rawRapid(2 * rEntry, mouthX);
+            if (!nextIsInnerPath(op.id)) {
+              moveInnerToAxisSafely();
+              rawRapid(2 * rEntry, mouthX);
+            }
           } else {
             /* برگشت روی مسیر تراش‌خورده سریع است و جزء هندسهٔ بنفش آفست نیست. */
             for (let i = innerOff.length - 2; i >= 0; i--) {
@@ -2232,12 +2245,19 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
         const mouthX = zRimF + p.innerStartClearance;
         if (!innerCleared || curHolder !== 2) enterFirstInner(2 * rEntry, mouthX);
+        let finishStartDone=false;
         if (innerCleared) {
-          /* مانند آفست: ابتدا از نزدیک‌ترین مسیر امن به محور، سپس روی محور تا کف. */
-          moveInnerToAxisSafely();
-          mv(1,2*rEntry,startInnerZ,p.feedRough*.7,"borefin");
+          const from={r:Math.max(0,cur.x/2),z:cur.z},to={r:IW[0].r,z:IW[0].z};
+          const clearAxis=from.r<1e-7&&to.r<1e-7;
+          if(clearAxis||directInnerLinkIsSafe?.(from,to)){
+            mv(1,2*to.r,to.z,p.feedFinish,"borefin");
+            finishStartDone=true;
+          }else{
+            moveInnerToAxisSafely();
+            mv(1,2*rEntry,startInnerZ,p.feedRough*.7,"borefin");
+          }
         } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
-        for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
+        for (let i = finishStartDone?1:0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
             /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
