@@ -1014,9 +1014,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* تا وقتی گوشه‌های مقطع چندضلعی گرد نشده‌اند، همه جابه‌جایی‌ها باید بیرون از */
   /* پوشش دورانی (دورترین گوشه) بمانند — نه فقط بیرون قطر واقعی.               */
   let cornersCleared = !envRot.hasCorners;
-  const home = { x: envMaxRotD + 20, z: p.blankL + 10 };
   const retractX = envMaxRotD + 2 * p.safety;
-  let cur = { ...home };
+  /* مولد دیگر Home سراسری ندارد؛ نقطه شروع نهایی پس از ساخت اولین عملیات از
+     سر واقعی همان عملیات استخراج می‌شود. */
+  let cur = { x: retractX, z: 0 };
   let curOp: OpType | "sys" = "sys";
   let curOpId = -1;
   let curHolder: 1 | 2 = 1;
@@ -2272,8 +2273,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   if (!endedAtInnerEndpoint) {
     curHolder = 1;
     note("END OF PROGRAM");
-    mv(0, retractX, p.blankL + 2 * p.safety, 0, "rapid");
-    mv(0, home.x, home.z, 0, "rapid");
+    /* پایان فقط در همان سمت عملیات تا ارتفاع امن جمع می‌شود؛ بازگشت Home حذف شد. */
+    mv(0, retractX, cur.z, 0, "rapid");
   }
 
   /* نقطهٔ آغاز نخستین عملیات، مستقل از نوع آن، فقط با یک G0 در +Y و دقیقاً
@@ -2499,12 +2500,10 @@ export function planBridges(segs: Seg[], p: Params): {
     if (ends[i].u > maxU) maxU = ends[i].u;
     if (ends[i].v > maxV) maxV = ends[i].v;
   }
-  const homeV = rotationalEnvelope(p.blankD, p.blankShape).maxRotD + 20;
-  /* شعاعی: نصفِ مجموع (مساوی نقطه خانه استراتژی) تا پله اضافه نیاید */
-  const home = { u: p.blankL + 10, v: homeV / 2 };
-  if (home.u > maxU) maxU = home.u;
-  if (home.v > maxV) maxV = home.v;
-  const tc = { u: maxU + p.safety, v: maxV + p.safety };
+  /* Home از منطق مسیر حذف شده است. مبنای سازگاری خروجی، خود نقطه شروع مسیر است
+     و گوشه امن فقط از قله‌های واقعی عملیات‌ها به‌علاوه safety ساخته می‌شود. */
+  const home = n ? { ...starts[0] } : { u: 0, v: 0 };
+  const tc = { u: (Number.isFinite(maxU)?maxU:0) + p.safety, v: (Number.isFinite(maxV)?maxV:0) + p.safety };
   const bridges: PlannedBridge[] = [];
   const jump = (a: { u: number; v: number }, b: { u: number; v: number }) => Math.hypot(a.u - b.u, a.v - b.v);
   const JMIN = BRIDGE_MIN_JUMP / 2; // آستانه در واحد فایل (شعاعی)
@@ -2543,13 +2542,7 @@ export function planBridges(segs: Seg[], p: Params): {
      می‌شود نه با پل. پله‌های پل روی مختصات اجراشده (با گسترش) می‌نشینند. */
   const pstart = (j: number) => machineUV(segs[j].z1, segs[j].x1, segs[j].holder, p);
   const pend = (j: number) => machineUV(segs[j].z2, segs[j].x2, segs[j].holder, p);
-  const explicitInitialRapid = n > 0 && segs[0].motion === 0 && jump(starts[0], ends[0]) <= 1e-9 &&
-    nz.length > 0 && jump(ends[0], pstart(nz[0])) <= 1e-9;
-  /* G0 صفرطول نخست، نقطه شروع صریح برنامه است. برای آن پل Home نساز؛ وگرنه
-     سه G0 اضافی پیش از اولین برش ایجاد و شروع ظاهری به سمت راست منتقل می‌شود. */
-  if (nz.length > 0 && !explicitInitialRapid && jump(home, pstart(nz[0])) > JMIN) {
-    mkBridge(nz[0], 1, segs[nz[0]].holder, home);
-  }
+  /* برای آغاز مسیر هرگز پل ساخته نمی‌شود؛ نخستین G0 خود نقطه شروع قطعی است. */
   for (let k = 1; k < nz.length; k++) {
     const i = nz[k];
     const pv = nz[k - 1];
@@ -3080,14 +3073,13 @@ export function applyGcodeOvr(base: GenResult, ovr: GcodeOvrMap, p: Params): Gen
   for (let baseIndex=0;baseIndex<base.segs.length;baseIndex++) {
     const sg0=base.segs[baseIndex];
     const o = sg0.ovrKey ? ovr[sg0.ovrKey] : undefined;
-    if (o?.del) continue;
-    /* سگمنت صفرطول اول عمداً نشانگر موقعیت آغاز برنامه است. هنگام Drag آیکن S،
-       آن را روی مبدأ ویرایش‌شده اولین G1 نگه می‌داریم و حذفش نمی‌کنیم؛ حذف آن
-       planBridges را وادار می‌کرد دوباره پل Home و چند G0 اضافی بسازد. */
+    /* سگمنت صفرطول اول در EditBuf خط قابل‌دیدن ندارد، پس derive آن را del علامت
+       می‌زند. این نشانگر آغاز برنامه باید پیش از بررسی del حفظ و روی S جدید بنشیند. */
     if(baseIndex===0&&sg0.motion===0&&Math.hypot(sg0.z2-sg0.z1,sg0.x2-sg0.x1)<1e-7&&editedProgramStart){
       expanded.push({...sg0,z1:editedProgramStart.z,x1:editedProgramStart.x,z2:editedProgramStart.z,x2:editedProgramStart.x});
       continue;
     }
+    if (o?.del) continue;
     const points = [o?.s ?? { z: sg0.z1, x: sg0.x1 }, ...(o?.via ?? []), o?.e ?? { z: sg0.z2, x: sg0.x2 }];
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1], b = points[i];
