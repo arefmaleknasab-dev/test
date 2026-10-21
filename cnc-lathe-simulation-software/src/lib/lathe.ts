@@ -2276,6 +2276,22 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     mv(0, home.x, home.z, 0, "rapid");
   }
 
+  /* نقطهٔ آغاز نخستین عملیات، مستقل از نوع آن، فقط با یک G0 در +Y و دقیقاً
+     ۵mm بیرون‌تر از ابتدای نخستین خط برشی قرار می‌گیرد. x مختصات قطری است،
+     بنابراین +۵ در Y ماشین برابر +۱۰ در x داخلی است. تمام G0های مقدماتی قدیمی
+     با همین یک بلوک جایگزین می‌شوند و نخستین G1 از این نقطه آغاز می‌شود. */
+  {
+    const firstCutIndex=segs.findIndex(segment=>segment.motion===1);
+    if(firstCutIndex>=0){
+      const firstCut=segs[firstCutIndex];
+      const startX=firstCut.x1+10,startZ=firstCut.z1;
+      const leadingNotes=segs.slice(0,firstCutIndex).flatMap(segment=>segment.note??[]);
+      const initial:Seg={motion:0,x1:startX,z1:startZ,x2:startX,z2:startZ,feed:RAPID_RATE,line:-1,kind:"rapid",op:firstCut.op,opId:firstCut.opId,holder:firstCut.holder,note:leadingNotes.length?leadingNotes:undefined};
+      firstCut.x1=startX;firstCut.z1=startZ;
+      segs.splice(0,firstCutIndex,initial);
+    }
+  }
+
   /* گسترش G0 در جی‌کد (همه‌جهته): حرکت‌های سریعِ طولیِ روی‌هم با گام ۳mm فقط
      به سمت بیرون (+قطر، ‎(k+1)*3‎، سقف ۳۳) باز می‌شوند تا در سیمکو هیچ دو خط
      G0 روی هم نیفتد؛ H1 همه، H2 فقط بیرون قطعه (در/بالای رترکت پست‌شده).
@@ -2564,7 +2580,9 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
   /* ردیابی موقعیت ماشین روی مختصات اجراشده (ماشین + گسترش G0) */
   /* با گسترشِ روشن، شروعِ اجراشده سگمنت اول با خانه فرق دارد پس ردیابی از خانه
      آغاز می‌شود تا پله خانه→شروع صادر شود؛ خاموش = رفتار legacy بایت‌به‌بایت */
-  const fromHome = p.spreadG0 || !segs.length;
+  /* نخستین سگمنت G0 خودش نقطه شروع صریح برنامه است؛ حتی با Spread نباید
+     پیش از آن یک G0 جداگانه از Home تولید شود. */
+  const fromHome = !segs.length;
   let mu = fromHome ? plan.home.u : execUV(segs[0], false, p).u;
   let mv = fromHome ? plan.home.v : execUV(segs[0], false, p).v;
   let lastFeed = -1;
@@ -2651,11 +2669,10 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
   const plan = planBridges(segs, p);
   const bridgeAt = new Map<number, PlannedBridge>();
   for (const b of plan.bridges) bridgeAt.set(b.atIndex, b);
-  lines.push(`G0 X${f3(plan.home.u)} Y${f3(plan.home.v)}`);
-  mode = 0;
-  /* ردیابی موقعیت ماشین روی مختصات اجراشده (ماشین + گسترش G0) */
-  let mu = plan.home.u;
-  let mv = plan.home.v;
+  /* نخستین G0 مستقیماً نقطه شروع ۵mm بالای اولین خط است؛ Home جداگانه صادر
+     نمی‌شود تا آغاز برنامه دقیقاً یک خط G0 داشته باشد. */
+  let mu = segs.length ? execUV(segs[0],false,p).u : plan.home.u;
+  let mv = segs.length ? execUV(segs[0],false,p).v : plan.home.v;
   for (let i = 0; i < segs.length; i++) {
     const sg = segs[i];
     const e1 = execUV(sg, false, p);
