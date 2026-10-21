@@ -3074,9 +3074,20 @@ export type GcodeOvrMap = Record<string, GcodeOvr>;
 export function applyGcodeOvr(base: GenResult, ovr: GcodeOvrMap, p: Params): GenResult {
   if (!Object.keys(ovr).length) return base;
   const expanded: Seg[] = [];
-  for (const sg0 of base.segs) {
+  const firstCutBase=base.segs.find(segment=>segment.motion===1);
+  const firstCutOvr=firstCutBase?.ovrKey?ovr[firstCutBase.ovrKey]:undefined;
+  const editedProgramStart=firstCutOvr?.s??(firstCutBase?{z:firstCutBase.z1,x:firstCutBase.x1}:undefined);
+  for (let baseIndex=0;baseIndex<base.segs.length;baseIndex++) {
+    const sg0=base.segs[baseIndex];
     const o = sg0.ovrKey ? ovr[sg0.ovrKey] : undefined;
     if (o?.del) continue;
+    /* سگمنت صفرطول اول عمداً نشانگر موقعیت آغاز برنامه است. هنگام Drag آیکن S،
+       آن را روی مبدأ ویرایش‌شده اولین G1 نگه می‌داریم و حذفش نمی‌کنیم؛ حذف آن
+       planBridges را وادار می‌کرد دوباره پل Home و چند G0 اضافی بسازد. */
+    if(baseIndex===0&&sg0.motion===0&&Math.hypot(sg0.z2-sg0.z1,sg0.x2-sg0.x1)<1e-7&&editedProgramStart){
+      expanded.push({...sg0,z1:editedProgramStart.z,x1:editedProgramStart.x,z2:editedProgramStart.z,x2:editedProgramStart.x});
+      continue;
+    }
     const points = [o?.s ?? { z: sg0.z1, x: sg0.x1 }, ...(o?.via ?? []), o?.e ?? { z: sg0.z2, x: sg0.x2 }];
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1], b = points[i];
