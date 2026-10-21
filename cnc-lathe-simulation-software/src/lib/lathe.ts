@@ -1143,9 +1143,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     const currentR=Math.max(0,cur.x/2);
     let peak=-Infinity;
     for(const point of innerFinishOffSamples) if(point.r<=currentR+1e-6) peak=Math.max(peak,point.z);
-    const safeZ=Math.max(cur.z,Number.isFinite(peak)?peak+p.safety:cur.z);
-    if(safeZ>cur.z+1e-7) rawRapid(cur.x,safeZ);
-    if(currentR>1e-7) rawRapid(0,safeZ);
+    const requiredZ=Number.isFinite(peak)?peak+p.safety:cur.z;
+    /* اگر ابزار همین حالا بالاتر از تمام قله‌های مزاحم است، اتصال تا محور
+       مستقیماً و برشی انجام می‌شود؛ هیچ G0 واسطی لازم نیست. */
+    if(cur.z>=requiredZ-1e-7){if(currentR>1e-7)mv(1,0,cur.z,p.feedRough*.7,"bore");return;}
+    const safeZ=Math.max(cur.z,requiredZ);
+    rawRapid(cur.x,safeZ);
+    if(currentR>1e-7)rawRapid(0,safeZ);
   };
   let endedAtInnerEndpoint = false;
   const finishLastInner = (opId: number): boolean => {
@@ -2032,11 +2036,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             alreadyAtNextStart=false;
             if(next){
               const ns=next.points[0];
-              const sameZone=next.group===contour.group;
-              /* پاس‌های متوالی از همان سر زیگزاگ به هم می‌رسند: اتصال +X روی
-                 سر نزدیک محور (Y منفیِ امن نسبت به نوک کاسه) و اتصال −X روی سر
-                 قوس انجام می‌شود. بنابراین برای پاس مجاور خط واسط ساخته نمی‌شود. */
-              if(sameZone&&scanlineLinkIsSafe(end,ns)){
+              /* در هر سه چیدمان، اگر وتر مستقیم داخل ناحیه مجاز است، پاس بعدی
+                 بدون توجه به مرز Zone با یک G1 مستقیم آغاز می‌شود. */
+              if(scanlineLinkIsSafe(end,ns)){
                 mv(1,2*ns.r,ns.z,p.feedRough,"bore");
               }else{
                 const plan=planAllowedLink(end,ns);
@@ -2114,8 +2116,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               const from={r:endR,z:cutZ},to={r:nextStartR,z:cutZ};
               /* حالت یک‌طرفه نیز باید از همان مسیریاب آفست موضعی ۳mm عبور کند؛
                  میانبر قدیمی planSameDepthCompact آفست را کاملاً دور می‌زد. */
-              const plan=planAllowedLink(from,to);
-              if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
+              if(allowedLink(from,to))mv(1,2*to.r,to.z,p.feedRough,"bore");
+              else{const plan=planAllowedLink(from,to);if(plan)for(const q of plan)rawRapid(2*q.r,q.z);}
               /* حلقه در تکرار بعد از همین نقطه با حرکت −X باربرداری را ادامه می‌دهد. */
             } else {
               const nextLayerFirst = layerPlans[layerIndex + 1]?.intervals[0];
@@ -2125,14 +2127,21 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                    سپس ورود −X به عمق بعد فقط با G1 حلقه بعد انجام می‌شود. این
                    قاعده برای جهت عادی و معکوس یکسان است. */
                 const nextLayerStartR=op.reverse?Math.max(nextLayerFirst.a,nextLayerFirst.b):Math.max(rEntry,nextLayerFirst.a);
-                const stageZ=Math.min(mouthPlaneZ,cutZ+1);
-                const plan=planClassicRapid({r:endR,z:cutZ},{r:nextLayerStartR,z:stageZ},cutZ);
-                if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
-                preparedForNextLayer=!!plan;
+                const directTarget={r:nextLayerStartR,z:layerPlans[layerIndex+1].layerZ};
+                if(allowedLink({r:endR,z:cutZ},directTarget)){
+                  mv(1,2*directTarget.r,directTarget.z,p.feedRough*.7,"bore");
+                  preparedForNextLayer=true;
+                }else{
+                  const stageZ=Math.min(mouthPlaneZ,cutZ+1);
+                  const plan=planClassicRapid({r:endR,z:cutZ},{r:nextLayerStartR,z:stageZ},cutZ);
+                  if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
+                  preparedForNextLayer=!!plan;
+                }
               } else {
                 /* پس از آخرین پاس، برگشت روی همان X تا محور مجاز است. */
-                const plan=planClassicRapid({r:endR,z:cutZ},{r:0,z:cutZ},cutZ);
-                if(plan)for(const q of plan)rawRapid(2*q.r,q.z);
+                const axisTarget={r:0,z:cutZ},from={r:endR,z:cutZ};
+                if(allowedLink(from,axisTarget))mv(1,0,cutZ,p.feedRough*.7,"bore");
+                else{const plan=planClassicRapid(from,axisTarget,cutZ);if(plan)for(const q of plan)rawRapid(2*q.r,q.z);}
               }
             }
           }
@@ -2166,7 +2175,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* از پایان خشن، با کوتاه‌ترین مسیر امن از قله‌ها به محور می‌رسیم؛ سپس
              روی محور تا کف می‌رویم و از همان‌جا پاس آفست را آغاز می‌کنیم. */
           moveInnerToAxisSafely();
-          rawRapid(0, startInnerZ);
+          /* محور حفره پس از خشن‌کاری خالی است؛ انتقال تا سر آفست مستقیم و
+             برشی است و هیچ G0 اضافی میان دو عملیات ساخته نمی‌شود. */
+          mv(1,0,startInnerZ,p.feedRough*.7,"bore");
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
         } else {
           mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "bore");
@@ -2210,7 +2221,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (innerCleared) {
           /* مانند آفست: ابتدا از نزدیک‌ترین مسیر امن به محور، سپس روی محور تا کف. */
           moveInnerToAxisSafely();
-          rawRapid(2 * rEntry, startInnerZ);
+          mv(1,2*rEntry,startInnerZ,p.feedRough*.7,"borefin");
         } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
         for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
         if (!finishLastInner(op.id)) {
