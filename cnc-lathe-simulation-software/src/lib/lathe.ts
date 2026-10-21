@@ -2541,7 +2541,11 @@ export function planBridges(segs: Seg[], p: Params): {
      می‌شود نه با پل. پله‌های پل روی مختصات اجراشده (با گسترش) می‌نشینند. */
   const pstart = (j: number) => machineUV(segs[j].z1, segs[j].x1, segs[j].holder, p);
   const pend = (j: number) => machineUV(segs[j].z2, segs[j].x2, segs[j].holder, p);
-  if (nz.length > 0 && jump(home, pstart(nz[0])) > JMIN) {
+  const explicitInitialRapid = n > 0 && segs[0].motion === 0 && jump(starts[0], ends[0]) <= 1e-9 &&
+    nz.length > 0 && jump(ends[0], pstart(nz[0])) <= 1e-9;
+  /* G0 صفرطول نخست، نقطه شروع صریح برنامه است. برای آن پل Home نساز؛ وگرنه
+     سه G0 اضافی پیش از اولین برش ایجاد و شروع ظاهری به سمت راست منتقل می‌شود. */
+  if (nz.length > 0 && !explicitInitialRapid && jump(home, pstart(nz[0])) > JMIN) {
     mkBridge(nz[0], 1, segs[nz[0]].holder, home);
   }
   for (let k = 1; k < nz.length; k++) {
@@ -2729,7 +2733,13 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
     if (Math.abs(e2.u - mu) > 1e-9) words.push(`X${f3(e2.u)}`);
     if (Math.abs(e2.v - mv) > 1e-9) words.push(`Y${f3(e2.v)}`);
     if (words.length === 0) {
-      sg.line = lines.length - 1;
+      if(i===0&&sg.motion===0){
+        /* سگمنت صفرطول نخست یک حرکت هندسی نیست، اما مختصات آغاز صریح دستگاه
+           است و باید دقیقاً به‌صورت یک بلوک کامل G0 صادر شود. */
+        lines.push(`G0 X${f3(e2.u)} Y${f3(e2.v)}`);
+        mode=0;
+        sg.line=lines.length-1;
+      }else sg.line = lines.length - 1;
       continue;
     }
     if (sg.motion === 0) {
