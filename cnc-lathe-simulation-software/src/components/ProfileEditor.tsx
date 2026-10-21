@@ -3024,8 +3024,10 @@ export default function ProfileEditor({
       const preferredLineIds=activeLine==null?selL:[activeLine,...selL.filter(id=>id!==activeLine)];
       const selectedHitLine=nearLines.find(id=>preferredLineIds.includes(id))??preferredLineIds.find(id=>{const line=lineById.get(id);return !!line&&nearVerts.some(v=>v===line.va||v===line.vb);});
       if(selectedHitLine!=null){const line=lineById.get(selectedHitLine);if(line)nearVerts=nearVerts.filter(id=>id===line.va||id===line.vb);}
-      const endpointCandidate = nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
+      const endpointCandidate = hitPathEndpoint(ploc.x, ploc.y) ?? nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
 
+      /* خود آیکن‌های S/E نیز Hit Area مستقل دارند؛ بنابراین مخصوصاً در مسیر بسته
+         که آیکن از رأس فاصله دارد، Drag مستقیماً از روی آیکن آغاز می‌شود. */
       /* نشان‌های ابتدا/انتها بر Segment زیرین اولویت دارند تا با یک کلیک ساده
          انتخاب شوند و همان لحظه امکان drag آن‌ها وجود داشته باشد. */
       if (endpointCandidate != null) {
