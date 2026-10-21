@@ -2071,8 +2071,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           innerCleared=true;
           if(!finishLastInner(op.id)){
-            if(nextIsInnerPath(op.id)) moveInnerToAxisSafely();
-            else { moveInnerToAxisSafely(); rawRapid(0,mouthX); mv(0,retractX,mouthX,0,"rapid"); }
+            /* برای عملیات داخلی بعدی در انتهای واقعی آخرین پاس می‌مانیم تا خود
+               عملیات بعد اتصال مستقیم را بیازماید؛ خروج به محور اینجا اضافه بود. */
+            if(!nextIsInnerPath(op.id)) { moveInnerToAxisSafely(); rawRapid(0,mouthX); mv(0,retractX,mouthX,0,"rapid"); }
           }
           break;
         }
