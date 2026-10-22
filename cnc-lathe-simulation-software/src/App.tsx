@@ -171,7 +171,7 @@ export default function App() {
       showBottom: s?.showBottom ?? false,
       showRapids: s?.showRapids ?? false,
       showGhost: s?.showGhost ?? false,
-      showInnerArea: s?.showInnerArea ?? true,
+      showInnerArea: s?.showInnerArea ?? false,
       layerOpacity: typeof s?.layerOpacity === "number" && isFinite(s.layerOpacity)
         ? Math.min(1, Math.max(0.1, s.layerOpacity))
         : 1,
