@@ -4328,7 +4328,8 @@ export default function ProfileEditor({
       curFanU = 0;
       pts = [];
     };
-    for (const sg of gen.segs) {
+    for (let segIndex=0;segIndex<gen.segs.length;segIndex++) {
+      const sg=gen.segs[segIndex];
       const kind: SegKind = sg.motion === 0 ? "rapid" : sg.kind;
       if (!settings[KIND_VISIBLE[kind]]) {
         flush();
@@ -4347,7 +4348,15 @@ export default function ProfileEditor({
         curFanU = fanU;
         pts = [screenPt(cam, sg.z1 + fanU, (sg.x1 + fan) / 2)];
       }
-      pts.push(screenPt(cam, sg.z2 + fanU, (sg.x2 + fan) / 2));
+      /* نخستین G0 برنامه عمداً نقطهٔ موقعیت‌یابی S است و در دادهٔ ماشین مبدأ
+         شناخته‌شده‌ای ندارد، بنابراین سگمنت آن صفرطول است. برای نمایش خط ۶،
+         امتداد دیداری آن تا مقصد اولین G1 رسم می‌شود؛ خود G-code و هندسهٔ ماشین
+         دست‌نخورده می‌مانند و فاصلهٔ ورود ۵mm همچنان همان مقدار واقعی است. */
+      const next=gen.segs[segIndex+1];
+      const visualFirstRapid=segIndex===0&&sg.motion===0&&next?.motion===1&&Math.hypot(sg.z2-sg.z1,sg.x2-sg.x1)<1e-9;
+      const displayZ2=visualFirstRapid?next.z2:sg.z2;
+      const displayX2=visualFirstRapid?next.x2:sg.x2;
+      pts.push(screenPt(cam, displayZ2 + fanU, (displayX2 + fan) / 2));
     }
     flush();
     return out;
