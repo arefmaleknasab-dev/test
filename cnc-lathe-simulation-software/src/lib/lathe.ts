@@ -2334,18 +2334,18 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
      دست‌نخورده بماند و این حرکت افزوده نمی‌شود. */
   if (!p.split.enabled) rawRapid(cur.x + 2, cur.z);
 
-  /* شروع برنامه فقط یک G0 دارد: آیکن S دقیقاً ۱mm در +Y از مبدأ واقعی نخستین
-     خط G1 قرار می‌گیرد و G0 از S تا همان مبدأ رسم می‌شود. چون x داخلی قطری است،
-     یک میلی‌متر Y برابر دو میلی‌متر x است. برخلاف سگمنت صفرطول قبلی، این G0
-     هندسهٔ واقعی دارد و خط‌چین اتصال آن روی بوم دیده می‌شود. */
+  /* آیکن S و فرمان نخستین G0 روی یک نقطه‌اند و دقیقاً ۱mm در +Y از مقصد نخستین
+     G1 قرار دارند. صفرطول‌بودن G0 برای این است که Drag خود S مستقیماً مختصات
+     فرمان G0 را تغییر دهد؛ خط‌چین یک‌میلی‌متری در رندر از S تا اولین G1 نمایش
+     داده می‌شود. x داخلی قطری است، پس ۱mm روی Y برابر ۲mm روی x است. */
   {
     const firstCutIndex=segs.findIndex(segment=>segment.motion===1);
     if(firstCutIndex>=0){
       const firstCut=segs[firstCutIndex];
-      const operationStartX=firstCut.x1,operationStartZ=firstCut.z1;
-      const startX=operationStartX+2;
+      const startX=firstCut.x2+2,startZ=firstCut.z2;
       const leadingNotes=segs.slice(0,firstCutIndex).flatMap(segment=>segment.note??[]);
-      const initial:Seg={motion:0,x1:startX,z1:operationStartZ,x2:operationStartX,z2:operationStartZ,feed:RAPID_RATE,line:-1,kind:"rapid",op:firstCut.op,opId:firstCut.opId,holder:firstCut.holder,note:leadingNotes.length?leadingNotes:undefined};
+      const initial:Seg={motion:0,x1:startX,z1:startZ,x2:startX,z2:startZ,feed:RAPID_RATE,line:-1,kind:"rapid",op:firstCut.op,opId:firstCut.opId,holder:firstCut.holder,note:leadingNotes.length?leadingNotes:undefined};
+      firstCut.x1=startX;firstCut.z1=startZ;
       segs.splice(0,firstCutIndex,initial);
     }
   }
