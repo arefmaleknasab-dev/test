@@ -2368,21 +2368,9 @@ export default function ProfileEditor({
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
-  const returnFocusRef=useRef<{screenX:number;screenY:number;profile:SPoint}|null>(null),wasEditOpenRef=useRef(editOpen);
-  useEffect(()=>{
-    if(editOpen&&!wasEditOpenRef.current)returnFocusRef.current=null;
-    if(editOpen&&cam&&size.w>0&&size.h>0){
-      returnFocusRef.current=null;
-      /* ActiveLine ممکن است پس از Pan خارج کادر و همچنان فعال مانده باشد؛ تکیه
-         به آن باعث جهش بزرگ می‌شد. نزدیک‌ترین قطعهٔ داخلیِ واقعاً داخل کادر
-         مبنای فوکوس است، یعنی همان چیزی که کاربر اکنون می‌بیند. */
-      const center=worldPt(cam,size.w/2,size.h/2);let toolPoint:SPoint|null=null,toolBest=Infinity;
-      for(const line of lines){if(line.kind!=="bore"&&line.kind!=="boreoff"&&line.kind!=="borefin")continue;const a=vById.get(line.va),b=vById.get(line.vb);if(!a||!b)continue;const az=a.z,ar=a.x/2,dz=b.z-az,dr=b.x/2-ar,len2=dz*dz+dr*dr,t=len2?Math.max(0,Math.min(1,((center.z-az)*dz+(center.r-ar)*dr)/len2)):0,q={z:az+dz*t,r:ar+dr*t},d=Math.hypot(q.z-center.z,q.r-center.r);if(d<toolBest){toolBest=d;toolPoint=q;}}
-      if(toolPoint){const [screenX,screenY]=screenPt(cam,toolPoint.z,toolPoint.r),margin=40;if(screenX>=-margin&&screenX<=size.w+margin&&screenY>=-margin&&screenY<=size.h+margin){let profile:SPoint|null=null,best=Infinity;for(const seg of segs){if(split.enabled&&segSide.get(seg.id)!=="inner")continue;const hit=nearestOnSeg(seg,toolPoint);if(hit.distance<best){best=hit.distance;profile=hit.point;}}if(profile)returnFocusRef.current={screenX,screenY,profile};}}
-    }
-    if(!editOpen&&wasEditOpenRef.current&&returnFocusRef.current){const anchor=returnFocusRef.current;setCam(c=>c?{s:c.s,ox:anchor.screenX-anchor.profile.z*c.s,oy:anchor.screenY+anchor.profile.r*c.s}:c);returnFocusRef.current=null;}
-    wasEditOpenRef.current=editOpen;
-  },[editOpen,cam,size.w,size.h,lines,vById,segs,split.enabled,segSide]);
+  /* خروج از ویرایش نیز Camera را دست‌کاری نمی‌کند. در نتیجه اگر کاربر هنگام
+     ویرایش Pan/Zoom نکرده باشد، قاب پیش و پس از خروج دقیقاً یکسان می‌ماند؛ و اگر
+     Pan کرده باشد همان نمای انتخاب‌شدهٔ کاربر حفظ می‌شود. */
   const vertexLineCount = useMemo(() => {
     const count = new Map<number, number>();
     for (const line of lines) {
