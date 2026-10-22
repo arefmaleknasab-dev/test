@@ -1245,7 +1245,7 @@ function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onClosePro
       <MenuItem label="ورود فایل AI…" hint="Import" onClick={()=>run(onImportAi)} />
       <MenuItem label="وارد کردن عکس…" onClick={()=>run(onImportImage)} />
       <div className="my-1 border-t border-edge" />
-      <MenuItem label="خروجی G-code…" hint="NC" onClick={()=>run(onExportGcode)} />
+      <MenuItem label="خروجی G-code…" hint="CNC" onClick={()=>run(onExportGcode)} />
       <MenuItem label="خروجی DXF…" hint="DXF" onClick={()=>run(onExportDxf)} />
       <div className="my-1 border-t border-edge" />
       <MenuItem label="Preferences…" onClick={()=>run(onPreferences)} />
