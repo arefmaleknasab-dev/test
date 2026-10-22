@@ -630,7 +630,7 @@ export const OP_INFO: Record<OpType, { name: string; desc: string; color: string
   bottom: { name: "کف‌تراشی", desc: "برداشت طول اضافی خام پشت صفحه دهانه با هلدر داخل‌تراشی", color: "#ffd166" },
 };
 
-export const ALL_OP_TYPES: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish", "inner-rough", "inner-offset", "inner-finish", "bottom"];
+export const ALL_OP_TYPES: OpType[] = ["round", "face", "rough-d", "rough-z", "copy", "offset", "finish", "bottom", "inner-rough", "inner-offset", "inner-finish"];
 
 export interface Strategy {
   id: string;

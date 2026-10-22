@@ -52,7 +52,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   operationFeeds: { round:2000, face:100, rough:2000, roughz:2000, copy:2000, offset:500, finish:100, bottom:300, bore:300, boreoff:300, borefin:150 },
 };
 
-const FEED_LABELS: [string,string,string][] = [["round","گرد کردن گوشه‌ها","#b48ee0"],["face","پیشانی‌تراشی","#e3a94e"],["rough","خشن شعاعی","#45b394"],["offset","آفست","#f59a80"],["finish","پرداخت نهایی","#e0703c"],["bottom","کف‌تراشی","#ffd166"],["bore","خشن داخل","#4cc9f0"],["boreoff","آفست داخل","#c77dff"],["borefin","پرداخت داخل","#f72585"]];
+const FEED_LABELS: [string,string,string][] = [["round","گرد کردن گوشه‌ها","#b48ee0"],["face","پیشانی‌تراشی","#e3a94e"],["rough","خشن بیرون","#45b394"],["offset","آفست","#f59a80"],["finish","پرداخت نهایی","#e0703c"],["bottom","کف‌تراشی","#ffd166"],["bore","خشن داخل","#4cc9f0"],["boreoff","آفست داخل","#c77dff"],["borefin","پرداخت داخل","#f72585"]];
 const SHORTCUT_LABELS: Record<string,string> = { select:"انتخاب", move:"حرکت", rotate:"چرخش", boxscale:"مقیاس باکس", scale:"مقیاس مرجع", copy:"کپی", mirror:"آینه", fillet:"فیلت", line:"خط", polyline:"چندخطی", quad:"منحنی درجه دو", cubic:"منحنی بزیه", arc:"قوس", split:"تقسیم" };
 
 export default function PreferencesDialog({ value, snapTolerance, onChange, onSnapTolerance, onClose }: {

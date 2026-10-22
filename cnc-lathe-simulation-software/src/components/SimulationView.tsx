@@ -37,7 +37,7 @@ const initialRadius = (p: Params) => rotationalEnvelope(p.blankD, p.blankShape).
 const KIND_FA: Record<string, string> = {
   rapid: "حرکت سریع",
   round: "گرد کردن گوشه‌ها",
-  rough: "خشن شعاعی",
+  rough: "خشن بیرون",
   roughz: "خشن محوری",
   copy: "کپی‌تراشی",
   face: "پیشانی‌تراشی",

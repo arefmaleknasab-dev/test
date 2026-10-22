@@ -610,7 +610,7 @@ function ControlsPanel({
           <Num label="فاصله آفست داخل تراش" unit="mm" value={params.innerOffsetDist} min={0} max={3} step={0.1} onChange={(v) => onParams({ innerOffsetDist: v })} />
           <Num label="فاصله شروع داخل تراشی" unit="mm" value={params.innerStartClearance} min={0} max={20} step={0.5} onChange={(v) => onParams({ innerStartClearance: Math.min(20, Math.max(0, v)) })} />
           <Num label="فاصله پایان داخل تراشی" unit="mm" value={params.innerEndTravel} min={300} max={500} step={10} onChange={(v) => onParams({ innerEndTravel: Math.min(500, Math.max(300, v)) })} />
-          <Num label="همپوشانی خشن شعاعی و کف تراشی" unit="mm" value={params.bottomRoughOverlap} min={0} max={50} step={0.5} onChange={(v) => onParams({ bottomRoughOverlap: Math.min(50, Math.max(0, v)) })} />
+          <Num label="همپوشانی خشن بیرون و کف تراشی" unit="mm" value={params.bottomRoughOverlap} min={0} max={50} step={0.5} onChange={(v) => onParams({ bottomRoughOverlap: Math.min(50, Math.max(0, v)) })} />
           <Num label="فاصله کف تراشی از افست داخل" unit="mm" value={params.bottomOffsetClearance} min={0} max={100} step={0.5} onChange={(v) => onParams({ bottomOffsetClearance: Math.min(100, Math.max(0, v)) })} />
 
           <Num label="فاصله امن" unit="mm" value={params.safety} min={1} max={20} step={1} onChange={(v) => onParams({ safety: v })} />
