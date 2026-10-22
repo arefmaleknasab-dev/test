@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
-import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleOrderedProfile, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
+import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleOrderedProfile, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconTool, IconTrash } from "./icons";
 
@@ -111,8 +111,14 @@ function ControlsPanel({
   const removeOp = (id: number) => setOps(params.ops.filter((o) => o.id !== id));
   const addOp = (type: OpType) => {
     const op = makeOps([type])[0];
-    const ops = [...params.ops];
-    ops.splice(defaultOpInsertIndex(ops, type), 0, op);
+    /* ترتیب مرجع دقیقاً همان ترتیب منوی «افزودن عملیات» است. با افزودن هر مورد،
+       زنجیره به‌صورت پایدار بر همین اساس مرتب می‌شود تا عملیات تازه فوراً در
+       ردیف اصلی خودش قرار بگیرد؛ نمونه‌های تکراری ترتیب نسبی خود را حفظ می‌کنند. */
+    const rank = new Map(ALL_OP_TYPES.map((item, index) => [item, index]));
+    const ops = [...params.ops, op]
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => (rank.get(a.item.type) ?? ALL_OP_TYPES.length) - (rank.get(b.item.type) ?? ALL_OP_TYPES.length) || a.index - b.index)
+      .map(({ item }) => item);
     setOps(ops);
   };
   /* درگ‌ودراپ: برداشتن از دسته، رها روی لبهٔ رویی/زیری هر ردیف */
