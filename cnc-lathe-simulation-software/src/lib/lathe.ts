@@ -3119,19 +3119,23 @@ export function applyGcodeOvr(base: GenResult, ovr: GcodeOvrMap, p: Params): Gen
   if (!Object.keys(ovr).length) return base;
   const expanded: Seg[] = [];
   const firstCutBase=base.segs.find(segment=>segment.motion===1);
-  const firstCutOvr=firstCutBase?.ovrKey?ovr[firstCutBase.ovrKey]:undefined;
-  const editedProgramStart=firstCutOvr?.s??(firstCutBase?{z:firstCutBase.z1,x:firstCutBase.x1}:undefined);
+  const initialBase=base.segs[0];
+  const initialOvr=initialBase?.ovrKey?ovr[initialBase.ovrKey]:undefined;
+  /* در مدل نمایشی، S رأس آغاز خط G0 است؛ مختصات فرمان خط ۶ اما مقصد G0 است.
+     بنابراین Drag رأس S باید هم مقصد G0 و هم مبدأ نخستین G1 را جابه‌جا کند. */
+  const draggedProgramStart=initialBase?.motion===0?initialOvr?.s:undefined;
   for (let baseIndex=0;baseIndex<base.segs.length;baseIndex++) {
     const sg0=base.segs[baseIndex];
     const o = sg0.ovrKey ? ovr[sg0.ovrKey] : undefined;
-    /* سگمنت صفرطول اول در EditBuf خط قابل‌دیدن ندارد، پس derive آن را del علامت
-       می‌زند. این نشانگر آغاز برنامه باید پیش از بررسی del حفظ و روی S جدید بنشیند. */
-    if(baseIndex===0&&sg0.motion===0&&Math.hypot(sg0.z2-sg0.z1,sg0.x2-sg0.x1)<1e-7&&editedProgramStart){
-      expanded.push({...sg0,z1:editedProgramStart.z,x1:editedProgramStart.x,z2:editedProgramStart.z,x2:editedProgramStart.x});
+    /* فرمان G0 آغاز برنامه روی S و با مختصات ویرایش‌شده نوشته می‌شود. این کار
+       مانع ثابت‌ماندن X خط ۶ روی صفر پس از Drag و تأیید است. */
+    if(baseIndex===0&&sg0.motion===0&&draggedProgramStart){
+      expanded.push({...sg0,z1:draggedProgramStart.z,x1:draggedProgramStart.x,z2:draggedProgramStart.z,x2:draggedProgramStart.x});
       continue;
     }
     if (o?.del) continue;
-    const points = [o?.s ?? { z: sg0.z1, x: sg0.x1 }, ...(o?.via ?? []), o?.e ?? { z: sg0.z2, x: sg0.x2 }];
+    const forcedStart=draggedProgramStart&&sg0===firstCutBase?draggedProgramStart:undefined;
+    const points = [forcedStart??o?.s ?? { z: sg0.z1, x: sg0.x1 }, ...(o?.via ?? []), o?.e ?? { z: sg0.z2, x: sg0.x2 }];
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1], b = points[i];
       if (Math.hypot(b.z - a.z, b.x - a.x) < 1e-6) continue;
