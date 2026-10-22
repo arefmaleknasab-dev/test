@@ -1144,17 +1144,27 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
      Safety کاربر است؛ هیچ حاشیه ثابت یا بازگشت به رترکت سراسری افزوده نمی‌شود. */
   const enterOuterPath=(targetR:number,targetZ:number,feed:number,kind:SegKind)=>{
     const fromR=cur.x/2;
+    /* خط نزدیک‌شدن هنوز جزو عملیات مقصد نیست. رنگ، شناسه عملیات و Note مقصد
+       فقط از اولین سگمنت واقعی روی هندسه آن عملیات آغاز می‌شوند. */
+    const previousCut=[...segs].reverse().find(segment=>segment.motion===1);
+    const linkMove=(r:number,z:number)=>{
+      if(!previousCut){mv(1,2*r,z,feed,kind);return;}
+      const savedOp=curOp,savedOpId=curOpId,savedHolder=curHolder,pendingNotes=notes;
+      curOp=previousCut.op;curOpId=previousCut.opId;curHolder=previousCut.holder;notes=[];
+      mv(1,2*r,z,feed,previousCut.kind);
+      curOp=savedOp;curOpId=savedOpId;curHolder=savedHolder;notes=pendingNotes;
+    };
     const radialOut=Math.abs(cur.z-targetZ)<1e-7&&targetR>=fromR-1e-7;
     const frontOutside=targetR>=fromR-1e-7&&cur.z<=z0+1e-7&&targetZ<=z0+1e-7;
     if(radialOut||frontOutside||rampIsSafe(cur.z,fromR,targetZ,targetR)){
-      mv(1,2*targetR,targetZ,feed,kind);
+      linkMove(targetR,targetZ);
       return;
     }
     const safeR=minSafeRadius(cur.z,targetZ);
     const travelR=Math.max(fromR,safeR);
     if(travelR>fromR+1e-7)rawRapid(2*travelR,cur.z);
     if(Math.abs(cur.z-targetZ)>1e-7)rawRapid(2*travelR,targetZ);
-    mv(1,2*targetR,targetZ,feed,kind);
+    linkMove(targetR,targetZ);
   };
   /* کوتاه‌ترین خروج امن به محور: ابتدا فقط به‌اندازه‌ای در +X حرکت می‌کنیم که
      از بلندترین قله میان شعاع فعلی و محور، به‌علاوه Safety، عبور کنیم؛ سپس در
