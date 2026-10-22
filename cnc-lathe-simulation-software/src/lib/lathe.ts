@@ -1176,7 +1176,21 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     };
     const radialOut=Math.abs(cur.z-targetZ)<1e-7&&targetR>=fromR-1e-7;
     const frontOutside=targetR>=fromR-1e-7&&cur.z<=z0+1e-7&&targetZ<=z0+1e-7;
-    if(radialOut||frontOutside||rampIsSafe(cur.z,fromR,targetZ,targetR)){
+    const directSafe=radialOut||frontOutside||rampIsSafe(cur.z,fromR,targetZ,targetR);
+    const diagonal=Math.abs(cur.z-targetZ)>1e-7&&Math.abs(fromR-targetR)>1e-7;
+    /* اتصال مستقیمِ مورب بین عملیات‌های بیرونی ممنوع است: ابتدا با G0 به نقطه‌ای
+       ۱mm بالاتر از بلندترِ دو سر اتصال در +Y می‌رویم، سپس در همان Y با G0 روی
+       X مقصد قرار می‌گیریم و سرانجام فقط با G1 شعاعیِ صاف در −Y وارد شروع عملیات
+       بعد می‌شویم. برای اتصال‌های رو به داخل این دقیقاً +۱mm از انتهای فعلی است؛
+       برای اتصال رو به بیرون ناچار ۱mm بالاتر از مقصد می‌ایستد تا G1 منفی بماند. */
+    if(previousCut&&directSafe&&diagonal){
+      const clearanceR=Math.max(fromR,targetR)+1;
+      rapidWithoutTargetNotes(clearanceR,cur.z);
+      rapidWithoutTargetNotes(clearanceR,targetZ);
+      mv(1,2*targetR,targetZ,feed,kind);
+      return;
+    }
+    if(directSafe){
       finishLink(targetR,targetZ);
       return;
     }
