@@ -1145,10 +1145,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   const enterOuterPath=(targetR:number,targetZ:number,feed:number,kind:SegKind)=>{
     const fromR=cur.x/2;
     /* خط نزدیک‌شدن هنوز جزو عملیات مقصد نیست. رنگ، شناسه عملیات و Note مقصد
-       فقط از اولین سگمنت واقعی روی هندسه آن عملیات آغاز می‌شوند. */
+       فقط از اولین سگمنت واقعی روی هندسه آن عملیات آغاز می‌شوند. پیشانی‌تراشی
+       استثناست: همین حرکت ورودی تنها برش واقعی آن عملیات است و باید از ابتدا
+       با نوع و رنگ خود پیشانی ثبت شود، نه با رنگ آخرین عملیات قبلی. */
     const previousCut=[...segs].reverse().find(segment=>segment.motion===1);
     const linkMove=(r:number,z:number)=>{
-      if(!previousCut){mv(1,2*r,z,feed,kind);return;}
+      if(!previousCut||kind==="face"){mv(1,2*r,z,feed,kind);return;}
       const savedOp=curOp,savedOpId=curOpId,savedHolder=curHolder,pendingNotes=notes;
       curOp=previousCut.op;curOpId=previousCut.opId;curHolder=previousCut.holder;notes=[];
       mv(1,2*r,z,feed,previousCut.kind);
