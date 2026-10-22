@@ -1162,9 +1162,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     const finishLink=(r:number,z:number)=>{
       const useTwoMillimetreLead=!!previousCut&&(kind==="offset"||kind==="finish");
       const currentR=cur.x/2,dr=r-currentR,dz=z-cur.z,distance=Math.hypot(dr,dz);
-      if(useTwoMillimetreLead&&distance>2+1e-7){
-        const ratio=(distance-2)/distance;
-        rapidWithoutTargetNotes(currentR+dr*ratio,cur.z+dz*ratio);
+      if(useTwoMillimetreLead){
+        if(distance>2+1e-7){
+          const ratio=(distance-2)/distance;
+          rapidWithoutTargetNotes(currentR+dr*ratio,cur.z+dz*ratio);
+        }
+        /* از آخرین G0 به بعد، دو میلی‌متر ورود متعلق به عملیات مقصد است؛ بنابراین
+           رنگ، نوع، Feed، شناسه و Note آفست/پرداخت از همین G1 آغاز می‌شوند. */
+        mv(1,2*r,z,feed,kind);
+        return;
       }
       linkMove(r,z);
     };
