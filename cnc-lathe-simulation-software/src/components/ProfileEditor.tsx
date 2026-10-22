@@ -4328,8 +4328,7 @@ export default function ProfileEditor({
       curFanU = 0;
       pts = [];
     };
-    for (let segIndex=0;segIndex<gen.segs.length;segIndex++) {
-      const sg=gen.segs[segIndex];
+    for (const sg of gen.segs) {
       const kind: SegKind = sg.motion === 0 ? "rapid" : sg.kind;
       if (!settings[KIND_VISIBLE[kind]]) {
         flush();
@@ -4348,12 +4347,7 @@ export default function ProfileEditor({
         curFanU = fanU;
         pts = [screenPt(cam, sg.z1 + fanU, (sg.x1 + fan) / 2)];
       }
-      /* G0 اول از نظر ماشین یک فرمان موقعیت S و صفرطول است. برای اینکه اتصال
-         یک‌میلی‌متری آن دیده شود، فقط در رندر تا مقصد اولین G1 امتداد می‌یابد؛
-         دادهٔ G-code همچنان روی خود S باقی می‌ماند و قابل Drag است. */
-      const next=gen.segs[segIndex+1];
-      const visualFirstRapid=segIndex===0&&sg.motion===0&&next?.motion===1&&Math.hypot(sg.z2-sg.z1,sg.x2-sg.x1)<1e-9;
-      pts.push(screenPt(cam,(visualFirstRapid?next.z2:sg.z2)+fanU,((visualFirstRapid?next.x2:sg.x2)+fan)/2));
+      pts.push(screenPt(cam, sg.z2 + fanU, (sg.x2 + fan) / 2));
     }
     flush();
     return out;
