@@ -2709,10 +2709,6 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
 
 function buildModalLines(segs: Seg[], p: Params): string[] {
   const lines: string[] = ["%", "G21 G40 G90", "G49", `M3 S${Math.round(p.rpm)}`];
-  const usesH2 = segs.some((s) => s.motion === 1 && s.holder === 2);
-  if (usesH2) {
-    lines.push(`(HOLDER2 XOFF ${p.holder2.xOff} YOFF ${p.holder2.yOff} ROT ${HOLDER2_ROT} : Xm=Xw+XOFF Ym=Yw/2-YOFF)`);
-  }
   const f3 = (v: number) => v.toFixed(3);
   let mode: -1 | 0 | 1 = -1;
   let mFeed = -1;
