@@ -31,7 +31,7 @@ interface Saved {
   version?: number;
 }
 
-const SAVE_VERSION = 8;
+const SAVE_VERSION = 9;
 
 let SAVED: Saved | null = null;
 try {
@@ -131,6 +131,12 @@ export default function App() {
         optimizeFeeds: true,
         sequenceNumbers: true,
         spreadRapid: false,
+      } : {}),
+      /* مهاجرت نسخه ۹: سه میانبر اختیاری نوار بالا از این نسخه پیش‌فرض خاموش‌اند. */
+      ...((SAVED?.version ?? 0) < 9 ? {
+        showHeaderImportAi: false,
+        showHeaderExportDxf: false,
+        showHeaderCopyGcode: false,
       } : {}),
       shortcuts: { ...DEFAULT_PREFERENCES.shortcuts, ...(saved?.shortcuts ?? {}) },
       operationFeeds: { ...DEFAULT_PREFERENCES.operationFeeds, ...(saved?.operationFeeds ?? {}) },
