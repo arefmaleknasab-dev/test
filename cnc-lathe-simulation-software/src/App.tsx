@@ -871,10 +871,10 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "kharraatcode.nc";
+    a.download = "kharraatcode.cnc";
     a.click();
     URL.revokeObjectURL(url);
-    showToast("فایل kharraatcode.nc آماده شد");
+    showToast("فایل kharraatcode.cnc آماده شد");
   };
 
   const downloadDxf = () => {
@@ -1060,7 +1060,7 @@ export default function App() {
           </button>}
           {preferences.showHeaderDownloadNc && <button className="btn btn-brass !px-2.5 !py-1.5 text-[11.5px]" onClick={downloadGCode}>
             <IconDownload className="h-3.5 w-3.5" />
-            دانلود NC
+            دانلود CNC
           </button>}
         </div>
       </header>
