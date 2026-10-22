@@ -270,7 +270,10 @@ export default function App() {
     if(!(diameter>=0.01&&diameter<=10000)||!(length>=0.01&&length<=10000)){showToast("قطر و طول قطعه باید بین ۰٫۰۱ تا ۱۰۰۰۰ میلی‌متر باشند","warn");return;}
     const id=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
     const nextParams=normalizeParams({...params,blankD:diameter,blankL:length,split:{...params.split,enabled:false}},false);
-    setProjectTabs(tabs=>[...tabs.map(tab=>tab.id===activeProjectId?{...tab,past:[...past.current],future:[...future.current]}:tab),{id,name:name||`پروژه جدید ${tabs.length+1}`,sketch:[],params:nextParams,gcodeOvr:{},referenceImages:[],activePreset:null,savedSnapshot:null,past:[],future:[]}]);
+    /* پروژه تازه در لحظه ایجاد وضعیت تمیز دارد؛ هشدار فقط پس از نخستین تغییر
+       واقعی نسبت به همین Snapshot نمایش داده می‌شود. */
+    const initialSnapshot=projectSnapshot([],nextParams,{},[]);
+    setProjectTabs(tabs=>[...tabs.map(tab=>tab.id===activeProjectId?{...tab,past:[...past.current],future:[...future.current]}:tab),{id,name:name||`پروژه جدید ${tabs.length+1}`,sketch:[],params:nextParams,gcodeOvr:{},referenceImages:[],activePreset:null,savedSnapshot:initialSnapshot,past:[],future:[]}]);
     setActiveProjectId(id);setSketch([]);setGenerationSketch([]);setParams(nextParams);setGcodeOvr({});setReferenceImages([]);setActivePreset(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);past.current=[];future.current=[];setHistVer(v=>v+1);setNewProjectDraft(null);
   };
 
