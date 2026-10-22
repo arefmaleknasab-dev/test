@@ -840,6 +840,7 @@ type MoveSession = {
   dirX: 1 | -1; dirY: 1 | -1;
   lastClientX: number; lastClientY: number;
   editBase?: EVert[]; editVertexIds?: number[];
+  pointRefs?: { segId: number; part: SketchPointPart }[];
 };
 
 export default function ProfileEditor({
@@ -2888,26 +2889,51 @@ export default function ProfileEditor({
         const hitVertex = hitBufVx(loc.x, loc.y);
         const hit = hitVertex == null ? hitBufLine(loc.x, loc.y) : null;
         const vertexSet = new Set<number>();
-        if (hitVertex != null) {
-          const chosen = selV.includes(hitVertex) ? [...selV] : [hitVertex];
-          setSelV(chosen);
-          ids = chosen.map((id) => -id - 1); // کلید داخلی برای نشست Move نقطه‌ای
-          for (const id of chosen) vertexSet.add(id);
-        } else if (hit != null || selL.length) {
-          ids = hit != null ? (selL.includes(hit) ? [...selL] : [hit]) : [...selL];
-          if (hit != null && !selL.includes(hit)) selectEditLines(ids, hit, true);
-          for (const line of edit.lines) if (ids.includes(line.id)) { vertexSet.add(line.va); vertexSet.add(line.vb); }
-        } else if (selV.length) {
+        if (selV.length) {
           ids = selV.map((id) => -id - 1);
           for (const id of selV) vertexSet.add(id);
+        } else if (selL.length) {
+          ids = [...selL];
+          for (const line of edit.lines) if (ids.includes(line.id)) { vertexSet.add(line.va); vertexSet.add(line.vb); }
+        } else if (hitVertex != null) {
+          setSelV([hitVertex]);
+          ids = [-hitVertex - 1]; // کلید داخلی برای نشست Move نقطه‌ای
+          vertexSet.add(hitVertex);
+        } else if (hit != null) {
+          ids = [hit];
+          selectEditLines(ids, hit, true);
+          for (const line of edit.lines) if (line.id === hit) { vertexSet.add(line.va); vertexSet.add(line.vb); }
         } else return;
         editVertexIds = [...vertexSet];
         editBase = edit.verts.map((vertex) => ({ ...vertex }));
       } else {
+        /* انتخاب موجود همیشه بر هندسهٔ زیر کلیک اولویت دارد. */
+        if (selPoints.length) {
+          const refs = new Map<string, { segId: number; part: SketchPointPart }>();
+          for (const point of selPoints) {
+            const members = point.part === "a" || point.part === "b" ? clusterOf(point.segId, point.part) : [point];
+            for (const member of members) refs.set(`${member.segId}:${member.part}`, member);
+          }
+          for (const member of [...refs.values()]) {
+            const segment = segs.find((item) => item.id === member.segId);
+            if (member.part === "a" && segment?.c1) refs.set(`${member.segId}:c1`, { segId: member.segId, part: "c1" });
+            if (member.part === "b" && segment?.c2) refs.set(`${member.segId}:c2`, { segId: member.segId, part: "c2" });
+          }
+          ids = [];
+          const rect = wrapRef.current!.getBoundingClientRect();
+          setMoveSession({ ids, pointRefs: [...refs.values()], base: segs.map((segment) => ({ ...segment })), origin: raw, pointer: raw, clientX: e.clientX, clientY: e.clientY, axis: "free", mode: "relative", dirX: 1, dirY: 1, lastClientX: e.clientX, lastClientY: e.clientY });
+          setMoveBox({ x: Math.min(rect.width - 58, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+          setLastMove(null);
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+          return;
+        }
         const hit = hitSeg(raw);
-        ids = hit ? (selected.includes(hit.id) ? [...selected] : [hit.id]) : [...selected];
+        if (selected.length) ids = [...selected];
+        else {
+          ids = hit ? [hit.id] : [];
+          if (hit) onSelected(ids);
+        }
         if (!ids.length) return;
-        if (hit) onSelected(ids);
       }
       const rect = wrapRef.current!.getBoundingClientRect();
       setMoveSession({ ids, base: segs.map((segment) => ({ ...segment })), editBase, editVertexIds, origin: raw, pointer: raw, clientX: e.clientX, clientY: e.clientY, axis: "free", mode: "relative", dirX: 1, dirY: 1, lastClientX: e.clientX, lastClientY: e.clientY });
@@ -3424,6 +3450,16 @@ export default function ProfileEditor({
         if (moveSession.editBase && moveSession.editVertexIds && edit) {
           const moving = new Set(moveSession.editVertexIds);
           onEditBuf({ ...edit, verts: moveSession.editBase.map((v) => moving.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dr } : v) }, false);
+        } else if (moveSession.pointRefs) {
+          const moving = new Set(moveSession.pointRefs.map((point) => `${point.segId}:${point.part}`));
+          onSegs(moveSession.base.map((segment) => {
+            const next = { ...segment };
+            for (const part of ["a", "b", "c1", "c2", "via"] as SketchPointPart[]) {
+              const point = segment[part];
+              if (point && moving.has(`${segment.id}:${part}`)) next[part] = { z: point.z + dz, r: point.r + dr };
+            }
+            return next;
+          }), false);
         } else onSegs(movePolylineSelection(moveSession.base,moveSession.ids,dz,dr), false);
       }
       return;
