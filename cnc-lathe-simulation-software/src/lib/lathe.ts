@@ -1154,17 +1154,31 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
       mv(1,2*r,z,feed,previousCut.kind);
       curOp=savedOp;curOpId=savedOpId;curHolder=savedHolder;notes=pendingNotes;
     };
+    const rapidWithoutTargetNotes=(r:number,z:number)=>{
+      const pendingNotes=notes;notes=[];rawRapid(2*r,z);notes=pendingNotes;
+    };
+    /* فقط برای ورود به آفست و پرداخت، مسیر اتصال تا نقطه‌ای دقیقاً ۲mm مانده
+       به شروع با G0 طی می‌شود و دو میلی‌متر پایانی با G1 و رنگ عملیات قبلی است. */
+    const finishLink=(r:number,z:number)=>{
+      const useTwoMillimetreLead=!!previousCut&&(kind==="offset"||kind==="finish");
+      const currentR=cur.x/2,dr=r-currentR,dz=z-cur.z,distance=Math.hypot(dr,dz);
+      if(useTwoMillimetreLead&&distance>2+1e-7){
+        const ratio=(distance-2)/distance;
+        rapidWithoutTargetNotes(currentR+dr*ratio,cur.z+dz*ratio);
+      }
+      linkMove(r,z);
+    };
     const radialOut=Math.abs(cur.z-targetZ)<1e-7&&targetR>=fromR-1e-7;
     const frontOutside=targetR>=fromR-1e-7&&cur.z<=z0+1e-7&&targetZ<=z0+1e-7;
     if(radialOut||frontOutside||rampIsSafe(cur.z,fromR,targetZ,targetR)){
-      linkMove(targetR,targetZ);
+      finishLink(targetR,targetZ);
       return;
     }
     const safeR=minSafeRadius(cur.z,targetZ);
     const travelR=Math.max(fromR,safeR);
-    if(travelR>fromR+1e-7)rawRapid(2*travelR,cur.z);
-    if(Math.abs(cur.z-targetZ)>1e-7)rawRapid(2*travelR,targetZ);
-    linkMove(targetR,targetZ);
+    if(travelR>fromR+1e-7)rapidWithoutTargetNotes(travelR,cur.z);
+    if(Math.abs(cur.z-targetZ)>1e-7)rapidWithoutTargetNotes(travelR,targetZ);
+    finishLink(targetR,targetZ);
   };
   /* کوتاه‌ترین خروج امن به محور: ابتدا فقط به‌اندازه‌ای در +X حرکت می‌کنیم که
      از بلندترین قله میان شعاع فعلی و محور، به‌علاوه Safety، عبور کنیم؛ سپس در
