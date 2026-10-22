@@ -2440,18 +2440,8 @@ export default function ProfileEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isolatedOpId, editOpen]);
 
-  /* با ورود به ویرایش مسیر، قاب دور کل مسیر واقعی ماشین (شامل آفست هلدر ۲) تنظیم می‌شود. */
-  const editFitDone = useRef(false);
-  useEffect(() => {
-    if (!editOpen) { editFitDone.current = false; return; }
-    if (editFitDone.current || !verts.length || size.w < 40 || size.h < 40) return;
-    let z0 = 0, z1 = L, r0 = -R, r1 = R;
-    for (const v of verts) { z0 = Math.min(z0, v.z); z1 = Math.max(z1, v.z); r0 = Math.min(r0, v.x / 2); r1 = Math.max(r1, v.x / 2); }
-    const pad = 56, sw = Math.max(1, z1 - z0), sh = Math.max(1, r1 - r0);
-    const scale = Math.max(0.2, Math.min(90, Math.min((size.w - 2 * pad) / sw, (size.h - 2 * pad) / sh)));
-    setCam({ s: scale, ox: (size.w - sw * scale) / 2 - z0 * scale, oy: (size.h + (r0 + r1) * scale) / 2 });
-    editFitDone.current = true;
-  }, [editOpen, verts, size.w, size.h, L, R]);
+  /* ورود به ویرایش مسیر نباید Pan، Zoom یا قاب فعلی کاربر را تغییر دهد.
+     جاگذاری نما فقط با دکمهٔ صریح خود کاربر انجام می‌شود. */
 
   /* ران‌های بافر برای رسم — مسیرِ کامل، یک زنجیرۀ پیوسته (اتصال‌ها رأسِ مشترک‌اند) */
   const bufRuns = useMemo(() => {
