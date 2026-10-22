@@ -2368,9 +2368,22 @@ export default function ProfileEditor({
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
-  /* خروج از ویرایش نیز Camera را دست‌کاری نمی‌کند. در نتیجه اگر کاربر هنگام
-     ویرایش Pan/Zoom نکرده باشد، قاب پیش و پس از خروج دقیقاً یکسان می‌ماند؛ و اگر
-     Pan کرده باشد همان نمای انتخاب‌شدهٔ کاربر حفظ می‌شود. */
+  /* نگاشت قاب هنگام خروج فقط زمانی لازم است که کاربر واقعاً در حالت ویرایش Pan
+     کرده باشد. ورود/خروج ساده یا Zoom بدون Pan نباید Camera را دست‌کاری کند. */
+  const editPanOccurredRef=useRef(false);
+  const returnFocusRef=useRef<{screenX:number;screenY:number;profile:SPoint}|null>(null);
+  const wasEditOpenRef=useRef(editOpen);
+  useEffect(()=>{
+    if(editOpen&&!wasEditOpenRef.current){editPanOccurredRef.current=false;returnFocusRef.current=null;}
+    if(editOpen&&editPanOccurredRef.current&&cam&&size.w>0&&size.h>0){
+      returnFocusRef.current=null;
+      const center=worldPt(cam,size.w/2,size.h/2);let toolPoint:SPoint|null=null,toolBest=Infinity;
+      for(const line of lines){if(line.kind!=="bore"&&line.kind!=="boreoff"&&line.kind!=="borefin")continue;const a=vById.get(line.va),b=vById.get(line.vb);if(!a||!b)continue;const az=a.z,ar=a.x/2,dz=b.z-az,dr=b.x/2-ar,len2=dz*dz+dr*dr,t=len2?Math.max(0,Math.min(1,((center.z-az)*dz+(center.r-ar)*dr)/len2)):0,q={z:az+dz*t,r:ar+dr*t},d=Math.hypot(q.z-center.z,q.r-center.r);if(d<toolBest){toolBest=d;toolPoint=q;}}
+      if(toolPoint){const [screenX,screenY]=screenPt(cam,toolPoint.z,toolPoint.r),margin=40;if(screenX>=-margin&&screenX<=size.w+margin&&screenY>=-margin&&screenY<=size.h+margin){let profile:SPoint|null=null,best=Infinity;for(const seg of segs){if(split.enabled&&segSide.get(seg.id)!=="inner")continue;const hit=nearestOnSeg(seg,toolPoint);if(hit.distance<best){best=hit.distance;profile=hit.point;}}if(profile)returnFocusRef.current={screenX,screenY,profile};}}
+    }
+    if(!editOpen&&wasEditOpenRef.current&&editPanOccurredRef.current&&returnFocusRef.current){const anchor=returnFocusRef.current;setCam(c=>c?{s:c.s,ox:anchor.screenX-anchor.profile.z*c.s,oy:anchor.screenY+anchor.profile.r*c.s}:c);returnFocusRef.current=null;editPanOccurredRef.current=false;}
+    wasEditOpenRef.current=editOpen;
+  },[editOpen,cam,size.w,size.h,lines,vById,segs,split.enabled,segSide]);
   const vertexLineCount = useMemo(() => {
     const count = new Map<number, number>();
     for (const line of lines) {
@@ -3219,13 +3232,17 @@ export default function ProfileEditor({
     /* Pan راست/وسط باید پیش از منطق Move پردازش شود. */
     const cameraGesture = drag.current;
     if (cameraGesture?.mode === "pan") {
-      if (Math.hypot(e.clientX - cameraGesture.sx, e.clientY - cameraGesture.sy) > 3) cameraGesture.moved = true;
+      if (Math.hypot(e.clientX - cameraGesture.sx, e.clientY - cameraGesture.sy) > 3) {
+        cameraGesture.moved = true;
+        if(editOpen)editPanOccurredRef.current=true;
+      }
       setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
       return;
     }
     if (cameraGesture?.mode === "rwait") {
       if (Math.hypot(e.clientX - cameraGesture.sx, e.clientY - cameraGesture.sy) > 4) {
         cameraGesture.moved = true;
+        if(editOpen)editPanOccurredRef.current=true;
         drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
         setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
       }
