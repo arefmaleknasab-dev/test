@@ -212,6 +212,7 @@ export default function App() {
   const [activeProjectId, setActiveProjectId] = useState(initialProjectId.current);
   const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), referenceImages, activePreset, savedSnapshot: null, past: [], future: [] }]);
   const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
+  const [newProjectDraft,setNewProjectDraft]=useState<{name:string;diameter:string;length:string}|null>(null);
   const [pendingEditExit, setPendingEditExit] = useState(false);
   const [saveThenCloseProject, setSaveThenCloseProject] = useState<string|null>(null);
   const [editBuf, setEditBuf] = useState<EditBuf | null>(null);
@@ -258,6 +259,20 @@ export default function App() {
     setPendingCloseProject(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);
   };
   const requestCloseProject=(id:string)=>{const tab=projectTabs.find(t=>t.id===id);if(!tab)return;const dirty=tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr,tab.referenceImages);if(dirty)setPendingCloseProject(id);else finishCloseProject(id);};
+  const openNewProject=()=>{
+    let number=1;
+    while(projectTabs.some(tab=>tab.name===`پروژه جدید ${number}`))number++;
+    setNewProjectDraft({name:`پروژه جدید ${number}`,diameter:String(params.blankD),length:String(params.blankL)});
+  };
+  const createNewProject=()=>{
+    if(!newProjectDraft)return;
+    const diameter=Number(newProjectDraft.diameter),length=Number(newProjectDraft.length),name=newProjectDraft.name.trim();
+    if(!(diameter>0)||!(length>0)){showToast("قطر و طول قطعه باید بزرگ‌تر از صفر باشند","warn");return;}
+    const id=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    const nextParams=normalizeParams({...params,blankD:diameter,blankL:length,split:{...params.split,enabled:false}},false);
+    setProjectTabs(tabs=>[...tabs.map(tab=>tab.id===activeProjectId?{...tab,past:[...past.current],future:[...future.current]}:tab),{id,name:name||`پروژه جدید ${tabs.length+1}`,sketch:[],params:nextParams,gcodeOvr:{},referenceImages:[],activePreset:null,savedSnapshot:null,past:[],future:[]}]);
+    setActiveProjectId(id);setSketch([]);setGenerationSketch([]);setParams(nextParams);setGcodeOvr({});setReferenceImages([]);setActivePreset(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);past.current=[];future.current=[];setHistVer(v=>v+1);setNewProjectDraft(null);
+  };
 
   /* تاریخچهٔ یکپارچه: هر گام = {اسکچ، اورراید جی‌کد، بافر ادیت} — واگرد بعد از تأیید
      دقیقاً به همان حالت ادیت و آخرین تغییر بازمی‌گردد (خواستهٔ کاربر) */
@@ -971,6 +986,7 @@ export default function App() {
       <input ref={projectInputRef} type="file" accept=".kharraat,application/json" className="hidden" onChange={e=>{const file=e.target.files?.[0];if(file)void openProjectFile(file);e.currentTarget.value="";}} />
       {showAiImport && <AIImportDialog onClose={() => setShowAiImport(false)} onImport={importAi} />}
       {showPreferences && <PreferencesDialog value={preferences} snapTolerance={settings.snapTolerancePx} onChange={setPreferences} onSnapTolerance={(snapTolerancePx) => setSettings((s) => ({ ...s, snapTolerancePx }))} onClose={() => setShowPreferences(false)} />}
+      {newProjectDraft&&<div className="fixed inset-0 z-[140] grid place-items-center bg-black/50 p-4" dir="rtl"><form onSubmit={e=>{e.preventDefault();createNewProject();}} className="w-full max-w-md overflow-hidden rounded-xl border border-edge2 bg-panel shadow-2xl"><div className="border-b border-edge bg-panel2 px-5 py-4"><h3 className="text-sm font-bold text-brass2">ایجاد پروژه جدید</h3><label className="mt-3 block text-[10.5px] text-mute">نام پروژه<input autoFocus value={newProjectDraft.name} onChange={e=>setNewProjectDraft({...newProjectDraft,name:e.target.value})} onFocus={e=>e.currentTarget.select()} className="field-input mt-1.5 w-full"/></label></div><div className="p-5"><div className="grid grid-cols-2 gap-3"><label className="text-[10.5px] text-mute">قطر قطعه (mm)<input type="number" min="0.01" step="0.1" value={newProjectDraft.diameter} onChange={e=>setNewProjectDraft({...newProjectDraft,diameter:e.target.value})} className="field-input mt-1.5 w-full"/></label><label className="text-[10.5px] text-mute">طول قطعه (mm)<input type="number" min="0.01" step="0.1" value={newProjectDraft.length} onChange={e=>setNewProjectDraft({...newProjectDraft,length:e.target.value})} className="field-input mt-1.5 w-full"/></label></div><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={()=>setNewProjectDraft(null)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute hover:text-ink">لغو</button><button type="submit" className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">ایجاد پروژه</button></div></div></form></div>}
       {saveAsName!==null&&<div className="fixed inset-0 z-[130] grid place-items-center bg-black/45 p-4" dir="rtl"><form onSubmit={e=>{e.preventDefault();const value=saveAsName;setSaveAsName(null);saveAsResolver.current?.(value);saveAsResolver.current=null;}} className="w-full max-w-sm rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">ذخیره پروژه با نام</h3><label className="mt-4 block text-[11px] text-mute">نام پروژه<input autoFocus value={saveAsName} onChange={e=>setSaveAsName(e.target.value)} onFocus={e=>e.currentTarget.select()} className="field-input mt-2 w-full"/></label><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={()=>{setSaveAsName(null);saveAsResolver.current?.(null);saveAsResolver.current=null;}} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button type="submit" className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">ذخیره</button></div></form></div>}
       {pendingEditExit && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات تأییدنشده ویرایش مسیر</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییراتی در مسیر انجام شده که هنوز تأیید نشده‌اند. آیا می‌خواهید تغییرات را تأیید و سپس از حالت ویرایش مسیر خارج شوید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingEditExit(false)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>{setPendingEditExit(false);discardEdit();}} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{confirmEdit();setEditBuf(null);setEditOpen(false);setPendingEditExit(false);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
       {pendingCloseProject && <div className="fixed inset-0 z-[120] grid place-items-center bg-black/45 p-4" dir="rtl"><div className="w-full max-w-md rounded-xl border border-edge2 bg-panel p-5 shadow-2xl"><h3 className="text-sm font-bold text-brass2">تغییرات ذخیره‌نشده</h3><p className="mt-3 text-[12px] leading-6 text-mute">تغییرات پروژه «{projectTabs.find(t=>t.id===pendingCloseProject)?.name}» ذخیره نشده است. آیا می‌خواهید پیش از بستن پروژه آن را ذخیره کنید؟</p><div className="mt-5 flex justify-center gap-2"><button onClick={()=>setPendingCloseProject(null)} className="rounded-md border border-edge px-4 py-1.5 text-xs text-mute">لغو</button><button onClick={()=>finishCloseProject(pendingCloseProject)} className="rounded-md border border-danger/50 bg-danger/10 px-4 py-1.5 text-xs font-bold text-danger">خیر</button><button onClick={()=>{const id=pendingCloseProject;setSaveThenCloseProject(id);if(id!==activeProjectId)switchProject(id);}} className="rounded-md bg-brass px-4 py-1.5 text-xs font-bold text-[#241a0c]">بله</button></div></div></div>}
@@ -979,6 +995,7 @@ export default function App() {
         activeProjectId={activeProjectId}
         onSwitchProject={switchProject}
         onCloseProject={requestCloseProject}
+        onNewProject={openNewProject}
         onOpenProject={() => projectInputRef.current?.click()}
         onSaveProject={() => void saveProject()}
         onSaveProjectAs={() => void saveProjectAs()}
@@ -1193,9 +1210,9 @@ export default function App() {
   );
 }
 
-function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onCloseProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onImportImage, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
+function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onCloseProject, onNewProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onImportImage, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
   projects: {id:string;name:string;dirty:boolean}[]; activeProjectId:string; onSwitchProject:(id:string)=>void; onCloseProject:(id:string)=>void;
-  onOpenProject: () => void; onSaveProject: () => void; onSaveProjectAs: () => void;
+  onNewProject:()=>void; onOpenProject: () => void; onSaveProject: () => void; onSaveProjectAs: () => void;
   onImportAi: () => void; onImportImage: () => void; onExportGcode: () => void; onExportDxf: () => void; onPreferences: () => void;
   onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
 }) {
@@ -1214,8 +1231,10 @@ function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onClosePro
     <MenuTop label="Edit" active={open==="edit"} onClick={()=>setOpen(open==="edit"?null:"edit")} />
     <div className="ml-2 flex h-full min-w-0 flex-1 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]" dir="ltr">
       {projects.map(project=><div key={project.id} className={cn("flex h-[24px] min-w-[115px] max-w-[200px] items-center rounded-t-md border border-b-0 transition-colors",project.id===activeProjectId?"border-edge2 bg-panel text-ink":"border-edge/70 bg-panel2/55 text-dim hover:bg-panel2 hover:text-mute")}><button onClick={()=>{setOpen(null);onSwitchProject(project.id);}} title={project.name} className="min-w-0 flex-1 truncate px-2 text-[10.5px]">{project.dirty&&<span className="ml-1 text-brass">•</span>}{project.name}</button><button onClick={e=>{e.stopPropagation();onCloseProject(project.id);}} title="بستن پروژه" className="grid h-full w-6 shrink-0 place-items-center rounded-sm text-dim hover:bg-danger/15 hover:text-danger">×</button></div>)}
+      <button onClick={()=>{setOpen(null);onNewProject();}} title="ایجاد پروژه جدید" aria-label="ایجاد پروژه جدید" className="mb-px grid h-[23px] w-7 shrink-0 place-items-center rounded-t-md border border-b-0 border-edge/80 bg-panel2/70 text-[18px] leading-none text-mute transition-colors hover:border-brass/60 hover:bg-panel3 hover:text-brass2">+</button>
     </div>
     {open==="file" && <div className="absolute top-full left-1 z-50 w-52 overflow-hidden rounded-b-md border border-edge2 bg-panel/98 py-1 shadow-2xl shadow-black/60" dir="rtl">
+      <MenuItem label="ایجاد پروژه جدید…" hint="New" onClick={()=>run(onNewProject)} />
       <MenuItem label="بازکردن پروژه…" hint="Ctrl+O" onClick={()=>run(onOpenProject)} />
       <MenuItem label="ذخیره" hint="Ctrl+S" onClick={()=>run(onSaveProject)} />
       <MenuItem label="ذخیره با نام…" hint="Ctrl+Shift+S" onClick={()=>run(onSaveProjectAs)} />
