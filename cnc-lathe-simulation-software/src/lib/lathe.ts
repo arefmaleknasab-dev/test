@@ -2330,20 +2330,18 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     mv(0, retractX, cur.z, 0, "rapid");
   }
 
-  /* نقطهٔ آغاز نخستین عملیات، مستقل از نوع آن، فقط با یک G0 در +Y و دقیقاً
-     ۵mm بیرون‌تر از ابتدای نخستین خط برشی قرار می‌گیرد. x مختصات قطری است،
-     بنابراین +۵ در Y ماشین برابر +۱۰ در x داخلی است. تمام G0های مقدماتی قدیمی
-     با همین یک بلوک جایگزین می‌شوند و نخستین G1 از این نقطه آغاز می‌شود. */
+  /* شروع برنامه فقط یک G0 دارد: آیکن S دقیقاً ۱mm در +Y از مبدأ واقعی نخستین
+     خط G1 قرار می‌گیرد و G0 از S تا همان مبدأ رسم می‌شود. چون x داخلی قطری است،
+     یک میلی‌متر Y برابر دو میلی‌متر x است. برخلاف سگمنت صفرطول قبلی، این G0
+     هندسهٔ واقعی دارد و خط‌چین اتصال آن روی بوم دیده می‌شود. */
   {
     const firstCutIndex=segs.findIndex(segment=>segment.motion===1);
     if(firstCutIndex>=0){
       const firstCut=segs[firstCutIndex];
-      /* سر واقعی عملیات مقصد نخستین G1 است، نه مبدأ قدیمی همان G1 که خودش
-         قبلاً نقطهٔ رترکت بود. نقطه شروع را دقیقاً ۵mm بالای همین سر می‌گذاریم. */
-      const startX=firstCut.x2+10,startZ=firstCut.z2;
+      const operationStartX=firstCut.x1,operationStartZ=firstCut.z1;
+      const startX=operationStartX+2;
       const leadingNotes=segs.slice(0,firstCutIndex).flatMap(segment=>segment.note??[]);
-      const initial:Seg={motion:0,x1:startX,z1:startZ,x2:startX,z2:startZ,feed:RAPID_RATE,line:-1,kind:"rapid",op:firstCut.op,opId:firstCut.opId,holder:firstCut.holder,note:leadingNotes.length?leadingNotes:undefined};
-      firstCut.x1=startX;firstCut.z1=startZ;
+      const initial:Seg={motion:0,x1:startX,z1:operationStartZ,x2:operationStartX,z2:operationStartZ,feed:RAPID_RATE,line:-1,kind:"rapid",op:firstCut.op,opId:firstCut.opId,holder:firstCut.holder,note:leadingNotes.length?leadingNotes:undefined};
       segs.splice(0,firstCutIndex,initial);
     }
   }
