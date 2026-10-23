@@ -4674,11 +4674,16 @@ export default function ProfileEditor({
     }
     const result = filletCalc.result;
     const pair = [result.first.id, result.second.id].sort((a, b) => a - b) as [number, number];
-    const arc: SketchSeg = { ...result.arc, id: newSegId(), filletOf: pair };
     const sourceLines = [
       segs.find((segment) => segment.id === pair[0]),
       segs.find((segment) => segment.id === pair[1]),
     ].filter((segment): segment is SketchSeg => !!segment);
+    /* اگر هر دو خط عضو یک Polyline باشند، قوس Fillet نیز عضو همان Polyline است؛
+       در نتیجه انتخاب/Move/Delete گروهی، قوس و خطوط کوتاه‌شده را یک مجموعه می‌بیند. */
+    const sharedPolylineId = sourceLines.length === 2 && sourceLines[0].polylineId != null && sourceLines[0].polylineId === sourceLines[1].polylineId
+      ? sourceLines[0].polylineId
+      : undefined;
+    const arc: SketchSeg = { ...result.arc, id: newSegId(), filletOf: pair, polylineId: sharedPolylineId };
     const touches = (candidate: SketchSeg, line: SketchSeg) =>
       [candidate.a, candidate.b].some((point) => [line.a, line.b].some((end) => dist(point, end) < 1e-5));
     /* روی یک جفت خط فقط یک Fillet معتبر می‌ماند. علاوه بر metadata، اتصال
