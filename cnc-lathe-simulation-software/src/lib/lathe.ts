@@ -1329,23 +1329,29 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     return true;
   };
 
-  const smartTransferApplies = (a: Sample, b: Sample, dense: Sample[]) => {
+  const smartTransferApplies = (a: Sample, b: Sample, dense: Sample[], reverseDirection: boolean) => {
     if (!p.smartTransferEnabled) return false;
     const ia=dense.indexOf(a),ib=dense.indexOf(b);
     /* فقط یک خط واقعی که در نمونه‌برداری موتور دست‌کم یک نقطه میانی هم‌خط داشته
        باشد پذیرفته می‌شود؛ وترهای کوتاه سازنده قوس هرگز وارد این الگوریتم نمی‌شوند. */
     if(ia<0||ib<0||Math.abs(ib-ia)<2)return false;
-    const angle=Math.atan2(Math.abs(b.r-a.r),Math.abs(b.z-a.z))*180/Math.PI;
+    const dz=b.z-a.z,dr=b.r-a.r;
+    /* علامت شیب مستقل از جهت پیمایش خط است: در حالت عادی فقط شیب مثبت و با
+       روشن‌بودن Reverse همان عملیات فقط شیب منفی پذیرفته می‌شود. خطوط افقی و
+       عمودی علامت مثبت/منفی ندارند و وارد الگوریتم انتقالی نمی‌شوند. */
+    const slopeSign=dz*dr;
+    if(reverseDirection?slopeSign>=-1e-12:slopeSign<=1e-12)return false;
+    const angle=Math.atan2(Math.abs(dr),Math.abs(dz))*180/Math.PI;
     const lo=Math.min(p.smartTransferAngleMin,p.smartTransferAngleMax);
     const hi=Math.max(p.smartTransferAngleMin,p.smartTransferAngleMax);
     return angle>=lo-1e-9&&angle<=hi+1e-9;
   };
-  const emitFinishingPath=(path:Sample[],dense:Sample[],kind:SegKind,feed:number,emitFirst=true)=>{
+  const emitFinishingPath=(path:Sample[],dense:Sample[],kind:SegKind,feed:number,emitFirst=true,reverseDirection=false)=>{
     if(!path.length)return;
     if(emitFirst)mv(1,2*path[0].r,path[0].z,feed,kind);
     for(let i=1;i<path.length;i++){
       const a=path[i-1],b=path[i];
-      if(!smartTransferApplies(a,b,dense)){
+      if(!smartTransferApplies(a,b,dense,reverseDirection)){
         mv(1,2*b.r,b.z,feed,kind);
         continue;
       }
@@ -1362,7 +1368,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     const dense = kind === "finish" ? outerFinishPath : samples;
     const source = kind === "finish" ? compactExactlyCollinear(dense) : dense;
     const path = reverse ? [...source].reverse() : source;
-    emitFinishingPath(path,dense,kind,feed);
+    emitFinishingPath(path,dense,kind,feed,true,reverse);
   };
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */
@@ -2289,7 +2295,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
         }
         /* خط بنفش فقط خود مسیر آفست دقیق است. */
-        emitFinishingPath(innerOff,innerOffBase,"boreoff",p.feedFinish);
+        emitFinishingPath(innerOff,innerOffBase,"boreoff",p.feedFinish,true,!!op.reverse);
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
             moveInnerToAxisSafely();
@@ -2326,7 +2332,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           moveInnerToAxisSafely();
           rawRapid(2 * rEntry, startInnerZ);
         } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
-        emitFinishingPath(IW,IWBase,"borefin",p.feedFinish);
+        emitFinishingPath(IW,IWBase,"borefin",p.feedFinish,true,!!op.reverse);
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
             /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
@@ -2368,7 +2374,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const compactOffsetPath = compactExactlyCollinear(offSamples);
           const offsetPath=op.reverse?[...compactOffsetPath].reverse():compactOffsetPath;
           enterOuterPath(offsetPath[0].r,offsetPath[0].z,p.feedFinish,"offset");
-          emitFinishingPath(offsetPath,offSamples,"offset",p.feedFinish,false);
+          emitFinishingPath(offsetPath,offSamples,"offset",p.feedFinish,false,!!op.reverse);
           if(!nextIsOuterPath(op.id)) mv(0,2*(offsetPath[offsetPath.length-1].r+p.safety),offsetPath[offsetPath.length-1].z,0,"rapid");
         }
         break;
