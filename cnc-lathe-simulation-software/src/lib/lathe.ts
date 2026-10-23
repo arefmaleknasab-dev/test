@@ -2838,6 +2838,8 @@ export interface Preset {
   split?: { z: number; r: number };
   /** استراتژی پیشنهادی هنگام اعمال پریست */
   strategy?: string;
+  /** تنظیمات اختصاصی پروژه که همراه هندسهٔ پیش‌تنظیم اعمال می‌شوند. */
+  params?: Partial<Params>;
   /** شکل مقطع خام پیش‌فرض؛ برای همهٔ پیش‌تنظیم‌ها صریحاً تعیین می‌شود. */
   shape: BlankShape;
 }
@@ -2903,6 +2905,66 @@ export const PRESETS: Preset[] = [
       [82, 61, true], [70, 55, true], [56, 45, true], [42, 32, true],
       [32, 20, true], [26, 10, true], [24, 4, false],
     ],
+  },
+  {
+    id: "cup",
+    name: "لیوان",
+    blankD: 80,
+    blankL: 70,
+    shape: "square",
+    strategy: "bowl",
+    split: { z: 59.54363814753165, r: 29.086948102923298 },
+    pts: [[0,12,false],[0,22,false],[10,32,true],[55,32,false],[60,27,true],[60,26,false],[56,22,true],[20,22,false],[10,12,true],[10,0,false]],
+    sketch: [
+      { kind: "line", a: { z: 0, r: 12 }, b: { z: 0, r: 22 }, polylineId: 6850 },
+      { kind: "line", a: { z: 10.000000000000002, r: 32 }, b: { z: 55, r: 32 }, polylineId: 6850 },
+      { kind: "line", a: { z: 60, r: 27 }, b: { z: 60, r: 26 }, polylineId: 6850 },
+      { kind: "line", a: { z: 56, r: 22 }, b: { z: 20, r: 22 }, polylineId: 6850 },
+      { kind: "line", a: { z: 10, r: 11.999999999999998 }, b: { z: 10, r: 0 }, polylineId: 6850 },
+      { kind: "arc", a: { z: 60, r: 27 }, b: { z: 55, r: 32 }, via: { z: 58.53553390593274, r: 30.535533905932738 } },
+      { kind: "arc", a: { z: 10.000000000000002, r: 32 }, b: { z: 0, r: 22 }, via: { z: 2.9289321881345245, r: 29.07106781186548 } },
+      { kind: "arc", a: { z: 56, r: 22 }, b: { z: 60, r: 26 }, via: { z: 58.82842712474619, r: 23.17157287525381 } },
+      { kind: "arc", a: { z: 10, r: 11.999999999999998 }, b: { z: 20, r: 22 }, via: { z: 12.928932188134521, r: 19.071067811865476 } },
+    ],
+    params: {
+      doc: 3,
+      innerDoc: 3,
+      offsetDist: 0.5,
+      innerOffsetDist: 0.5,
+      innerStartClearance: 2,
+      innerEndTravel: 300,
+      bottomRoughOverlap: 3,
+      bottomOffsetClearance: 0,
+      feedRough: 220,
+      feedFinish: 110,
+      rpm: 1500,
+      tool: { type: "angle", hand: "center", angle: 35, nose: 0.2, size: 16, radius: 6, width: 3, corner: 0.2, shank: 12 },
+      safety: 2,
+      roughMode: "zone",
+      innerRoughMode: "zone",
+      innerZoneOrder: [0],
+      innerZoneBounds: [],
+      ramp: true,
+      safeBottomInnerLink: true,
+      simpleFeed: true,
+      zoneOrder: [0],
+      zoneBounds: [],
+      lineNumbers: true,
+      format: "modal",
+      spreadG0: false,
+      holder2: { xOff: 92, yOff: 68 },
+      ops: [
+        { id: 48, type: "round", on: true, reverse: false, holder: 1 },
+        { id: 49, type: "face", on: true, reverse: false, holder: 1 },
+        { id: 50, type: "rough-d", on: true, reverse: false, holder: 1 },
+        { id: 51, type: "offset", on: true, reverse: false, holder: 1 },
+        { id: 52, type: "finish", on: true, reverse: false, holder: 1 },
+        { id: 53, type: "bottom", on: true, reverse: false, holder: 2 },
+        { id: 54, type: "inner-rough", on: true, reverse: false, holder: 2 },
+        { id: 55, type: "inner-offset", on: true, reverse: false, holder: 2 },
+        { id: 56, type: "inner-finish", on: true, reverse: false, holder: 2 },
+      ],
+    },
   },
   {
     id: "inner-arc",

@@ -798,9 +798,6 @@ export default function App() {
         /* همهٔ پیش‌تنظیم‌ها با مقطع خام مربعی شروع می‌شوند. */
         blankShape: p.shape,
       };
-      next.split = p.split
-        ? { enabled: true, z: p.split.z, r: p.split.r }
-        : { ...prev.split, enabled: false };
       if (p.strategy) {
         const st = STRATEGIES.find((s) => s.id === p.strategy);
         if (st) next.ops = makeOps(st.types);
@@ -811,6 +808,15 @@ export default function App() {
           };
         }
       }
+      /* پروژه‌های ذخیره‌شده می‌توانند تنظیمات ماشین‌کاری خود را نیز همراه
+         پیش‌تنظیم نگه دارند؛ ابعاد و Split صریح پریست در پایان قطعی می‌شوند. */
+      if (p.params) Object.assign(next, p.params);
+      next.blankD = p.blankD;
+      next.blankL = p.blankL;
+      next.blankShape = p.shape;
+      next.split = p.split
+        ? { enabled: true, z: p.split.z, r: p.split.r }
+        : { ...prev.split, enabled: false };
       return next;
     });
     setActivePreset(p.id);
