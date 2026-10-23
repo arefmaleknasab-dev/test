@@ -3914,7 +3914,12 @@ export default function ProfileEditor({
     const d = drag.current;
     drag.current = null;
     setSnapHit(null);
-    if (tool === "fillet") return;
+    if (tool === "fillet") {
+      /* راست‌کلیک ساده در مرحله ورود شعاع دقیقاً معادل Enter است؛ درگ راست
+         همچنان فقط Pan می‌ماند و Fillet را ناخواسته تأیید نمی‌کند. */
+      if(d?.mode==="rwait"&&!d.moved&&filletBox&&filletPicks.length===2)confirmFillet();
+      return;
+    }
     if (tool === "rotate") { if(d?.mode==="rwait"&&!d.moved){if(rotateSession)onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");}return; }
     if (tool === "boxscale") {
       if (d?.mode === "rwait" && !d.moved) { if(boxRotateSession)onSegs(boxRotateSession.base,false);boxRotateSession&&setBoxRotateSession(null);setBoxRotateBox(null);boxScaleDrag.current = null; chooseTool("select"); }
@@ -5701,7 +5706,7 @@ export default function ProfileEditor({
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === "Escape") { setFilletPicks([]); setFilletBox(null); onSelected([]); return; }
-              if (e.key === "Enter") { e.preventDefault(); confirmFillet(); }
+              if (e.key === "Enter" || e.code === "Space") { e.preventDefault(); confirmFillet(); }
             }}
           />
           {(filletBox.error || filletCalc?.error) && <div className="mt-1 text-[9px] leading-3 text-danger" dir="rtl">{filletBox.error || filletCalc?.error}</div>}
