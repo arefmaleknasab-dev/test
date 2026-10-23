@@ -728,6 +728,7 @@ export interface Seg {
   z2: number;
   feed: number;
   feedOvr?: boolean; // فیدِ دستی ویرایش مسیر؛ از ساده‌سازی global feed مستثناست
+  forceFeed?: boolean; // صدور صریح F حتی اگر مقدار مودال با حرکت قبلی برابر باشد
   /** تغییر سرعت/نوع حرکت پله‌های G0 مصنوعی پیش از این سگمنت (کلید = شماره پله). */
   bridgeMoves?: Record<number, { motion: 0 | 1; feed: number }>;
   line: number; // اندیس خط در آرایه خطوط جی‌کد
@@ -1076,7 +1077,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /*   ۱) جمع‌کردن شعاعی تا فاصلهٔ امن (حرکت به بیرون — همیشه امن)                */
   /*   ۲) جابه‌جایی طولی در فاصلهٔ امن (X=فاصله امن > قطر قطعه)                   */
   /*   ۳) نزدیک‌شدن شعاعی تا نقطهٔ شروع برش (که خارج از قطعه انتخاب می‌شود)        */
-  const mv = (motion: 0 | 1, x: number, z: number, feed: number, kind: SegKind) => {
+  const mv = (motion: 0 | 1, x: number, z: number, feed: number, kind: SegKind, forceFeed=false) => {
     if (motion === 0) {
       const eps = 1e-9;
       if (cur.x < retractX - eps) pushSeg(0, retractX, cur.z, 0, "rapid");
@@ -1086,6 +1087,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     }
     const operationFeed = kind === "rapid" ? undefined : p.feedByKind?.[kind];
     pushSeg(1, x, z, operationFeed == null ? feed : Math.min(20000, Math.max(1, operationFeed)), kind);
+    if(forceFeed&&segs.length)segs[segs.length-1].forceFeed=true;
   };
 
   /* حرکت سریعِ مستقیم بدون تجزیهٔ امن — فقط برای جابه‌جایی‌های طولی‌ای استفاده   */
@@ -1168,7 +1170,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* اتصال عمومی عملیات‌های بیرونی: خط مستقیم فقط وقتی از پروفیل/قله عبور
      نمی‌کند G1 است. در غیر این صورت ارتفاع عبور دقیقاً بیشینه ماده + مقدار
      Safety کاربر است؛ هیچ حاشیه ثابت یا بازگشت به رترکت سراسری افزوده نمی‌شود. */
-  const enterOuterPath=(targetR:number,targetZ:number,feed:number,kind:SegKind)=>{
+  const enterOuterPath=(targetR:number,targetZ:number,feed:number,kind:SegKind,axialLeadDir?:1|-1)=>{
     const fromR=cur.x/2;
     /* خط نزدیک‌شدن هنوز جزو عملیات مقصد نیست. رنگ، شناسه عملیات و Note مقصد
        فقط از اولین سگمنت واقعی روی هندسه آن عملیات آغاز می‌شوند. پیشانی‌تراشی
@@ -1185,8 +1187,18 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     const rapidWithoutTargetNotes=(r:number,z:number)=>{
       const pendingNotes=notes;notes=[];rawRapid(2*r,z);notes=pendingNotes;
     };
-    /* فقط برای ورود به آفست و پرداخت، مسیر اتصال تا نقطه‌ای دقیقاً ۲mm مانده
-       به شروع با G0 طی می‌شود و دو میلی‌متر پایانی با G1 و رنگ عملیات قبلی است. */
+    /* ورود اختصاصی پرداخت نهایی: دقیقاً مانند ویرایش نمونه مهره، ابتدا در X
+       به ۱٫۵mm پیش از ابتدای مسیر می‌رویم، سپس با G0 به Y شروع پرداخت می‌رسیم
+       و فقط ۱٫۵mm نهایی را با G1 محوری طی می‌کنیم. جهت برای Reverse وارونه است. */
+    if(kind==="finish"&&axialLeadDir){
+      const leadZ=targetZ-axialLeadDir*1.5;
+      rapidWithoutTargetNotes(fromR,leadZ);
+      rapidWithoutTargetNotes(targetR,leadZ);
+      mv(1,2*targetR,targetZ,feed,kind,true);
+      return;
+    }
+    /* برای ورود به آفست، مسیر اتصال تا نقطه‌ای دقیقاً ۲mm مانده به شروع با G0
+       طی می‌شود و دو میلی‌متر پایانی با G1 ادامه پیدا می‌کند. */
     const finishLink=(r:number,z:number)=>{
       const useTwoMillimetreLead=!!previousCut&&(kind==="offset"||kind==="finish");
       const currentR=cur.x/2,dr=r-currentR,dz=z-cur.z,distance=Math.hypot(dr,dz);
@@ -2362,7 +2374,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
            با گسترش G0 صفحه ورود ۳mm جلوتر است تا روی ورود آفست نیفتد. */
         {
           const path=op.reverse?[...outerFinishPath].reverse():outerFinishPath;
-          if(path.length)enterOuterPath(path[0].r,path[0].z,p.feedFinish,"finish");
+          if(path.length){
+            const nextAxial=path.slice(1).find(point=>Math.abs(point.z-path[0].z)>1e-7);
+            const leadDir:1|-1=nextAxial?(nextAxial.z>path[0].z?1:-1):(op.reverse?-1:1);
+            enterOuterPath(path[0].r,path[0].z,p.feedFinish,"finish",leadDir);
+          }
         }
         profilePath("finish", p.feedFinish, !!op.reverse);
         break;
@@ -2750,7 +2766,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
     } else {
       const F = Math.max(1, Math.round(normFeed(sg, p)));
       /* در حالت فیدر بهینه، F فقط هنگام تغییر تکرار می‌شود وگرنه حذف می‌شود */
-      const fWord = !p.simpleFeed || F !== lastFeed ? ` F${F}` : "";
+      const fWord = sg.forceFeed || !p.simpleFeed || F !== lastFeed ? ` F${F}` : "";
       lastFeed = F;
       sg.line = emit(`G1 X${f2(e2.v)} Z${f2(e2.u)}${fWord}`);
     }
@@ -2859,7 +2875,7 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
       mode = 0;
     } else {
       const F = Math.max(1, Math.round(normFeed(sg, p)));
-      const fChanged = F !== mFeed;
+      const fChanged = sg.forceFeed || F !== mFeed;
       /* فیدر مودال است؛ فقط هنگام تغییر مقدار صادر می‌شود و به خط حرکت می‌چسبد — */
       /* در نتیجه G1/F های تکراری حذف و فقط دو F اصلی باقی می‌ماند.             */
       const gPrefix = mode !== 1 ? "G1 " : "";
