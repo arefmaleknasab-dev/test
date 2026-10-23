@@ -1356,11 +1356,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         continue;
       }
       /* محورهای طراحی: ابتدا Y تا شعاع انتهای خط، سپس X تا طول انتها. برش از
-         انتها به ابتدا انجام می‌شود و بازگشت نیز X سپس Y است؛ همه انتقال‌ها G0. */
+         انتها به ابتدا انجام می‌شود و بازگشت نیز با همان ترتیب Y سپس X است؛
+         همهٔ انتقال‌ها صرفاً G0 هستند. */
       rawRapid(2*b.r,a.z);
       rawRapid(2*b.r,b.z);
       mv(1,2*a.r,a.z,feed,kind);
-      rawRapid(2*a.r,b.z);
+      rawRapid(2*b.r,a.z);
       rawRapid(2*b.r,b.z);
     }
   };
