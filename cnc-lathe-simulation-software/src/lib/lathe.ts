@@ -9,6 +9,8 @@ export interface PPoint {
   z: number; // موقعیت طولی (mm)
   r: number; // شعاع (mm)
   smooth: boolean; // نقطه صاف (اسپلاین) یا گوشه
+  sourceSegId?: number;
+  sourceKind?: "line" | "quad" | "cubic" | "arc";
 }
 
 /** روش خشن‌تراشی: کلاسیک (یک‌طرفه) | رفت‌وبرگشتی (زیگزاگ) | ناحیه‌ای */
@@ -463,6 +465,8 @@ export function normalizeParams(
 export interface Sample {
   z: number;
   r: number;
+  sourceSegId?: number;
+  sourceKind?: "line" | "quad" | "cubic" | "arc";
 }
 
 /* آفست نرمال واقعی (منحنی موازی): هر نمونه در جهت نرمال محلی به اندازه dist
@@ -472,7 +476,7 @@ export interface Sample {
 export function normalOffset(pts: Sample[], dist: number, outward: boolean): Sample[] {
   const n = pts.length;
   if (n === 0) return [];
-  if (n === 1 || dist === 0) return pts.map((s) => ({ z: s.z, r: s.r }));
+  if (n === 1 || dist === 0) return pts.map((s) => ({ ...s }));
   let zMin = Infinity, zMax = -Infinity;
   for (const s of pts) { if (s.z < zMin) zMin = s.z; if (s.z > zMax) zMax = s.z; }
   const zMid = (zMin + zMax) / 2;
@@ -488,7 +492,7 @@ export function normalOffset(pts: Sample[], dist: number, outward: boolean): Sam
       const sgn = pts[i].z >= zMid ? 1 : -1;
       nz = outward ? sgn : -sgn; nr = 0;
     } else if (outward ? nr < 0 : nr > 0) { nz = -nz; nr = -nr; }
-    out[i] = { z: pts[i].z + dist * nz, r: pts[i].r + dist * nr };
+    out[i] = { ...pts[i], z: pts[i].z + dist * nz, r: pts[i].r + dist * nr };
   }
   return trimOffsetLoops(out);
 }
@@ -508,8 +512,8 @@ export function continuousPathOffset(pts: Sample[], dist: number, leftSide = tru
     const nz = -tr * sign, nr = tz * sign;
     return {
       tz, tr,
-      a: { z: a.z + nz * dist, r: a.r + nr * dist },
-      b: { z: b.z + nz * dist, r: b.r + nr * dist },
+      a: { ...a, z: a.z + nz * dist, r: a.r + nr * dist },
+      b: { ...b, z: b.z + nz * dist, r: b.r + nr * dist },
     };
   });
   const out: Sample[] = [{ ...segments[0].a }];
@@ -520,7 +524,7 @@ export function continuousPathOffset(pts: Sample[], dist: number, leftSide = tru
     if (Math.abs(cross) >= 1e-8) {
       const qz = next.a.z - prev.a.z, qr = next.a.r - prev.a.r;
       const t = (qz * next.tr - qr * next.tz) / cross;
-      const candidate = { z: prev.a.z + prev.tz * t, r: prev.a.r + prev.tr * t };
+      const candidate = { ...clean[i], z: prev.a.z + prev.tz * t, r: prev.a.r + prev.tr * t };
       const miter = Math.hypot(candidate.z - clean[i].z, candidate.r - clean[i].r);
       /* در زاویه‌های بسته Miter به‌سرعت بلند و وارونه می‌شود. محدودیت استاندارد
          ۶×Offset جلوی اسپایک/تقاطع را می‌گیرد؛ آن گوشه با Bevel دقیق بسته می‌شود. */
@@ -544,13 +548,13 @@ export function continuousPathOffset(pts: Sample[], dist: number, leftSide = tru
   for (let i = 0; i < out.length; i++) {
     const point = out[i];
     if (point.r >= -1e-9) {
-      clipped.push({ z: point.z, r: Math.max(0, point.r) });
+      clipped.push({ ...point, r: Math.max(0, point.r) });
       continue;
     }
     if (clipped.length && i > 0) {
       const prev = out[i - 1];
       const t = prev.r / Math.max(1e-12, prev.r - point.r);
-      clipped.push({ z: prev.z + (point.z - prev.z) * t, r: 0 });
+      clipped.push({ ...prev, z: prev.z + (point.z - prev.z) * t, r: 0 });
     }
     break;
   }
@@ -796,7 +800,7 @@ export function sampleProfile(points: PPoint[], blankR: number): Sample[] {
         z = p1.z + (p2.z - p1.z) * t;
         r = p1.r + (p2.r - p1.r) * t;
       }
-      out.push({ z, r: clampR(r, blankR) });
+      out.push({ z, r: clampR(r, blankR), sourceSegId: p1.sourceSegId, sourceKind: p1.sourceKind });
     }
   }
   out.sort((a, b) => a.z - b.z);
@@ -834,9 +838,10 @@ export function sampleOrderedProfile(points: PPoint[], blankR: number): Sample[]
     const steps = smooth ? Math.max(6, Math.ceil(Math.hypot(p2.z - p1.z, p2.r - p1.r) / 1.2)) : Math.max(1, Math.ceil(Math.hypot(p2.z - p1.z, p2.r - p1.r) / 1.2));
     for (let j = i === 0 ? 0 : 1; j <= steps; j++) {
       const t = j / steps;
-      out.push(smooth
+      const sampled = smooth
         ? { z: cr(p0.z, p1.z, p2.z, p3.z, t), r: clampR(cr(p0.r, p1.r, p2.r, p3.r, t)) }
-        : { z: p1.z + (p2.z - p1.z) * t, r: clampR(p1.r + (p2.r - p1.r) * t) });
+        : { z: p1.z + (p2.z - p1.z) * t, r: clampR(p1.r + (p2.r - p1.r) * t) };
+      out.push({ ...sampled, sourceSegId: p1.sourceSegId, sourceKind: p1.sourceKind });
     }
   }
   return out;
@@ -1329,16 +1334,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     return true;
   };
 
-  const smartTransferApplies = (a: Sample, b: Sample, dense: Sample[], reverseDirection: boolean) => {
-    if (!p.smartTransferEnabled) return false;
-    const ia=dense.indexOf(a),ib=dense.indexOf(b);
-    /* فقط یک خط واقعی که در نمونه‌برداری موتور دست‌کم یک نقطه میانی هم‌خط داشته
-       باشد پذیرفته می‌شود؛ وترهای کوتاه سازنده قوس هرگز وارد این الگوریتم نمی‌شوند. */
-    if(ia<0||ib<0||Math.abs(ib-ia)<2)return false;
+  const smartTransferApplies = (a: Sample, b: Sample, sourceSegId: number | undefined, reverseDirection: boolean) => {
+    if (!p.smartTransferEnabled || sourceSegId == null) return false;
     const dz=b.z-a.z,dr=b.r-a.r;
-    /* علامت شیب مستقل از جهت پیمایش خط است: در حالت عادی فقط شیب مثبت و با
-       روشن‌بودن Reverse همان عملیات فقط شیب منفی پذیرفته می‌شود. خطوط افقی و
-       عمودی علامت مثبت/منفی ندارند و وارد الگوریتم انتقالی نمی‌شوند. */
+    /* زاویه و علامت شیب فقط از وتر ابتدا تا انتهای المان اصلی محاسبه می‌شود؛
+       خطوط ریز نمونه‌برداری یک منحنی دیگر مستقلاً معیار تصمیم نیستند. */
     const slopeSign=dz*dr;
     if(reverseDirection?slopeSign>=-1e-12:slopeSign<=1e-12)return false;
     const angle=Math.atan2(Math.abs(dr),Math.abs(dz))*180/Math.PI;
@@ -1346,23 +1346,33 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     const hi=Math.max(p.smartTransferAngleMin,p.smartTransferAngleMax);
     return angle>=lo-1e-9&&angle<=hi+1e-9;
   };
-  const emitFinishingPath=(path:Sample[],dense:Sample[],kind:SegKind,feed:number,emitFirst=true,reverseDirection=false)=>{
+  const emitFinishingPath=(path:Sample[],_dense:Sample[],kind:SegKind,feed:number,emitFirst=true,reverseDirection=false)=>{
     if(!path.length)return;
     if(emitFirst)mv(1,2*path[0].r,path[0].z,feed,kind);
-    for(let i=1;i<path.length;i++){
-      const a=path[i-1],b=path[i];
-      if(!smartTransferApplies(a,b,dense,reverseDirection)){
-        mv(1,2*b.r,b.z,feed,kind);
+    /* شناسه یال در پیمایش معکوس از نقطه مقصد گرفته می‌شود، چون metadata همیشه
+       مالک یال خروجی در ترتیب اصلی زنجیره است. */
+    const edgeSource=(index:number)=>reverseDirection
+      ? path[index+1]?.sourceSegId??path[index]?.sourceSegId
+      : path[index]?.sourceSegId??path[index+1]?.sourceSegId;
+    let start=0;
+    while(start<path.length-1){
+      const sourceSegId=edgeSource(start);
+      let end=start+1;
+      while(end<path.length-1&&edgeSource(end)===sourceSegId)end++;
+      const a=path[start],b=path[end];
+      if(!smartTransferApplies(a,b,sourceSegId,reverseDirection)){
+        for(let i=start+1;i<=end;i++)mv(1,2*path[i].r,path[i].z,feed,kind);
+        start=end;
         continue;
       }
-      /* محورهای طراحی: ابتدا Y تا شعاع انتهای خط، سپس X تا طول انتها. برش از
-         انتها به ابتدا انجام می‌شود و بازگشت نیز با همان ترتیب Y سپس X است؛
-         همهٔ انتقال‌ها صرفاً G0 هستند. */
+      /* برای کل Line/Arc/Bezier فقط یک انتقال ساخته می‌شود. برش منحنی با همان
+         نمونه‌های دقیق، اما از انتها به ابتدا، انجام می‌شود و سپس Y→X برمی‌گردد. */
       rawRapid(2*b.r,a.z);
       rawRapid(2*b.r,b.z);
-      mv(1,2*a.r,a.z,feed,kind);
+      for(let i=end-1;i>=start;i--)mv(1,2*path[i].r,path[i].z,feed,kind);
       rawRapid(2*b.r,a.z);
       rawRapid(2*b.r,b.z);
+      start=end;
     }
   };
   const profilePath = (kind: SegKind, feed: number, reverse=false) => {
