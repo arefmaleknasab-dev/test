@@ -11,12 +11,32 @@ import PreferencesDialog, { DEFAULT_PREFERENCES, type AppPreferences } from "./c
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCode, IconDownload, IconLayers, IconPen, IconSim, IconSettings, IconSpindle, IconWarn } from "./components/icons";
 import { buildDxf } from "./lib/dxf";
 import { MIN_HOLDER2_OFFSET, PRESETS, STRATEGIES, applyGcodeOvr, deriveGcodeOvr, generate, makeOps, normalizeParams, presetPoints, seedGcodeEdit, translateHolder2Edit } from "./lib/lathe";
-import type { EditBuf, GcodeOvrMap, GenResult, Holder2State, OpType, Params, PPoint, Preset } from "./lib/lathe";
+import type { EditBuf, ELine, GcodeOvrMap, GenResult, Holder2State, OpType, Params, PPoint, Preset } from "./lib/lathe";
 import type { SketchSeg } from "./lib/sketch";
 import { autoSplitPoint, branchPathPoints, branchPoints, chainPolyline, flattenSketch, normalizeSketch, orderChain, segMid, sketchFromPoints, sketchFromWall, splitChainAt } from "./lib/sketch";
 import { cn } from "./utils/cn";
 
 const STORE_KEY = "kharraatcode-v1";
+
+/** نگاشت معکوس انتخاب Edit Path به سطر متن G-code، شامل خطوط تکراری و Bridgeها. */
+function editLineGCodeIndex(lineId: number, editLines: ELine[], gen: GenResult): number {
+  const editIndex=editLines.findIndex(line=>line.id===lineId);
+  if(editIndex<0)return -1;
+  const line=editLines[editIndex];
+  const bridge=/^#bridge:(.+):(\d+)$/.exec(line.key);
+  if(bridge){
+    const baseKey=bridge[1],move=/^move:(\d+)$/.exec(baseKey);
+    const segment=move?gen.segs[Number(move[1])]:gen.segs.find(candidate=>candidate.ovrKey===baseKey);
+    return segment?.line??-1;
+  }
+  const move=/^#move:(\d+)$/.exec(line.key);
+  if(move)return gen.segs[Number(move[1])]?.line??-1;
+  if(line.key.startsWith("#"))return -1;
+  let occurrence=-1;
+  for(let i=0;i<=editIndex;i++)if(editLines[i].key===line.key)occurrence++;
+  const matches=gen.segs.filter(segment=>segment.ovrKey===line.key);
+  return matches.length?matches[Math.min(Math.max(0,occurrence),matches.length-1)].line:-1;
+}
 
 interface Saved {
   points?: PPoint[];
@@ -476,6 +496,17 @@ export default function App() {
     }
     setActiveLine(bestLine);
   }, [mode, editOpen, selectedIds, sketch, gen.segs]);
+
+  const selectFromGCode = useCallback((lineIndex: number) => {
+    setActiveLine(lineIndex);
+    if (!editOpen) return;
+    setEditBuf((current) => {
+      if (!current) return current;
+      const matching=current.lines.find(line=>editLineGCodeIndex(line.id,current.lines,gen)===lineIndex);
+      if(!matching)return current;
+      return { ...current, selLines: [matching.id], activeLine: matching.id };
+    });
+  }, [editOpen, gen]);
 
   /* اگر عملیاتِ ایزوله‌شده حذف شد، از حالت ایزوله خارج شو */
   useEffect(() => {
@@ -1203,7 +1234,7 @@ export default function App() {
           className="order-3 w-full shrink-0 @4xl:order-5"
           expandedClassName="h-[420px] @4xl:h-auto"
         >
-          <GCodePanel gen={gen} activeLine={activeLine} />
+          <GCodePanel gen={gen} activeLine={activeLine} onLineClick={selectFromGCode} />
         </DockPanel>
       </div>
 
