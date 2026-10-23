@@ -129,6 +129,9 @@ export interface Params {
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   bottomOffsetClearance: number; // فاصله کف‌تراشی در +X از بلندترین قله آفست داخل
+  smartTransferEnabled: boolean; // جابه‌جایی مستطیلی G0 و برش معکوس خطوط در بازه زاویه
+  smartTransferAngleMin: number; // حد پایین زاویه خط نسبت به محور X طراحی
+  smartTransferAngleMax: number; // حد بالای زاویه خط نسبت به محور X طراحی
   feedRough: number; // mm/min
   feedFinish: number; // mm/min (سازگاری پروژه‌های قدیمی)
   /** فید مستقل هر عملیات؛ تنظیم سراسری Preferences هنگام تولید تزریق می‌شود. */
@@ -361,6 +364,9 @@ export const DEFAULT_PARAMS: Params = {
   innerEndTravel: 300,
   bottomRoughOverlap: 3,
   bottomOffsetClearance: 0,
+  smartTransferEnabled: false,
+  smartTransferAngleMin: 20,
+  smartTransferAngleMax: 80,
   feedRough: 220,
   feedFinish: 110,
   rpm: 1500,
@@ -396,7 +402,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "smartTransferEnabled", "smartTransferAngleMin", "smartTransferAngleMax", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -412,6 +418,8 @@ export function normalizeParams(
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   base.bottomOffsetClearance = Math.min(100, Math.max(0, base.bottomOffsetClearance));
+  base.smartTransferAngleMin = Math.min(90, Math.max(0, base.smartTransferAngleMin));
+  base.smartTransferAngleMax = Math.min(90, Math.max(0, base.smartTransferAngleMax));
   /* مهاجرت «اضافه پرداخت» قدیمی به «فاصله آفست» */
   if (typeof raw.finAllow === "number" && Number.isFinite(raw.finAllow)) base.offsetDist = raw.finAllow;
   /* روش خشن‌تراشی + مهاجرت سوئیچ زیگزاگ قدیمی */
@@ -1321,12 +1329,40 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     return true;
   };
 
+  const smartTransferApplies = (a: Sample, b: Sample, dense: Sample[]) => {
+    if (!p.smartTransferEnabled) return false;
+    const ia=dense.indexOf(a),ib=dense.indexOf(b);
+    /* فقط یک خط واقعی که در نمونه‌برداری موتور دست‌کم یک نقطه میانی هم‌خط داشته
+       باشد پذیرفته می‌شود؛ وترهای کوتاه سازنده قوس هرگز وارد این الگوریتم نمی‌شوند. */
+    if(ia<0||ib<0||Math.abs(ib-ia)<2)return false;
+    const angle=Math.atan2(Math.abs(b.r-a.r),Math.abs(b.z-a.z))*180/Math.PI;
+    const lo=Math.min(p.smartTransferAngleMin,p.smartTransferAngleMax);
+    const hi=Math.max(p.smartTransferAngleMin,p.smartTransferAngleMax);
+    return angle>=lo-1e-9&&angle<=hi+1e-9;
+  };
+  const emitFinishingPath=(path:Sample[],dense:Sample[],kind:SegKind,feed:number,emitFirst=true)=>{
+    if(!path.length)return;
+    if(emitFirst)mv(1,2*path[0].r,path[0].z,feed,kind);
+    for(let i=1;i<path.length;i++){
+      const a=path[i-1],b=path[i];
+      if(!smartTransferApplies(a,b,dense)){
+        mv(1,2*b.r,b.z,feed,kind);
+        continue;
+      }
+      /* محورهای طراحی: ابتدا Y تا شعاع انتهای خط، سپس X تا طول انتها. برش از
+         انتها به ابتدا انجام می‌شود و بازگشت نیز X سپس Y است؛ همه انتقال‌ها G0. */
+      rawRapid(2*b.r,a.z);
+      rawRapid(2*b.r,b.z);
+      mv(1,2*a.r,a.z,feed,kind);
+      rawRapid(2*a.r,b.z);
+      rawRapid(2*b.r,b.z);
+    }
+  };
   const profilePath = (kind: SegKind, feed: number, reverse=false) => {
-    const source = kind === "finish" ? compactExactlyCollinear(outerFinishPath) : samples;
+    const dense = kind === "finish" ? outerFinishPath : samples;
+    const source = kind === "finish" ? compactExactlyCollinear(dense) : dense;
     const path = reverse ? [...source].reverse() : source;
-    if (!path.length) return;
-    mv(1, 2 * path[0].r, path[0].z, feed, kind);
-    for (let i = 1; i < path.length; i++) mv(1, 2 * path[i].r, path[i].z, feed, kind);
+    emitFinishingPath(path,dense,kind,feed);
   };
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */
@@ -2253,10 +2289,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
         }
         /* خط بنفش فقط خود مسیر آفست دقیق است. */
-        mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
-        for (let i = 1; i < innerOff.length; i++) {
-          mv(1, 2 * innerOff[i].r, innerOff[i].z, p.feedFinish, "boreoff");
-        }
+        emitFinishingPath(innerOff,innerOffBase,"boreoff",p.feedFinish);
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
             moveInnerToAxisSafely();
@@ -2293,7 +2326,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           moveInnerToAxisSafely();
           rawRapid(2 * rEntry, startInnerZ);
         } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
-        for (let i = 0; i < IW.length; i++) mv(1, 2 * IW[i].r, IW[i].z, p.feedFinish, "borefin");
+        emitFinishingPath(IW,IWBase,"borefin",p.feedFinish);
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
             /* خروج سریع از حفره خالی: شعاعی به مرکز، سپس محوری به بیرون خط داخلی */
@@ -2335,7 +2368,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const compactOffsetPath = compactExactlyCollinear(offSamples);
           const offsetPath=op.reverse?[...compactOffsetPath].reverse():compactOffsetPath;
           enterOuterPath(offsetPath[0].r,offsetPath[0].z,p.feedFinish,"offset");
-          for (let i = 1; i < offsetPath.length; i++) mv(1, 2 * offsetPath[i].r, offsetPath[i].z, p.feedFinish, "offset");
+          emitFinishingPath(offsetPath,offSamples,"offset",p.feedFinish,false);
           if(!nextIsOuterPath(op.id)) mv(0,2*(offsetPath[offsetPath.length-1].r+p.safety),offsetPath[offsetPath.length-1].z,0,"rapid");
         }
         break;

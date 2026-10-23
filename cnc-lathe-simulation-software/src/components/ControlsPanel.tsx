@@ -615,6 +615,19 @@ function ControlsPanel({
 
           <Num label="فاصله امن" unit="mm" value={params.safety} min={1} max={20} step={1} onChange={(v) => onParams({ safety: v })} />
         </div>
+        <div className="mt-2 rounded-md border border-edge bg-panel2 p-2.5">
+          <label className="flex cursor-pointer items-center gap-2 text-[10.5px] font-semibold text-ink">
+            <input type="checkbox" checked={params.smartTransferEnabled} onChange={(e) => onParams({ smartTransferEnabled: e.target.checked })} className="accent-[#e3a94e]" />
+            حرکت انتقالی هوشمند برای خطوط زاویه‌دار
+          </label>
+          {params.smartTransferEnabled && (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Num label="زاویه اول" unit="°" value={params.smartTransferAngleMin} min={0} max={90} step={1} onChange={(v) => onParams({ smartTransferAngleMin: Math.min(90, Math.max(0, v)) })} />
+              <Num label="زاویه دوم" unit="°" value={params.smartTransferAngleMax} min={0} max={90} step={1} onChange={(v) => onParams({ smartTransferAngleMax: Math.min(90, Math.max(0, v)) })} />
+            </div>
+          )}
+          <p className="mt-1.5 text-[9px] leading-4 text-dim">برای آفست و پرداخت داخل/خارج؛ بازه بدون توجه به ترتیب دو زاویه محاسبه می‌شود.</p>
+        </div>
         <p className="mt-1.5 rounded-md bg-bg/50 px-2 py-1 text-[9.5px] leading-4 text-dim">
           فاصله امن، حداقل فاصله همه جابه‌جایی‌های سریع (G0) است: بیرون ‎+Y‎ از خط خارجی و بیرون ‎+X‎ از خط داخلی.
         </p>
