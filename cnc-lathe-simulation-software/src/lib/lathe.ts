@@ -1258,7 +1258,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     if(currentR>1e-7) rawRapid(0,safeZ);
   };
   let endedAtInnerEndpoint = false;
-  let endedWithOuterFinishExit = false;
   const finishLastInner = (opId: number): boolean => {
     if (opId !== lastRunnableInnerOpId) return false;
     /* اگر کاربر عملیاتی را بعد از بلوک داخل‌تراشی قرار داده باشد، این نقطه هنوز
@@ -2379,25 +2378,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* ورود کوتاه: سریع تا بالای نقطه شروع (جلوتر از صفحه پیشانی، بیرون از
            خط آفست با فاصله امن کامل)، سپس فرورفتن مورب کوتاه با فیدر.
            با گسترش G0 صفحه ورود ۳mm جلوتر است تا روی ورود آفست نیفتد. */
-        let finishDir:1|-1=op.reverse?-1:1;
         {
           const path=op.reverse?[...outerFinishPath].reverse():outerFinishPath;
           if(path.length){
             const nextAxial=path.slice(1).find(point=>Math.abs(point.z-path[0].z)>1e-7);
-            finishDir=nextAxial?(nextAxial.z>path[0].z?1:-1):(op.reverse?-1:1);
-            enterOuterPath(path[0].r,path[0].z,p.feedFinish,"finish",finishDir);
+            const leadDir:1|-1=nextAxial?(nextAxial.z>path[0].z?1:-1):(op.reverse?-1:1);
+            enterOuterPath(path[0].r,path[0].z,p.feedFinish,"finish",leadDir);
           }
         }
         profilePath("finish", p.feedFinish, !!op.reverse);
-        if(!nextEnabledOp(op.id)){
-          /* خروج نهایی پرداخت: ابتدا دقیقاً ۱٫۵mm خلاف جهت پیمایش X، سپس فقط
-             تا بلندترین قله پروفایل + Safety در +Y. Reverse جهت X را برمی‌گرداند. */
-          const highestPeak=Math.max(...outerFinishPath.map(point=>point.r));
-          note("END OF PROGRAM");
-          rawRapid(cur.x,cur.z-finishDir*1.5);
-          rawRapid(2*(highestPeak+p.safety),cur.z);
-          endedWithOuterFinishExit=true;
-        }
         break;
       }
       /* آفست — خط موازی با طرح؛ مرجع مراحل خشن و نیمه‌پرداخت قبل از پرداخت */
@@ -2422,15 +2411,16 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* پایان: پس از پایان مستقیم عملیات داخلی، هیچ جابه‌جایی دیگری مجاز نیست. */
   curOp = "sys";
   curOpId = -1;
-  if (!endedAtInnerEndpoint && !endedWithOuterFinishExit) {
+  if (!endedAtInnerEndpoint) {
     curHolder = 1;
     note("END OF PROGRAM");
     /* پایان فقط در همان سمت عملیات تا ارتفاع امن جمع می‌شود؛ بازگشت Home حذف شد. */
     mv(0, retractX, cur.z, 0, "rapid");
   }
-  /* خروج اختصاصی پرداخت نهایی خودش نقطه E را دقیقاً روی قله+Safety ساخته است؛
-     G0 یک‌میلی‌متری قدیمی نباید آن را دوباره بالاتر ببرد. */
-  if (!p.split.enabled && !endedWithOuterFinishExit) rawRapid(cur.x + 2, cur.z);
+  /* نقطه E فقط در طرح‌های بدون Split با یک G0 مستقل، دقیقاً ۱mm در +Y بعد از
+     G0 پایان فعلی قرار می‌گیرد. در کاسه/طرح دارای Split پایان مسیر داخلی باید
+     دست‌نخورده بماند و این حرکت افزوده نمی‌شود. */
+  if (!p.split.enabled) rawRapid(cur.x + 2, cur.z);
 
   /* شروع برنامه فقط یک G0 دارد: آیکن S دقیقاً ۱mm در +Y از مبدأ واقعی نخستین
      خط G1 قرار می‌گیرد و G0 از S تا همان مبدأ رسم می‌شود. چون x داخلی قطری است،
