@@ -1497,6 +1497,15 @@ function ZoneOrderEditor({
   };
   const silhouette = useMemo(() => loopPath(samples), [samples, blankL, blankR, innerSamples]);
   const innerSilhouette = useMemo(() => loopPath(innerSamples), [innerSamples, blankL, blankR]);
+  const openPath = (src: Sample[], mirrored: boolean) => {
+    if (src.length < 2) return "";
+    return `M ${X(src[0].z).toFixed(1)} ${(mirrored ? 2 * YC - Y(src[0].r) : Y(src[0].r)).toFixed(1)} ${src.slice(1).map((s) => `L ${X(s.z).toFixed(1)} ${(mirrored ? 2 * YC - Y(s.r) : Y(s.r)).toFixed(1)}`).join(" ")}`;
+  };
+  const outerTop = openPath(samples, false);
+  const outerBottom = openPath(samples, true);
+  const innerTop = openPath(innerSamples, false);
+  const innerBottom = openPath(innerSamples, true);
+
 
   const snapBound = (z: number, idx: number) => {
     const lo = idx > 0 ? bounds[idx - 1] + 2 : 0.5;
@@ -1556,13 +1565,15 @@ className="aspect-square w-full select-none touch-none rounded-md border border-
         onClick={onBgClick}
       >
         {/* سیلوئت قطعه */}
+        {/* Fill بسته است، اما strokeهای پروفایل باز رسم می‌شوند تا خط بسته‌شدن
+            در انتهای قطعه از میان حفره داخلی به‌عنوان خط اضافه دیده نشود. */}
         <path
           d={`${silhouette}${innerSilhouette ? ` ${innerSilhouette}` : ""}`}
           fill="rgba(201,149,90,0.18)"
-          stroke="rgba(227,169,78,0.5)"
-          strokeWidth={1}
           fillRule="evenodd"
         />
+        {[outerTop, outerBottom].map((d, i) => d && <path key={`outer-${i}`} d={d} fill="none" stroke="rgba(227,169,78,0.5)" strokeWidth={1} />)}
+        {[innerTop, innerBottom].map((d, i) => d && <path key={`inner-${i}`} d={d} fill="none" stroke="#45b394" strokeWidth={1.1} />)}
 
         {/* نواحی */}
         {zones.map((z, i) => {
