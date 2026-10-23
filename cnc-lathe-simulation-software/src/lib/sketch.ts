@@ -11,9 +11,6 @@ export interface SPoint {
   /** المان اصلی اسکچ؛ برای گروه‌بندی نمونه‌های یک خط/منحنی در تولید مسیر. */
   sourceSegId?: number;
   sourceKind?: SketchKind;
-  /** دو سر ثابت المان اصلی؛ جابه‌جایی دسته/شعاع منحنی این وتر را تغییر نمی‌دهد. */
-  sourceStart?: { z: number; r: number };
-  sourceEnd?: { z: number; r: number };
 }
 
 export type SketchKind = "line" | "quad" | "cubic" | "arc";
@@ -402,10 +399,7 @@ export function flattenSketch(segs: SketchSeg[], blankR: number, blankL: number)
       if (!Number.isFinite(p.z) || !Number.isFinite(p.r)) continue;
       /* نقطهٔ واقعی روی محور باید R=0 بماند؛ کف ۰٫۲mm ابتدای مسیر پرداخت خارج
          را از پروفایل اصلی جدا می‌کرد و یک زاویهٔ مصنوعی می‌ساخت. */
-      raw.push({
-        z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)),
-        sourceSegId: s.id, sourceKind: s.kind, sourceStart: { ...s.a }, sourceEnd: { ...s.b },
-      });
+      raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)), sourceSegId: s.id, sourceKind: s.kind });
     }
   }
   if (raw.length < 2) return [];
@@ -420,10 +414,7 @@ export function flattenSketch(segs: SketchSeg[], blankR: number, blankL: number)
     }
   }
   if (merged.length < 2) return [];
-  return merged.map((p) => ({
-    id: ++ppUid, z: p.z, r: p.r, smooth: false, sourceSegId: p.sourceSegId, sourceKind: p.sourceKind,
-    sourceStart: p.sourceStart, sourceEnd: p.sourceEnd,
-  }));
+  return merged.map((p) => ({ id: ++ppUid, z: p.z, r: p.r, smooth: false, sourceSegId: p.sourceSegId, sourceKind: p.sourceKind }));
 }
 
 /**
@@ -530,10 +521,7 @@ export function chainPolyline(chain: ChainItem[]): SPoint[] {
     const pts = it.seg.kind === "line" ? [it.seg.a, it.seg.b] : segPoints(it.seg);
     const arr = it.reversed ? [...pts].reverse() : pts;
     for (const p of arr) {
-      const tagged: SPoint = {
-        z: p.z, r: p.r, sourceSegId: it.seg.id, sourceKind: it.seg.kind,
-        sourceStart: { ...it.seg.a }, sourceEnd: { ...it.seg.b },
-      };
+      const tagged: SPoint = { z: p.z, r: p.r, sourceSegId: it.seg.id, sourceKind: it.seg.kind };
       if (!out.length || dist(out[out.length - 1], p) > 1e-6) out.push(tagged);
       else Object.assign(out[out.length - 1], tagged); // رأس مشترک، مالک یال خروجی بعدی است
     }
@@ -574,7 +562,7 @@ export function splitChainAt(poly: SPoint[], split: SPoint): SplitResult {
     if (d < bd) {
       bd = d;
       bi = i;
-      proj = { z: px, r: pr, sourceSegId: a.sourceSegId, sourceKind: a.sourceKind, sourceStart: a.sourceStart, sourceEnd: a.sourceEnd };
+      proj = { z: px, r: pr, sourceSegId: a.sourceSegId, sourceKind: a.sourceKind };
     }
   }
   const outer = [...poly.slice(0, bi + 1), { ...proj }];
@@ -636,10 +624,7 @@ export function branchPathPoints(branch: SPoint[], blankR: number, blankL: numbe
     /* شاخهٔ داخلی باید نقطهٔ واقعی R=0 را حفظ کند. حداقل‌کردن شعاع روی ۰٫۲mm
        یک پاره‌خط اضافه بین محور و ابتدای پرداخت داخل می‌ساخت و مسیر قرمز را از
        پروفایل آبی جدا نشان می‌داد. */
-    .map((p) => ({
-      id: ++branchUid, z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)), smooth: false,
-      sourceSegId: p.sourceSegId, sourceKind: p.sourceKind, sourceStart: p.sourceStart, sourceEnd: p.sourceEnd,
-    }));
+    .map((p) => ({ id: ++branchUid, z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)), smooth: false, sourceSegId: p.sourceSegId, sourceKind: p.sourceKind }));
 }
 
 export function branchPoints(branch: SPoint[], blankR: number, blankL: number, keep: "max" | "min"): PPoint[] {

@@ -11,8 +11,6 @@ export interface PPoint {
   smooth: boolean; // نقطه صاف (اسپلاین) یا گوشه
   sourceSegId?: number;
   sourceKind?: "line" | "quad" | "cubic" | "arc";
-  sourceStart?: { z: number; r: number };
-  sourceEnd?: { z: number; r: number };
 }
 
 /** روش خشن‌تراشی: کلاسیک (یک‌طرفه) | رفت‌وبرگشتی (زیگزاگ) | ناحیه‌ای */
@@ -469,8 +467,6 @@ export interface Sample {
   r: number;
   sourceSegId?: number;
   sourceKind?: "line" | "quad" | "cubic" | "arc";
-  sourceStart?: { z: number; r: number };
-  sourceEnd?: { z: number; r: number };
 }
 
 /* آفست نرمال واقعی (منحنی موازی): هر نمونه در جهت نرمال محلی به اندازه dist
@@ -804,10 +800,7 @@ export function sampleProfile(points: PPoint[], blankR: number): Sample[] {
         z = p1.z + (p2.z - p1.z) * t;
         r = p1.r + (p2.r - p1.r) * t;
       }
-      out.push({
-        z, r: clampR(r, blankR), sourceSegId: p1.sourceSegId, sourceKind: p1.sourceKind,
-        sourceStart: p1.sourceStart, sourceEnd: p1.sourceEnd,
-      });
+      out.push({ z, r: clampR(r, blankR), sourceSegId: p1.sourceSegId, sourceKind: p1.sourceKind });
     }
   }
   out.sort((a, b) => a.z - b.z);
@@ -848,10 +841,7 @@ export function sampleOrderedProfile(points: PPoint[], blankR: number): Sample[]
       const sampled = smooth
         ? { z: cr(p0.z, p1.z, p2.z, p3.z, t), r: clampR(cr(p0.r, p1.r, p2.r, p3.r, t)) }
         : { z: p1.z + (p2.z - p1.z) * t, r: clampR(p1.r + (p2.r - p1.r) * t) };
-      out.push({
-        ...sampled, sourceSegId: p1.sourceSegId, sourceKind: p1.sourceKind,
-        sourceStart: p1.sourceStart, sourceEnd: p1.sourceEnd,
-      });
+      out.push({ ...sampled, sourceSegId: p1.sourceSegId, sourceKind: p1.sourceKind });
     }
   }
   return out;
@@ -1344,13 +1334,11 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     return true;
   };
 
-  const smartTransferApplies = (a: Sample, b: Sample, source: Sample | undefined, reverseDirection: boolean) => {
-    if (!p.smartTransferEnabled || source?.sourceSegId == null) return false;
-    /* معیار زاویه همیشه وتر ثابتِ دو سر المان اصلی است. مختصات a/b فقط مسیر
-       عملیاتی را می‌سازند و تغییر دسته‌های Bezier، Via یا شعاع Arc نمی‌تواند
-       تصمیم فعال‌شدن انتقال هوشمند را تغییر دهد. */
-    const chordA=source.sourceStart??a,chordB=source.sourceEnd??b;
-    const dz=chordB.z-chordA.z,dr=chordB.r-chordA.r;
+  const smartTransferApplies = (a: Sample, b: Sample, sourceSegId: number | undefined, reverseDirection: boolean) => {
+    if (!p.smartTransferEnabled || sourceSegId == null) return false;
+    const dz=b.z-a.z,dr=b.r-a.r;
+    /* زاویه و علامت شیب فقط از وتر ابتدا تا انتهای المان اصلی محاسبه می‌شود؛
+       خطوط ریز نمونه‌برداری یک منحنی دیگر مستقلاً معیار تصمیم نیستند. */
     const slopeSign=dz*dr;
     if(reverseDirection?slopeSign>=-1e-12:slopeSign<=1e-12)return false;
     const angle=Math.atan2(Math.abs(dr),Math.abs(dz))*180/Math.PI;
@@ -1363,16 +1351,16 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     if(emitFirst)mv(1,2*path[0].r,path[0].z,feed,kind);
     /* شناسه یال در پیمایش معکوس از نقطه مقصد گرفته می‌شود، چون metadata همیشه
        مالک یال خروجی در ترتیب اصلی زنجیره است. */
-    const edgeOwner=(index:number)=>reverseDirection
-      ? (path[index+1]?.sourceSegId!=null?path[index+1]:path[index])
-      : (path[index]?.sourceSegId!=null?path[index]:path[index+1]);
+    const edgeSource=(index:number)=>reverseDirection
+      ? path[index+1]?.sourceSegId??path[index]?.sourceSegId
+      : path[index]?.sourceSegId??path[index+1]?.sourceSegId;
     let start=0;
     while(start<path.length-1){
-      const source=edgeOwner(start),sourceSegId=source?.sourceSegId;
+      const sourceSegId=edgeSource(start);
       let end=start+1;
-      while(end<path.length-1&&edgeOwner(end)?.sourceSegId===sourceSegId)end++;
+      while(end<path.length-1&&edgeSource(end)===sourceSegId)end++;
       const a=path[start],b=path[end];
-      if(!smartTransferApplies(a,b,source,reverseDirection)){
+      if(!smartTransferApplies(a,b,sourceSegId,reverseDirection)){
         for(let i=start+1;i<=end;i++)mv(1,2*path[i].r,path[i].z,feed,kind);
         start=end;
         continue;
