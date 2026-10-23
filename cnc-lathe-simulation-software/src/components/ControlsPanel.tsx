@@ -696,6 +696,7 @@ function ControlsPanel({
               blankL={params.blankL}
               blankR={params.blankD / 2}
               samples={zoneSamples}
+              innerSamples={innerZoneSamples}
               autoZones={autoZones}
               committedBounds={params.zoneBounds}
               committedOrder={params.zoneOrder}
@@ -1420,6 +1421,7 @@ function ZoneOrderEditor({
   blankL,
   blankR,
   samples,
+  innerSamples,
   autoZones,
   committedBounds,
   committedOrder,
@@ -1429,6 +1431,7 @@ function ZoneOrderEditor({
   blankL: number;
   blankR: number;
   samples: Sample[];
+  innerSamples: Sample[];
   autoZones: { a: number; b: number }[];
   committedBounds: number[];
   committedOrder: number[];
@@ -1460,16 +1463,23 @@ function ZoneOrderEditor({
     setOrder((p) => p.filter((v) => v < n));
   }, [n]);
 
+  /* کادر مربعی و مقیاس واحد: محور Z و شعاع با یک ضریب رسم می‌شوند تا
+     قطعه در پنجرهٔ نواحی مثل خود قطعه کشیده نشود. */
   const W = 240;
-  const H = 92;
-  const PAD = 6;
-  const YC = 40;
-  const HALF = 28;
-  const DIV_TOP = 14;
-  const NUM_Y = H - 10;
-  const X = (z: number) => PAD + (z / Math.max(0.001, blankL)) * (W - 2 * PAD);
-  const Y = (r: number) => YC - (r / Math.max(0.001, blankR)) * HALF;
-  const zFromX = (px: number) => clampZ(((px - PAD) / (W - 2 * PAD)) * blankL, blankL);
+  const H = 240;
+  const PAD = 12;
+  const YC = H / 2;
+  const displayR = Math.max(blankR, ...samples.map((s) => s.r), ...innerSamples.map((s) => s.r), 0.001);
+  const SCALE = Math.min((W - 2 * PAD) / Math.max(0.001, blankL), (H - 2 * PAD) / (2 * displayR));
+  const DRAW_W = blankL * SCALE;
+  const DRAW_R = displayR * SCALE;
+  const LEFT = (W - DRAW_W) / 2;
+  const X = (z: number) => LEFT + (z / Math.max(0.001, blankL)) * DRAW_W;
+  const Y = (r: number) => YC - r * SCALE;
+  const zFromX = (px: number) => clampZ(((px - LEFT) / Math.max(0.001, DRAW_W)) * blankL, blankL);
+  const DIV_TOP = Math.max(PAD, YC - DRAW_R);
+  const DIV_BOTTOM = Math.min(H - PAD, YC + DRAW_R);
+  const NUM_Y = Math.min(H - 10, DIV_BOTTOM + 16);
 
   const pointerToZ = (e: React.PointerEvent | React.MouseEvent) => {
     const el = svgRef.current;
@@ -1478,14 +1488,15 @@ function ZoneOrderEditor({
     return zFromX(((e.clientX - rect.left) / Math.max(1, rect.width)) * W);
   };
 
-  const silhouette = useMemo(() => {
-    if (samples.length < 2) return "";
-    let d = `M ${X(samples[0].z).toFixed(1)} ${Y(samples[0].r).toFixed(1)}`;
-    for (const s of samples) d += ` L ${X(s.z).toFixed(1)} ${Y(s.r).toFixed(1)}`;
-    for (let i = samples.length - 1; i >= 0; i--) d += ` L ${X(samples[i].z).toFixed(1)} ${(2 * YC - Y(samples[i].r)).toFixed(1)}`;
+  const loopPath = (src: Sample[]) => {
+    if (src.length < 2) return "";
+    let d = `M ${X(src[0].z).toFixed(1)} ${Y(src[0].r).toFixed(1)}`;
+    for (let i = 1; i < src.length; i++) d += ` L ${X(src[i].z).toFixed(1)} ${Y(src[i].r).toFixed(1)}`;
+    for (let i = src.length - 1; i >= 0; i--) d += ` L ${X(src[i].z).toFixed(1)} ${(2 * YC - Y(src[i].r)).toFixed(1)}`;
     return d + " Z";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [samples, blankL, blankR]);
+  };
+  const silhouette = useMemo(() => loopPath(samples), [samples, blankL, blankR, innerSamples]);
+  const innerSilhouette = useMemo(() => loopPath(innerSamples), [innerSamples, blankL, blankR]);
 
   const snapBound = (z: number, idx: number) => {
     const lo = idx > 0 ? bounds[idx - 1] + 2 : 0.5;
@@ -1526,7 +1537,7 @@ function ZoneOrderEditor({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-className="w-full select-none touch-none rounded-md border border-edge bg-[#120e09]"
+className="aspect-square w-full select-none touch-none rounded-md border border-edge bg-[#120e09]"
         style={{ cursor: dragIdx != null ? "ew-resize" : "crosshair" }}
         onPointerDown={(e) => {
           (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -1545,7 +1556,13 @@ className="w-full select-none touch-none rounded-md border border-edge bg-[#120e
         onClick={onBgClick}
       >
         {/* سیلوئت قطعه */}
-        <path d={silhouette} fill="rgba(201,149,90,0.18)" stroke="rgba(227,169,78,0.5)" strokeWidth={1} />
+        <path
+          d={`${silhouette}${innerSilhouette ? ` ${innerSilhouette}` : ""}`}
+          fill="rgba(201,149,90,0.18)"
+          stroke="rgba(227,169,78,0.5)"
+          strokeWidth={1}
+          fillRule="evenodd"
+        />
 
         {/* نواحی */}
         {zones.map((z, i) => {
@@ -1560,7 +1577,7 @@ className="w-full select-none touch-none rounded-md border border-edge bg-[#120e
                 x={xa}
                 y={DIV_TOP}
                 width={Math.max(0.5, xb - xa)}
-                height={2 * YC + 6 - DIV_TOP}
+                height={Math.max(1, DIV_BOTTOM - DIV_TOP)}
                 fill={selected ? "rgba(69,179,148,0.14)" : "transparent"}
               />
               {/* شماره اولویت */}
@@ -1602,8 +1619,8 @@ className="w-full select-none touch-none rounded-md border border-edge bg-[#120e
               onPointerEnter={() => setHoverIdx(i)}
               onPointerLeave={() => setHoverIdx(null)}
             >
-              <rect x={x - 5} y={DIV_TOP - 4} width={10} height={2 * YC + 10} fill="transparent" />
-              <line x1={x} y1={DIV_TOP} x2={x} y2={2 * YC + 6} stroke={active || hov ? "#f3c26b" : "#45b394"} strokeWidth={1.6} strokeDasharray="4 3" />
+              <rect x={x - 5} y={DIV_TOP - 4} width={10} height={Math.max(12, DIV_BOTTOM - DIV_TOP + 8)} fill="transparent" />
+              <line x1={x} y1={DIV_TOP} x2={x} y2={DIV_BOTTOM} stroke={active || hov ? "#f3c26b" : "#45b394"} strokeWidth={1.6} strokeDasharray="4 3" />
               {/* دستگیره بالای مرز */}
               <circle cx={x} cy={DIV_TOP} r={active ? 5 : hov ? 4.5 : 4} fill={active || hov ? "#f3c26b" : "#45b394"} stroke="#120e09" strokeWidth={1.5} />
               <text x={x} y={DIV_TOP - 8} textAnchor="middle" fontSize={8} fontFamily="JetBrains Mono, monospace" fill={active || hov ? "#f3c26b" : "#45b394"} fontWeight={700}>
