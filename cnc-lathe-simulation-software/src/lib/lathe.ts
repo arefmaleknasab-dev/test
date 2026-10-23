@@ -2387,6 +2387,12 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
         }
         profilePath("finish", p.feedFinish, !!op.reverse);
+        if(!nextEnabledOp(op.id)){
+          /* پیش از جمع‌شدن نهایی در +Y، خروج محوری ۱٫۵mm انجام می‌شود:
+             حالت عادی در +X و Reverse در −X. حرکت بعدی +Y همان منطق امن
+             پایان برنامه را بدون تغییر دنبال می‌کند. */
+          rawRapid(cur.x,cur.z+(op.reverse?-1.5:1.5));
+        }
         break;
       }
       /* آفست — خط موازی با طرح؛ مرجع مراحل خشن و نیمه‌پرداخت قبل از پرداخت */
