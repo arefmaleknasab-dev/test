@@ -1192,7 +1192,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
        و فقط ۱٫۵mm نهایی را با G1 محوری طی می‌کنیم. جهت برای Reverse وارونه است. */
     if(kind==="finish"&&axialLeadDir){
       const leadZ=targetZ-axialLeadDir*1.5;
-      rapidWithoutTargetNotes(fromR,leadZ);
+      /* منطق فاصله امن از قله باید پیش از الگوی X→Y حفظ شود: اگر شعاع فعلی
+         برای عبور تا صفحه ورود کافی نیست، ابتدا فقط در +Y جمع می‌کنیم. سپس
+         حرکت محوری در همان ارتفاع امن انجام و روی صفحه ورود به Y شروع می‌رسیم. */
+      const safeR=minSafeRadius(cur.z,leadZ);
+      const travelR=Math.max(fromR,safeR);
+      if(travelR>fromR+1e-7)rapidWithoutTargetNotes(travelR,cur.z);
+      rapidWithoutTargetNotes(travelR,leadZ);
       rapidWithoutTargetNotes(targetR,leadZ);
       mv(1,2*targetR,targetZ,feed,kind,true);
       return;
