@@ -129,6 +129,7 @@ export interface Params {
   innerEndTravel: number; // حرکت مستقیم +X پس از آخرین عملیات داخل‌تراشی
   bottomRoughOverlap: number; // همپوشانی خشن شعاعی و کف‌تراشی
   bottomOffsetClearance: number; // فاصله کف‌تراشی در +X از بلندترین قله آفست داخل
+  extraCutEachSide: number; // برداشت اضافه گردکردن/خشن شعاعی بیرون از هر سر خام
   smartTransferEnabled: boolean; // جابه‌جایی مستطیلی G0 و برش معکوس خطوط در بازه زاویه
   smartTransferAngleMin: number; // حد پایین زاویه خط نسبت به محور X طراحی
   smartTransferAngleMax: number; // حد بالای زاویه خط نسبت به محور X طراحی
@@ -364,6 +365,7 @@ export const DEFAULT_PARAMS: Params = {
   innerEndTravel: 300,
   bottomRoughOverlap: 3,
   bottomOffsetClearance: 0,
+  extraCutEachSide: 2,
   smartTransferEnabled: false,
   smartTransferAngleMin: 20,
   smartTransferAngleMax: 80,
@@ -402,7 +404,7 @@ export function normalizeParams(
     holder2: { ...DEFAULT_HOLDER2 },
   };
   if (!raw) return base;
-  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "smartTransferEnabled", "smartTransferAngleMin", "smartTransferAngleMax", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
+  const keys: (keyof Params)[] = ["blankD", "blankL", "doc", "innerDoc", "offsetDist", "innerOffsetDist", "innerStartClearance", "innerEndTravel", "bottomRoughOverlap", "bottomOffsetClearance", "extraCutEachSide", "smartTransferEnabled", "smartTransferAngleMin", "smartTransferAngleMax", "feedRough", "feedFinish", "rpm", "safety", "lineNumbers", "ramp", "safeBottomInnerLink", "simpleFeed", "spreadG0"];
   for (const k of keys) {
     const v = raw[k];
     if (typeof v === "number" && Number.isFinite(v)) (base[k] as number) = v as number;
@@ -418,6 +420,7 @@ export function normalizeParams(
   base.innerEndTravel = Math.min(500, Math.max(300, base.innerEndTravel));
   base.bottomRoughOverlap = Math.min(50, Math.max(0, base.bottomRoughOverlap));
   base.bottomOffsetClearance = Math.min(100, Math.max(0, base.bottomOffsetClearance));
+  base.extraCutEachSide = Math.min(10, Math.max(0, base.extraCutEachSide));
   base.smartTransferAngleMin = Math.min(90, Math.max(0, base.smartTransferAngleMin));
   base.smartTransferAngleMax = Math.min(90, Math.max(0, base.smartTransferAngleMax));
   /* مهاجرت «اضافه پرداخت» قدیمی به «فاصله آفست» */
@@ -1437,8 +1440,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           let atZ = 0;
           for (let i = 0; i < roundLayers.length; i++) {
             const r = roundLayers[i];
-            const startZ = dir === 1 ? 0 : p.blankL;
-            const endZ = dir === 1 ? p.blankL : 0;
+            const startZ = dir === 1 ? -p.extraCutEachSide : p.blankL + p.extraCutEachSide;
+            const endZ = dir === 1 ? p.blankL + p.extraCutEachSide : -p.extraCutEachSide;
             note(`ROUND LAYER X${f2(r)}${dir === -1 ? " (RETURN)" : ""}`);
             if (i === 0) mv(0, retractX, startZ, 0, "rapid"); // موقعیت‌یابی امن اولیه
             mv(1, 2 * r, startZ, p.feedRough * 0.7, "round"); // فرورفتن شعاعی
@@ -1545,10 +1548,21 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const radialEndZ = bottomCoveredFromZ == null
           ? p.blankL
           : Math.min(p.blankL, bottomCoveredFromZ + p.bottomRoughOverlap);
-        const roughRunSamples = roughOffSamples.filter((s) => s.z <= radialEndZ + 1e-9);
-        if (!roughRunSamples.length || roughRunSamples[roughRunSamples.length - 1].z < radialEndZ - 1e-9) {
-          roughRunSamples.push({ z: radialEndZ, r: offsetRadiusAt(radialEndZ) });
+        const roughStartZ=-p.extraCutEachSide;
+        const roughEndZ=radialEndZ+p.extraCutEachSide;
+        const insideRoughRun = roughOffSamples.filter((s) => s.z <= radialEndZ + 1e-9);
+        if (!insideRoughRun.length || insideRoughRun[insideRoughRun.length - 1].z < radialEndZ - 1e-9) {
+          insideRoughRun.push({ z: radialEndZ, r: offsetRadiusAt(radialEndZ) });
         }
+        /* امتداد دو سر با شعاع مرزی ثابت است تا شکل پروفایل داخل خام تغییر نکند؛
+           فقط طول واقعی پاس‌های خشن به اندازه تنظیم‌شده بیرون هر دو سر می‌رود. */
+        const firstR=insideRoughRun[0]?.r??offsetRadiusAt(0);
+        const boundaryLastR=insideRoughRun[insideRoughRun.length-1]?.r??offsetRadiusAt(radialEndZ);
+        const roughRunSamples:Sample[]=[
+          {z:roughStartZ,r:firstR},
+          ...insideRoughRun.filter(point=>point.z>roughStartZ+1e-9&&point.z<roughEndZ-1e-9),
+          {z:roughEndZ,r:boundaryLastR},
+        ];
 
         /* ------------------------------------------------------------------ */
         /* حالت رفت‌وبرگشتی (زیگزاگ) — مارپیچ دنبال‌کنندهٔ منحنی، فقط بازه‌های فعال:  */
@@ -1597,7 +1611,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               return pts.filter((_, i) => keep[i]);
             };
             /* جهت شروع: نزدیک‌تر به موقعیت فعلی ابزار (مثلاً پایان گرد کردن) */
-            let forward = op.reverse ? Math.abs(cur.z) > Math.abs(radialEndZ - cur.z) : Math.abs(cur.z) <= Math.abs(radialEndZ - cur.z);
+            let forward = op.reverse ? Math.abs(cur.z-roughStartZ) > Math.abs(roughEndZ-cur.z) : Math.abs(cur.z-roughStartZ) <= Math.abs(roughEndZ-cur.z);
             let first = true;
             let lastEndZ = NaN;
             let lastEndR = 0;
@@ -1667,7 +1681,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (p.roughMode === "zone") {
           /* نواحی: مرزهای دستی کاربر (در صورت اعتبار) جایگزین تقسیم خودکار می‌شوند؛ */
           /* سپس ترتیب دستی (در صورت اعتبار) روی همان نواحی اعمال می‌شود.            */
-          let zones = resolveZones(roughRunSamples, p.zoneBounds, 0, radialEndZ);
+          let zones = resolveZones(roughRunSamples, p.zoneBounds, roughStartZ, roughEndZ);
           const ord = p.zoneOrder;
           const isPerm =
             ord.length === zones.length &&
@@ -1679,7 +1693,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             /* بهینه‌سازی شروع: اگر ترتیب دستی تعیین نشده باشد، نواحی از سمتی       */
             /* پردازش می‌شوند که ابزار اکنون در آن‌جاست (مثلاً بعد از گرد کردن       */
             /* گوشه‌ها که ابزار در انتهای همان مسیر ایستاده) — نه همیشه از چپ.     */
-            const mid = radialEndZ / 2;
+            const mid = (roughStartZ+roughEndZ)/2;
             if (cur.z > mid) zones = [...zones].reverse();
           }
           for (const zone of zones) {
