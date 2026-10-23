@@ -2753,7 +2753,7 @@ function buildStdLines(segs: Seg[], p: Params): string[] {
     const br = bridgeAt.get(i);
     if (br) {
       /* ناپیوستگی فضای ماشین (تعویض هلدر): پله‌های محوری از گوشه امن */
-      lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
+      if (!(br.fromH === 2 && br.toH === 1)) lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
       let pu = br.from.u;
       let pv = br.from.v;
       for (let j = 0; j < br.legs.length; j++) {
@@ -2839,7 +2839,7 @@ function buildModalLines(segs: Seg[], p: Params): string[] {
     const br = bridgeAt.get(i);
     if (br) {
       /* ناپیوستگی فضای ماشین (تعویض هلدر): پله‌های محوری از گوشه امن */
-      lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
+      if (!(br.fromH === 2 && br.toH === 1)) lines.push(`(HOLDER ${br.fromH} -> ${br.toH})`);
       let pu = br.from.u;
       let pv = br.from.v;
       for (let j = 0; j < br.legs.length; j++) {
