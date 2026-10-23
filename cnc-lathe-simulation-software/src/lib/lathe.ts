@@ -795,6 +795,24 @@ export function sampleProfile(points: PPoint[], blankR: number): Sample[] {
   return out;
 }
 
+/** حذف فقط نقاط میانیِ واقعاً هم‌خط از مسیر نهایی؛ نمونه‌های متراکم موتور برای
+ * محاسبات Offset، برخورد و خشن‌کاری دست‌نخورده می‌مانند. تلرانس یک نانومتر است
+ * تا هیچ بخش منحنی یا شکست هندسی به‌صورت تقریبی صاف نشود. */
+function compactExactlyCollinear<T extends { z: number; r: number }>(points: T[]): T[] {
+  if (points.length <= 2) return [...points];
+  const out: T[] = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const a = out[out.length - 1], b = points[i], c = points[i + 1];
+    const acZ = c.z - a.z, acR = c.r - a.r;
+    const length = Math.hypot(acZ, acR);
+    const distance = length > 1e-15 ? Math.abs((b.z - a.z) * acR - (b.r - a.r) * acZ) / length : Infinity;
+    const forward = (b.z - a.z) * (c.z - b.z) + (b.r - a.r) * (c.r - b.r) >= -1e-15;
+    if (distance > 1e-9 || !forward) out.push(b);
+  }
+  out.push(points[points.length - 1]);
+  return out;
+}
+
 /** نمونه‌برداری مسیر با حفظ ترتیب زنجیره؛ برای شاخه داخلیِ برگشتی ضروری است. */
 export function sampleOrderedProfile(points: PPoint[], blankR: number): Sample[] {
   const clampR = (r: number) => Math.min(Math.max(r, 0), blankR);
@@ -1304,7 +1322,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   };
 
   const profilePath = (kind: SegKind, feed: number, reverse=false) => {
-    const source = kind === "finish" ? outerFinishPath : samples;
+    const source = kind === "finish" ? compactExactlyCollinear(outerFinishPath) : samples;
     const path = reverse ? [...source].reverse() : source;
     if (!path.length) return;
     mv(1, 2 * path[0].r, path[0].z, feed, kind);
@@ -2218,7 +2236,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         if (innerOffBase.length < 2) break;
         const zBot = innerOffBase[0].z;
         const zRimF = innerOffBase[innerOffBase.length - 1].z;
-        const innerOff=op.reverse?[...innerOffBase].reverse():innerOffBase;
+        const compactInnerOff = compactExactlyCollinear(innerOffBase);
+        const innerOff=op.reverse?[...compactInnerOff].reverse():compactInnerOff;
         const startInnerZ=innerOff[0].z;
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zRimF + p.innerStartClearance;
@@ -2262,7 +2281,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const IWBase = innerFinishPath;
         const zBot = IWBase[0].z;
         const zRimF = IWBase[IWBase.length - 1].z;
-        const IW=op.reverse?[...IWBase].reverse():IWBase;
+        const compactIW = compactExactlyCollinear(IWBase);
+        const IW=op.reverse?[...compactIW].reverse():compactIW;
         const startInnerZ=IW[0].z;
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
@@ -2312,7 +2332,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           note(`OFFSET PASS +${f2(OD)} MM (PARALLEL TO PROFILE)`);
           /* ورود کوتاه: سریع تا بالای نقطه شروع (جلوتر از صفحه پیشانی)، سپس
              فرورفتن مورب کوتاه با فیدر — بدون فیدر طولانی روی صفحه تراش‌خورده */
-          const offsetPath=op.reverse?[...offSamples].reverse():offSamples;
+          const compactOffsetPath = compactExactlyCollinear(offSamples);
+          const offsetPath=op.reverse?[...compactOffsetPath].reverse():compactOffsetPath;
           enterOuterPath(offsetPath[0].r,offsetPath[0].z,p.feedFinish,"offset");
           for (let i = 1; i < offsetPath.length; i++) mv(1, 2 * offsetPath[i].r, offsetPath[i].z, p.feedFinish, "offset");
           if(!nextIsOuterPath(op.id)) mv(0,2*(offsetPath[offsetPath.length-1].r+p.safety),offsetPath[offsetPath.length-1].z,0,"rapid");
