@@ -913,12 +913,11 @@ export default function ProfileEditor({
   const commitImages=(next:ReferenceImage[])=>{imageHistoryFocus.current=true;imagePast.current.push(cloneImages(referenceImages));if(imagePast.current.length>100)imagePast.current.shift();imageFuture.current=[];onReferenceImages(next);setImageHistoryVersion(v=>v+1);};
   const undoImage=()=>{const prev=imagePast.current.pop();if(!prev)return;imageFuture.current.push(cloneImages(referenceImages));onReferenceImages(cloneImages(prev));setImageHistoryVersion(v=>v+1);};
   const redoImage=()=>{const next=imageFuture.current.pop();if(!next)return;imagePast.current.push(cloneImages(referenceImages));onReferenceImages(cloneImages(next));setImageHistoryVersion(v=>v+1);};
-  useEffect(()=>registerImageHistory({undo:undoImage,redo:redoImage,canUndo:imageHistoryFocus.current&&imagePast.current.length>0,canRedo:imageHistoryFocus.current&&imageFuture.current.length>0}),[imageHistoryVersion,referenceImages,registerImageHistory]);
   const lastImageImportRequest=useRef(imageImportRequest);
   useEffect(()=>{if(imageImportRequest!==lastImageImportRequest.current){lastImageImportRequest.current=imageImportRequest;imageInputRef.current?.click();}},[imageImportRequest]);
   const imageDrag=useRef<{id:number;start:SPoint;base:ReferenceImage;mode:"move"|"rotate"|"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w";startAngle?:number;cursorBaseAngle?:number}|null>(null);
   const paintPast=useRef<PaintEdge[][]>([]),paintFuture=useRef<PaintEdge[][]>([]);
-  const [,setPaintHistoryVersion]=useState(0);
+  const [paintHistoryVersion,setPaintHistoryVersion]=useState(0);
   const clonePaint=(edges:PaintEdge[])=>edges.map(edge=>({...edge,a:{...edge.a},b:{...edge.b}}));
   const commitPaint=(updater:(current:PaintEdge[])=>PaintEdge[])=>setPaintEdges(current=>{
     paintPast.current.push(clonePaint(current));if(paintPast.current.length>100)paintPast.current.shift();paintFuture.current=[];setPaintHistoryVersion(v=>v+1);return updater(current);
@@ -927,6 +926,22 @@ export default function ProfileEditor({
   const redoPaint=()=>{const next=paintFuture.current.pop();if(!next)return;setPaintEdges(current=>{paintPast.current.push(clonePaint(current));return clonePaint(next);});setPaintHistoryVersion(v=>v+1);};
   const [selectedPaint,setSelectedPaint]=useState<number[]>([]);
   const [selectedPaintPoints,setSelectedPaintPoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
+  /* تاریخچهٔ محلی عکس/نقاشی را با همان اولویت Ctrl+Z/Ctrl+Y در اختیار
+     نوار بالایی هم می‌گذاریم؛ در غیر این صورت نوار بالایی ممکن است تاریخچهٔ
+     پروژه را اجرا کند، در حالی که میانبر هنوز عکس یا Paint را برمی‌گرداند. */
+  useEffect(()=>{
+    const paintContext=tool==="paint"||selectedPaint.length>0||selectedPaintPoints.length>0;
+    const imageUndo=imageHistoryFocus.current&&imagePast.current.length>0;
+    const imageRedo=imageHistoryFocus.current&&imageFuture.current.length>0;
+    const paintUndo=paintContext&&paintPast.current.length>0;
+    const paintRedo=paintContext&&paintFuture.current.length>0;
+    registerImageHistory({
+      undo:()=>imageUndo?undoImage():paintUndo?undoPaint():onUndo(),
+      redo:()=>imageRedo?redoImage():paintRedo?redoPaint():onRedo(),
+      canUndo:imageUndo||paintUndo,
+      canRedo:imageRedo||paintRedo,
+    });
+  },[imageHistoryVersion,paintHistoryVersion,referenceImages,registerImageHistory,tool,selectedPaint.length,selectedPaintPoints.length,onUndo,onRedo]);
   const [paintMarqueeHits,setPaintMarqueeHits]=useState<number[]>([]);
   const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
   const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;points?:Array<{id:number;point:"a"|"b"}>;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
