@@ -1175,16 +1175,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* اتصال عمومی عملیات‌های بیرونی: خط مستقیم فقط وقتی از پروفیل/قله عبور
      نمی‌کند G1 است. در غیر این صورت ارتفاع عبور دقیقاً بیشینه ماده + مقدار
      Safety کاربر است؛ هیچ حاشیه ثابت یا بازگشت به رترکت سراسری افزوده نمی‌شود. */
-  /* ورود هر لایهٔ خشن شعاعی به دو بخش تقسیم می‌شود: ابتدا با G0 تا
-     ۱۱۰٪ عمق بار بیرونیِ لایه، سپس فقط ۱۱۰٪ عمق بار آخر با G1 در −Y.
-     این الگو برای هر سه حالت classic، zigzag و zone یکسان است. */
-  const roughRadialEntry=(targetR:number,targetZ:number,feed:number)=>{
-    const leadR=targetR + 1.1*p.doc;
-    const currentR=cur.x/2;
-    if(Math.abs(currentR-leadR)>1e-7) rawRapid(2*leadR,cur.z);
-    if(Math.abs(cur.z-targetZ)>1e-7) rawRapid(2*leadR,targetZ);
-    mv(1,2*targetR,targetZ,feed,"rough");
-  };
   const enterOuterPath=(targetR:number,targetZ:number,feed:number,kind:SegKind,axialLeadDir?:1|-1)=>{
     const fromR=cur.x/2;
     /* خط نزدیک‌شدن هنوز جزو عملیات مقصد نیست. رنگ، شناسه عملیات و Note مقصد
@@ -1193,7 +1183,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
        با نوع و رنگ خود پیشانی ثبت شود، نه با رنگ آخرین عملیات قبلی. */
     const previousCut=[...segs].reverse().find(segment=>segment.motion===1);
     const linkMove=(r:number,z:number)=>{
-      if(kind==="rough"){roughRadialEntry(r,z,feed);return;}
       if(!previousCut||kind==="face"){mv(1,2*r,z,feed,kind);return;}
       const savedOp=curOp,savedOpId=curOpId,savedHolder=curHolder,pendingNotes=notes;
       curOp=previousCut.op;curOpId=previousCut.opId;curHolder=previousCut.holder;notes=[];
@@ -1249,8 +1238,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
       const clearanceR=Math.max(fromR,targetR)+1;
       rapidWithoutTargetNotes(clearanceR,cur.z);
       rapidWithoutTargetNotes(clearanceR,targetZ);
-      if(kind==="rough") roughRadialEntry(targetR,targetZ,feed);
-      else mv(1,2*targetR,targetZ,feed,kind);
+      mv(1,2*targetR,targetZ,feed,kind);
       return;
     }
     if(directSafe){
@@ -1661,7 +1649,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
                   rawRapid(2 * travelR, startZ);
                 }
                 /* فرورفتن تا منحنی لایه در نقطهٔ ورود و دنبال‌کردن منحنی درون بازه */
-                roughRadialEntry(cStart,startZ,p.feedRough * 0.7);
+                mv(1, 2 * cStart, startZ, p.feedRough * 0.7, "rough");
                 const lo = Math.min(startZ, endZ);
                 const hi = Math.max(startZ, endZ);
                 const ptsIn = F.filter((s) => s.z > lo + 1e-6 && s.z < hi - 1e-6);
@@ -1815,7 +1803,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           /* خط بعد می‌رساند و سپس تراش طولی ادامه می‌یابد.                        */
 
           /* فرورفتن تا شعاع لایه و تراش طولی */
-          roughRadialEntry(c.r,startZ,p.feedRough * 0.7);
+          mv(1, 2 * c.r, startZ, p.feedRough * 0.7, "rough");
           if (Math.abs(endZ - startZ) > 0.01) mv(1, 2 * c.r, endZ, p.feedRough, "rough");
           physCut(c.a, c.b, c.r); // به‌روزرسانی سطح تراش‌خورده
 
