@@ -144,6 +144,8 @@ export interface Params {
   innerRoughMode: RoughMode; // روش خشن‌تراشی داخل؛ classic همان رفتار قبلی است
   innerZoneOrder: number[]; // ترتیب نواحی شعاعی داخل
   innerZoneBounds: number[]; // مرزهای شعاعی داخل (R)
+  nativeArcs?: boolean; // حفظ کمان‌ها و خروجی G2/G3 در صورت فعال‌بودن Preference
+  nativeArcFormat?: "ik" | "r";
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
   safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
   fastInnerBoundaryRouting?: boolean; // سازگاری تنظیم ذخیره‌شده نسخه قبلی
