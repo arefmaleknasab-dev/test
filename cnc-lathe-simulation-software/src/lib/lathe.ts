@@ -1692,11 +1692,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           if (isPerm) {
             zones = ord.map((i) => zones[i]);
           } else {
-            /* بهینه‌سازی شروع: اگر ترتیب دستی تعیین نشده باشد، نواحی از سمتی       */
-            /* پردازش می‌شوند که ابزار اکنون در آن‌جاست (مثلاً بعد از گرد کردن       */
-            /* گوشه‌ها که ابزار در انتهای همان مسیر ایستاده) — نه همیشه از چپ.     */
-            const mid = (roughStartZ+roughEndZ)/2;
-            if (cur.z > mid) zones = [...zones].reverse();
+            /* جهت نواحی فقط از Reverse خود خشن شعاعی می‌آید؛ موقعیت ابزار بعد از
+               عملیات گرد کردن گوشه‌ها نباید ترتیب نواحی را معکوس کند. */
+            if (op.reverse) zones = [...zones].reverse();
           }
           for (const zone of zones) {
             let layer = R - p.doc;
