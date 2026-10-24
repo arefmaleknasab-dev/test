@@ -117,9 +117,6 @@ export const DEFAULT_SPLIT: SplitState = { enabled: false, z: 90, r: 68 };
 export const DEFAULT_HOLDER2: Holder2State = { xOff: 50, yOff: 50 };
 export const MIN_HOLDER2_OFFSET = 50;
 
-/** نقطهٔ شکست روی مرز ناحیه؛ برای حفظ شکل شکستهٔ مرز در تولید مسیر. */
-export interface ZoneBoundaryPoint { bound: number; z: number; r: number }
-
 export interface Params {
   blankD: number; // قطر خام
   blankL: number; // طول خام
@@ -147,8 +144,6 @@ export interface Params {
   innerRoughMode: RoughMode; // روش خشن‌تراشی داخل؛ classic همان رفتار قبلی است
   innerZoneOrder: number[]; // ترتیب نواحی شعاعی داخل
   innerZoneBounds: number[]; // مرزهای شعاعی داخل (R)
-  zoneBoundaryPoints: ZoneBoundaryPoint[]; // نقاط شکست مرزهای Z نواحی بیرونی
-  innerZoneBoundaryPoints: ZoneBoundaryPoint[]; // نقاط شکست مرزهای شعاعی نواحی داخلی
   ramp: boolean; // اتصال پیوسته بین مسیرهای خشن
   safeBottomInnerLink: boolean; // اتصال مرحله‌ای امن کف‌تراشی به خشن داخل (بدون G0 — فرورفتن مستقیم برشی)
   fastInnerBoundaryRouting?: boolean; // سازگاری تنظیم ذخیره‌شده نسخه قبلی
@@ -383,8 +378,6 @@ export const DEFAULT_PARAMS: Params = {
   innerRoughMode: "classic",
   innerZoneOrder: [],
   innerZoneBounds: [],
-  zoneBoundaryPoints: [],
-  innerZoneBoundaryPoints: [],
   ramp: true,
   safeBottomInnerLink: true,
   simpleFeed: true,
@@ -450,11 +443,6 @@ export function normalizeParams(
   }
   if (Array.isArray(raw.innerZoneOrder) && raw.innerZoneOrder.every((v) => typeof v === "number" && Number.isInteger(v) && v >= 0)) base.innerZoneOrder = [...raw.innerZoneOrder];
   if (Array.isArray(raw.innerZoneBounds) && raw.innerZoneBounds.every((v) => typeof v === "number" && Number.isFinite(v))) base.innerZoneBounds = [...raw.innerZoneBounds].sort((a,b)=>a-b);
-  const validBoundaryPoints = (value: unknown): ZoneBoundaryPoint[] => Array.isArray(value)
-    ? (value as Partial<ZoneBoundaryPoint>[]).filter(p => typeof p.bound === "number" && Number.isFinite(p.bound) && typeof p.z === "number" && Number.isFinite(p.z) && typeof p.r === "number" && Number.isFinite(p.r)).map(p => ({bound:p.bound!,z:p.z!,r:p.r!}))
-    : [];
-  base.zoneBoundaryPoints = validBoundaryPoints((raw as Partial<Params>).zoneBoundaryPoints);
-  base.innerZoneBoundaryPoints = validBoundaryPoints((raw as Partial<Params>).innerZoneBoundaryPoints);
   const ops = normalizeOps(raw.ops, legacy);
   if (ops) base.ops = ops;
   if (raw.format === "modal" || raw.format === "std") base.format = raw.format;
@@ -1697,19 +1685,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* فهرست برش‌ها — به ترتیب لایه (کلاسیک) یا به ترتیب ناحیه (ناحیه‌ای:      */
         /* همهٔ لایه‌های ناحیهٔ اول، سپس همهٔ لایه‌های ناحیهٔ دوم و …)                  */
         const cuts: { a: number; b: number; r: number }[] = [];
-        const outerBoundaryAt = (base: number, boundIndex: number, r: number) => {
-          const marks = p.zoneBoundaryPoints.filter(point => point.bound === boundIndex).sort((a,b)=>a.r-b.r);
-          if (!marks.length) return base;
-          if (marks.length === 1) return marks[0].z;
-          if (r <= marks[0].r) return marks[0].z;
-          for (let i=1;i<marks.length;i++) {
-            if (r <= marks[i].r) {
-              const a=marks[i-1],b=marks[i],t=(r-a.r)/Math.max(1e-9,b.r-a.r);
-              return a.z+(b.z-a.z)*t;
-            }
-          }
-          return marks[marks.length-1].z;
-        };
         if (p.roughMode === "zone") {
           /* نواحی: مرزهای دستی کاربر (در صورت اعتبار) جایگزین تقسیم خودکار می‌شوند؛ */
           /* سپس ترتیب دستی (در صورت اعتبار) روی همان نواحی اعمال می‌شود.            */
@@ -1727,17 +1702,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             if (op.reverse) zones = [...zones].reverse();
           }
           for (const zone of zones) {
-            const lowerIndex = p.zoneBounds.findIndex(bound => Math.abs(bound-zone.a)<0.01);
-            const upperIndex = p.zoneBounds.findIndex(bound => Math.abs(bound-zone.b)<0.01);
             let layer = R - p.doc;
             let guard = 0;
             while (layer > floorR + 1e-6 && guard < 80) {
               guard++;
               for (const iv of cutIntervals(roughRunSamples, layer)) {
-                const zoneA = outerBoundaryAt(zone.a, lowerIndex, layer);
-                const zoneB = outerBoundaryAt(zone.b, upperIndex, layer);
-                const a = Math.max(iv.a, Math.min(zoneA, zoneB));
-                const b = Math.min(iv.b, Math.max(zoneA, zoneB));
+                const a = Math.max(iv.a, zone.a);
+                const b = Math.min(iv.b, zone.b);
                 if (b - a > 0.3) cuts.push({ a, b, r: layer });
               }
               layer -= p.doc;
@@ -2112,17 +2083,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
              چند قله به چند Active Region شکسته شود، ابزار همه آن‌ها را در همان
              جهت Y طی می‌کند و تا آخرین دره جهت را معکوس نمی‌کند. */
           const firstDirectionByGroup=new Map<number,boolean>();
-          const innerBoundaryAt=(base:number,boundIndex:number,z:number)=>{
-            const marks=p.innerZoneBoundaryPoints.filter(point=>point.bound===boundIndex).sort((a,b)=>a.z-b.z);
-            if(!marks.length)return base;
-            if(marks.length===1)return marks[0].r;
-            if(z<=marks[0].z)return marks[0].r;
-            for(let i=1;i<marks.length;i++)if(z<=marks[i].z){const a=marks[i-1],b=marks[i],t=(z-a.z)/Math.max(1e-9,b.z-a.z);return a.r+(b.r-a.r)*t;}
-            return marks[marks.length-1].r;
-          };
-          const appendPass=(plan:{layerZ:number;intervals:{a:number;b:number}[]},group:number,pass:number,lo:number,hi:number,loIndex:number,hiIndex:number)=>{
-            const dynamicLo=innerBoundaryAt(lo,loIndex,plan.layerZ),dynamicHi=innerBoundaryAt(hi,hiIndex,plan.layerZ);
-            const clipped=plan.intervals.map(iv=>({a:Math.max(iv.a,Math.min(dynamicLo,dynamicHi)),b:Math.min(iv.b,Math.max(dynamicLo,dynamicHi))})).filter(iv=>iv.b-iv.a>0.05);
+          const appendPass=(plan:{layerZ:number;intervals:{a:number;b:number}[]},group:number,pass:number,lo:number,hi:number)=>{
+            const clipped=plan.intervals.map(iv=>({a:Math.max(iv.a,lo),b:Math.min(iv.b,hi)})).filter(iv=>iv.b-iv.a>0.05);
             if(!clipped.length)return;
             if(!firstDirectionByGroup.has(group)){
               /* جهت هر عملیات مستقل است. موقعیت انتهایی کف‌تراشی نباید جهت
@@ -2142,10 +2104,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             const zones=edges.slice(0,-1).map((a,i)=>({a,b:edges[i+1]}));
             const validOrder=p.innerZoneOrder.length===zones.length&&new Set(p.innerZoneOrder).size===zones.length&&p.innerZoneOrder.every(i=>i>=0&&i<zones.length);
             const ord=validOrder?p.innerZoneOrder:zones.map((_,i)=>i);
-            for(const zi of ord)layerPlans.forEach((plan,pass)=>appendPass(plan,zi,pass,zones[zi].a,zones[zi].b,zi-1,zi));
+            for(const zi of ord)layerPlans.forEach((plan,pass)=>appendPass(plan,zi,pass,zones[zi].a,zones[zi].b));
           } else {
             const maxR=Math.max(...mergedWall.map(q=>q.r));
-            layerPlans.forEach((plan,pass)=>appendPass(plan,0,pass,0,maxR,-1,-1));
+            layerPlans.forEach((plan,pass)=>appendPass(plan,0,pass,0,maxR));
           }
 
           const simplifyInnerContour=(pts:{r:number;z:number}[])=>{
