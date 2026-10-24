@@ -2612,8 +2612,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   }
 
   /* قالب‌بندی خروجی بر اساس سبک انتخابی */
-  let lines = p.format === "modal" ? buildModalLines(segs, p) : buildStdLines(segs, p);
-  if (p.nativeArcs) lines = collapseNativeArcs(lines, segs, p);
+  const lines = p.format === "modal" ? buildModalLines(segs, p) : buildStdLines(segs, p);
 
   /* آمار */
   let cutLen = 0;
@@ -2782,26 +2781,6 @@ export function planBridges(segs: Seg[], p: Params): {
     }
   }
   return { tc, home, bridges };
-}
-
-function collapseNativeArcs(lines: string[], segs: Seg[], p: Params): string[] {
-  const remove = new Set<number>();
-  for (let i = 0; i + 2 < segs.length; i++) {
-    const a=segs[i], b=segs[i+1], c=segs[i+2];
-    if (a.motion!==1 || b.motion!==1 || c.motion!==1 || a.kind!=="finish" || b.kind!==a.kind || c.kind!==a.kind) continue;
-    const x1=a.x1,z1=a.z1,x2=b.x2,z2=b.z2,x3=c.x2,z3=c.z2;
-    const d=2*(x1*(z2-z3)+x2*(z3-z1)+x3*(z1-z2)); if(Math.abs(d)<1e-8) continue;
-    const cx=((x1*x1+z1*z1)*(z2-z3)+(x2*x2+z2*z2)*(z3-z1)+(x3*x3+z3*z3)*(z1-z2))/d;
-    const cz=((x1*x1+z1*z1)*(x3-x2)+(x2*x2+z2*z2)*(x1-x3)+(x3*x3+z3*z3)*(x2-x1))/d;
-    const r=Math.hypot(x1-cx,z1-cz); if (![a,b,c].every(s=>Math.abs(Math.hypot(s.x2-cx,s.z2-cz)-r)<0.08)) continue;
-    const cross=(x2-x1)*(z3-z2)-(z2-z1)*(x3-x2); const g=cross<0?"G2":"G3";
-    const line=a.line; if(line<0||line>=lines.length) continue;
-    const end=`X${f2(c.x2)} Z${f2(c.z2)}`;
-    const code=p.nativeArcFormat==="r"?`${g} ${end} R${f2(r)}`:`${g} ${end} I${f2(cx-x1)} K${f2(cz-z1)}`;
-    lines[line]=p.lineNumbers?lines[line].replace(/N\\d+\\s+.*/,`N${(line+1)*10} ${code}`):code;
-    remove.add(b.line); remove.add(c.line); i+=2;
-  }
-  return lines.filter((_,i)=>!remove.has(i));
 }
 
 /* ---------------- پس‌پردازندهٔ استاندارد Fanuc ---------------- */
