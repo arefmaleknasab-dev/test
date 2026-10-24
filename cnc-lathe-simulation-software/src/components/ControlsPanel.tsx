@@ -1392,9 +1392,8 @@ function InnerRadialZoneEditor({blankR,samples,outerSamples,bounds:committed,ord
   const [bounds,setBounds]=useState<number[]>(initial);
   const [order,setOrder]=useState<number[]>([...committedOrder]);
   const [drag,setDrag]=useState<number|null>(null),[hover,setHover]=useState<number|null>(null);
-  const [linePoints,setLinePoints]=useState<Array<{ bound: number; z: number; r: number }>>([]);
-  const [pointDrag,setPointDrag]=useState<number|null>(null);
-  useEffect(()=>setLinePoints(points=>points.filter(point=>point.bound<bounds.length)),[bounds.length]);
+  const [linePoints,setLinePoints]=useState<number[]>([]);
+  useEffect(()=>setLinePoints(points=>points.filter(index=>index<bounds.length)),[bounds.length]);
   const svgRef=useRef<SVGSVGElement>(null),W=240,H=240,P=12;
   const minZ=profileSamples.length?Math.min(...profileSamples.map(s=>s.z)):0,maxZ=profileSamples.length?Math.max(...profileSamples.map(s=>s.z)):1;
   const zSpan=Math.max(.001,maxZ-minZ);
@@ -1406,7 +1405,6 @@ function InnerRadialZoneEditor({blankR,samples,outerSamples,bounds:committed,ord
   const X=(z:number)=>LEFT+(z-minZ)*SCALE;
   const Y=(r:number)=>BASE_Y-r*SCALE;
   const radial=(e:React.PointerEvent|React.MouseEvent)=>{const q=svgRef.current!.getBoundingClientRect();const py=((e.clientY-q.top)/q.height)*H;const shown=(BASE_Y-py)/SCALE;return Math.max(.5,Math.min(radialMax-.5,shown));};
-  const axial=(e:React.PointerEvent|React.MouseEvent)=>{const q=svgRef.current!.getBoundingClientRect();return Math.max(0,Math.min(maxZ, minZ+((e.clientX-q.left)/q.width)*zSpan));};
   const zones=useMemo(()=>{const e=[0,...bounds.filter(v=>v<radialMax).slice().sort((a,b)=>a-b),radialMax];return e.slice(0,-1).map((a,i)=>({a,b:e[i+1]}));},[bounds,radialMax]);
   useEffect(()=>setOrder(o=>o.filter(i=>i<zones.length)),[zones.length]);
   const toggle=(i:number)=>setOrder(o=>o.includes(i)?o.filter(x=>x!==i):[...o,i]);
@@ -1418,10 +1416,10 @@ function InnerRadialZoneEditor({blankR,samples,outerSamples,bounds:committed,ord
   const add=(e:React.MouseEvent<SVGSVGElement>)=>{if(drag!==null)return;const v=Math.round(radial(e));if(!bounds.some(x=>Math.abs(x-v)<2)){setBounds([...bounds,v].sort((a,b)=>a-b));setOrder([]);}};
   return <div className="anim-in mt-2.5 border-t border-edge pt-2.5">
     <div className="mb-1.5 flex items-center justify-between"><span className="text-[10.5px] font-semibold text-mute">نواحی + ترتیب (دستی)</span><span className="rounded-full border border-edge px-2 py-0.5 text-[9px] font-bold text-mute">{faNum(zones.length)} ناحیه</span></div>
-    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="aspect-square w-full select-none touch-none rounded-md border border-edge bg-[#120e09]" style={{cursor:drag!==null?'ns-resize':'crosshair'}} onClick={add} onPointerMove={e=>{if(pointDrag!==null){setLinePoints(points=>points.map((point,i)=>i===pointDrag?{...point,z:axial(e),r:radial(e)}:point));}else if(drag!==null){const raw=Math.round(radial(e));setBounds(bs=>{const lo=drag>0?bs[drag-1]+1:.5,hi=drag<bs.length-1?bs[drag+1]-1:radialMax-.5,v=Math.max(lo,Math.min(hi,raw));return bs.map((b,i)=>i===drag?v:b)});}}} onPointerUp={()=>{setBounds(bs=>[...bs].sort((a,b)=>a-b));setDrag(null);setPointDrag(null)}} onPointerLeave={()=>{setDrag(null);setPointDrag(null);setHover(null)}}>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="aspect-square w-full select-none touch-none rounded-md border border-edge bg-[#120e09]" style={{cursor:drag!==null?'ns-resize':'crosshair'}} onClick={add} onPointerMove={e=>{if(drag!==null){const raw=Math.round(radial(e));setBounds(bs=>{const lo=drag>0?bs[drag-1]+1:.5,hi=drag<bs.length-1?bs[drag+1]-1:radialMax-.5,v=Math.max(lo,Math.min(hi,raw));return bs.map((b,i)=>i===drag?v:b)});}}} onPointerUp={()=>{setBounds(bs=>[...bs].sort((a,b)=>a-b));setDrag(null)}} onPointerLeave={()=>{setDrag(null);setHover(null)}}>
       {innerPath?<><path d={outerPath} fill="none" stroke="rgba(227,169,78,.7)" strokeWidth="1.2"/><path d={innerPath} fill="none" stroke="#45b394" strokeWidth="1.5"/></>:<text x={W/2} y={H/2} textAnchor="middle" fill="#8b7c5f" fontSize="10">خط داخل‌تراشی موجود نیست</text>}
       {zones.map((z,i)=>{const pos=order.indexOf(i),cy=(Y(z.a)+Y(z.b))/2;return <g key={i}><rect x={P} y={Math.min(Y(z.a),Y(z.b))} width={W-2*P} height={Math.abs(Y(z.a)-Y(z.b))} fill={pos>=0?'rgba(69,179,148,.14)':'transparent'}/><g className="cursor-pointer" onClick={e=>{e.stopPropagation();toggle(i)}}><circle cx={W/2} cy={cy} r={pos>=0?9:8.5} fill={pos>=0?'#e0703c':'#120e09'} stroke={pos>=0?'#120e09':'#6f6047'} strokeDasharray={pos>=0?undefined:'2.5 2'}/><text x={W/2} y={cy+3.5} textAnchor="middle" fontSize="10" fontWeight="800" fill={pos>=0?'#fff7ec':'#8b7c5f'}>{faNum(pos>=0?pos+1:i+1)}</text></g></g>})}
-      {bounds.map((v,i)=>{const y=Y(v),on=drag===i||hover===i,marks=linePoints.filter(point=>point.bound===i).sort((a,b)=>a.z-b.z),chain=[{z:minZ,r:v},...marks,{z:maxZ,r:v}];return <g key={i} className="cursor-ns-resize" onPointerDown={e=>{e.stopPropagation();(e.target as Element).setPointerCapture?.(e.pointerId);setDrag(i)}} onPointerEnter={()=>setHover(i)} onPointerLeave={()=>setHover(null)} onDoubleClick={e=>{e.stopPropagation();setLinePoints(points=>[...points,{bound:i,z:axial(e),r:radial(e)}])}}><rect x={P-2} y={y-6} width={W-2*P+4} height="12" fill="transparent"/>{chain.slice(0,-1).map((a,j)=><line key={j} x1={X(a.z)} y1={Y(a.r)} x2={X(chain[j+1].z)} y2={Y(chain[j+1].r)} stroke={on?'#f3c26b':'#45b394'} strokeWidth="1.6" strokeDasharray="4 3"/>)}{linePoints.map((point,pi)=>point.bound===i&&<circle key={pi} cx={X(point.z)} cy={Y(point.r)} r={4.5} fill="#f3c26b" stroke="#120e09" strokeWidth="1.5" className="cursor-ns-resize" onPointerDown={e=>{e.stopPropagation();(e.target as Element).setPointerCapture?.(e.pointerId);setPointDrag(pi)}}/>)}<circle cx={P} cy={y} r={on?5:4} fill={on?'#f3c26b':'#45b394'} stroke="#120e09" strokeWidth="1.5"/><text x={P+8} y={y-5} fontSize="8" fill={on?'#f3c26b':'#45b394'}>R{Math.round(v)}</text>{on&&<g className="cursor-pointer" onClick={e=>{e.stopPropagation();setBounds(bs=>bs.filter((_,j)=>j!==i));setOrder([])}}><circle cx={P+10} cy={y+7} r="5.5" fill="#d95848" stroke="#120e09"/><text x={P+10} y={y+10} textAnchor="middle" fontSize="9" fontWeight="900" fill="#fff">×</text></g>}</g>})}
+      {bounds.map((v,i)=>{const y=Y(v),on=drag===i||hover===i;return <g key={i} className="cursor-ns-resize" onPointerDown={e=>{e.stopPropagation();(e.target as Element).setPointerCapture?.(e.pointerId);setDrag(i)}} onPointerEnter={()=>setHover(i)} onPointerLeave={()=>setHover(null)} onDoubleClick={e=>{e.stopPropagation();setLinePoints(points=>points.includes(i)?points:[...points,i])}}><rect x={P-2} y={y-6} width={W-2*P+4} height="12" fill="transparent"/><line x1={P} x2={W-P} y1={y} y2={y} stroke={on?'#f3c26b':'#45b394'} strokeWidth="1.6" strokeDasharray="4 3"/>{linePoints.includes(i)&&<circle cx={W/2} cy={y} r={4.5} fill="#f3c26b" stroke="#120e09" strokeWidth="1.5" className="cursor-ns-resize" onPointerDown={e=>{e.stopPropagation();(e.target as Element).setPointerCapture?.(e.pointerId);setDrag(i)}}/>}<circle cx={P} cy={y} r={on?5:4} fill={on?'#f3c26b':'#45b394'} stroke="#120e09" strokeWidth="1.5"/><text x={P+8} y={y-5} fontSize="8" fill={on?'#f3c26b':'#45b394'}>R{Math.round(v)}</text>{on&&<g className="cursor-pointer" onClick={e=>{e.stopPropagation();setBounds(bs=>bs.filter((_,j)=>j!==i));setOrder([])}}><circle cx={P+10} cy={y+7} r="5.5" fill="#d95848" stroke="#120e09"/><text x={P+10} y={y+10} textAnchor="middle" fontSize="9" fontWeight="900" fill="#fff">×</text></g>}</g>})}
     </svg>
     <p className="mt-1 text-[9.5px] leading-4 text-dim"><span className="text-teal">مرزهای افقی را بکشید یا روی پس‌زمینه کلیک کنید تا جداکننده جدید شود</span>؛ برای حذف روی مرز بروید و × را بزنید. سپس دایره‌های شماره را به ترتیب اجرا انتخاب کنید.</p>
     <button onClick={()=>onConfirm([...bounds].sort((a,b)=>a-b),valid?order:zones.map((_,i)=>i))} className="btn btn-brass mt-2 w-full justify-center !py-2 text-[11px] font-bold"><IconCheck className="h-4 w-4"/>تأیید و ساخت جی‌کد</button>
@@ -1461,19 +1459,10 @@ function ZoneOrderEditor({
   const svgRef = useRef<SVGSVGElement>(null);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const [linePoints, setLinePoints] = useState<Array<{ bound: number; z: number; r: number }>>([]);
-  const [pointDrag, setPointDrag] = useState<number | null>(null);
+  const [linePoints, setLinePoints] = useState<number[]>([]);
   useEffect(() => {
-    setLinePoints(points => points.filter(point => point.bound < bounds.length));
+    setLinePoints(points => points.filter(index => index < bounds.length));
   }, [bounds.length]);
-
-  const rFromPointer = (e: React.PointerEvent | React.MouseEvent) => {
-    const el = svgRef.current;
-    if (!el) return 0;
-    const rect = el.getBoundingClientRect();
-    const py = ((e.clientY - rect.top) / Math.max(1, rect.height)) * H;
-    return Math.max(-displayR, Math.min(displayR, (YC - py) / SCALE));
-  };
 
   const zones = useMemo(() => zonesFromBounds(bounds, blankL), [bounds, blankL]);
   const n = zones.length;
@@ -1592,20 +1581,15 @@ className="aspect-square w-full select-none touch-none rounded-md border border-
           (e.target as Element).setPointerCapture?.(e.pointerId);
         }}
         onPointerMove={(e) => {
-          if (pointDrag != null) {
-            setLinePoints(points => points.map((point, i) => i === pointDrag ? { ...point, z: pointerToZ(e), r: rFromPointer(e) } : point));
-          } else if (dragIdx != null) {
+          if (dragIdx != null) {
             const z = snapBound(pointerToZ(e), dragIdx);
-            const delta = z - bounds[dragIdx];
             setBounds((bs) => bs.map((b, i) => (i === dragIdx ? z : b)));
-            setLinePoints(points => points.map(point => point.bound === dragIdx ? { ...point, z: point.z + delta } : point));
           }
         }}
-        onPointerUp={() => { setDragIdx(null); setPointDrag(null); }}
+        onPointerUp={() => setDragIdx(null)}
         onPointerLeave={() => {
           if (dragIdx == null) setHoverIdx(null);
           setDragIdx(null);
-          setPointDrag(null);
         }}
         onClick={onBgClick}
       >
@@ -1680,23 +1664,16 @@ className="aspect-square w-full select-none touch-none rounded-md border border-
               onPointerLeave={() => setHoverIdx(null)}
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                setLinePoints(points => [...points, { bound: i, z: pointerToZ(e), r: rFromPointer(e) }]);
+                setLinePoints(points => points.includes(i) ? points : [...points, i]);
               }}
             >
               <rect x={x - 5} y={DIV_TOP - 4} width={10} height={Math.max(12, DIV_BOTTOM - DIV_TOP + 8)} fill="transparent" />
-              {(() => {
-                const marks = linePoints.filter(point => point.bound === i).sort((a, b) => b.r - a.r);
-                const chain = [{ z: bounds[i], r: displayR }, ...marks, { z: bounds[i], r: -displayR }];
-                return chain.slice(0, -1).map((a, j) => {
-                  const b = chain[j + 1];
-                  return <line key={j} x1={X(a.z)} y1={Y(a.r)} x2={X(b.z)} y2={Y(b.r)} stroke={active || hov ? "#f3c26b" : "#45b394"} strokeWidth={1.6} strokeDasharray="4 3" />;
-                });
-              })()}
-              {linePoints.map((point, pointIndex) => point.bound === i && <circle key={pointIndex} cx={X(point.z)} cy={Y(point.r)} r={4.5} fill="#f3c26b" stroke="#120e09" strokeWidth={1.5} className="cursor-ew-resize" onPointerDown={(e) => {
+              <line x1={x} y1={DIV_TOP} x2={x} y2={DIV_BOTTOM} stroke={active || hov ? "#f3c26b" : "#45b394"} strokeWidth={1.6} strokeDasharray="4 3" />
+              {linePoints.includes(i) && <circle cx={x} cy={YC} r={4.5} fill="#f3c26b" stroke="#120e09" strokeWidth={1.5} className="cursor-ew-resize" onPointerDown={(e) => {
                 e.stopPropagation();
                 (e.target as Element).setPointerCapture?.(e.pointerId);
-                setPointDrag(pointIndex);
-              }} />)}
+                setDragIdx(i);
+              }} />}
               {/* دستگیره بالای مرز */}
               <circle cx={x} cy={DIV_TOP} r={active ? 5 : hov ? 4.5 : 4} fill={active || hov ? "#f3c26b" : "#45b394"} stroke="#120e09" strokeWidth={1.5} />
               <text x={x} y={DIV_TOP - 8} textAnchor="middle" fontSize={8} fontFamily="JetBrains Mono, monospace" fill={active || hov ? "#f3c26b" : "#45b394"} fontWeight={700}>
