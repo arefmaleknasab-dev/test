@@ -138,7 +138,7 @@ function ControlsPanel({
   const onTool = (patch: Partial<ToolSpec>) => onParams({ tool: { ...params.tool, ...patch } });
 
   /* نمونه‌های پروفایل و تقسیم خودکار نواحی (نقطهٔ شروع برای مرزسازی دستی) */
-  const { zoneSamples, autoZones } = useMemo(() => {
+  const { autoZones } = useMemo(() => {
     const blankR = params.blankD / 2;
     const samples = sampleProfile(points, blankR);
     const off: Sample[] = normalOffset(samples, params.offsetDist, true).map((s) => ({ z: s.z, r: Math.min(blankR, s.r) }));
@@ -695,7 +695,9 @@ function ControlsPanel({
               key={params.blankL + "|" + params.zoneBounds.join(",")}
               blankL={params.blankL}
               blankR={params.blankD / 2}
-              samples={zoneSamples}
+              /* شکل مرجع باید از خود پروفایل باشد، نه مسیر آفست؛ مسیر آفست
+                 در نوک Split باعث فاصله و خط اضافی روی تصویر می‌شد. */
+              samples={outerDisplaySamples}
               innerSamples={innerZoneSamples}
               autoZones={autoZones}
               committedBounds={params.zoneBounds}
@@ -1509,7 +1511,20 @@ function ZoneOrderEditor({
   const outerBottom = openPath(samples, true);
   const innerTop = openPath(innerSamples, false);
   const innerBottom = openPath(innerSamples, true);
-
+  /* اتصال لبهٔ دهانه: دو شاخه ممکن است به‌دلیل آفست/نمونه‌برداری رأس‌های
+     جدا داشته باشند، اما باید در نوک Split با یک خط کوتاه بسته شوند. */
+  const tipPair = samples.length >= 2 && innerSamples.length >= 2
+    ? (() => {
+        const outerEnds = [samples[0], samples[samples.length - 1]];
+        const innerEnds = [innerSamples[0], innerSamples[innerSamples.length - 1]];
+        let best = { outerTip: outerEnds[0], innerTip: innerEnds[0], distance: Infinity };
+        for (const outerTip of outerEnds) for (const innerTip of innerEnds) {
+          const distance = Math.abs(outerTip.z - innerTip.z);
+          if (distance < best.distance) best = { outerTip, innerTip, distance };
+        }
+        return best.distance <= Math.max(1, blankL * 0.02) ? best : null;
+      })()
+    : null;
 
   const snapBound = (z: number, idx: number) => {
     const lo = idx > 0 ? bounds[idx - 1] + 2 : 0.5;
@@ -1578,6 +1593,10 @@ className="aspect-square w-full select-none touch-none rounded-md border border-
         />
         {[outerTop, outerBottom].map((d, i) => d && <path key={`outer-${i}`} d={d} fill="none" stroke="rgba(227,169,78,0.5)" strokeWidth={1} />)}
         {[innerTop, innerBottom].map((d, i) => d && <path key={`inner-${i}`} d={d} fill="none" stroke="#45b394" strokeWidth={1.1} />)}
+        {tipPair && <>
+          <line x1={X(tipPair.outerTip.z)} y1={Y(tipPair.outerTip.r)} x2={X(tipPair.innerTip.z)} y2={Y(tipPair.innerTip.r)} stroke="rgba(227,169,78,0.5)" strokeWidth={1} />
+          <line x1={X(tipPair.outerTip.z)} y1={2 * YC - Y(tipPair.outerTip.r)} x2={X(tipPair.innerTip.z)} y2={2 * YC - Y(tipPair.innerTip.r)} stroke="rgba(227,169,78,0.5)" strokeWidth={1} />
+        </>}
 
         {/* نواحی */}
         {zones.map((z, i) => {
