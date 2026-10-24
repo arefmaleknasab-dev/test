@@ -1398,6 +1398,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
 
   /* اجرای زنجیره عملیات (استراتژی تراش) */
   let innerCleared = false; // آیا حفره داخل با خشن‌کاری خالی شده است؟
+  /* وقتی آفست مستقیماً به پرداخت داخل وصل می‌شود، پرداخت نباید دوباره
+     با G0 به نقطه شروع وارد شود. */
+  let innerFinishDirectReady = false;
   /* پاس نهایی کف‌تراشی در صفحه Split همان پاس نخست خشن داخل است؛ مالکیت این
      صفحه فقط به عملیاتی داده می‌شود که زودتر اجرا شده تا مسیرها هم‌پوشان نشوند. */
   let splitPlaneAlreadyCut = false;
@@ -2335,7 +2338,18 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* خط بنفش فقط خود مسیر آفست دقیق است. */
         emitFinishingPath(innerOff,innerOffBase,"boreoff",p.feedFinish,true,!!op.reverse);
         if (!finishLastInner(op.id)) {
-          if (innerCleared) {
+          const next = nextEnabledOp(op.id);
+          /* اگر جهت دو عملیات مخالف باشد، پایان آفست دقیقاً کنار شروع پرداخت
+             قرار می‌گیرد: اتصال باید یک G1 با رنگ و فید پرداخت داخل باشد.
+             در این حالت هیچ G0 واسطی تولید نمی‌کنیم. */
+          const directToInnerFinish = next?.type === "inner-finish" && op.reverse !== !!next.reverse;
+          if (directToInnerFinish) {
+            const target = next.reverse
+              ? innerFinishPath[innerFinishPath.length - 1]
+              : innerFinishPath[0];
+            mv(1, 2 * target.r, target.z, p.feedFinish, "borefin");
+            innerFinishDirectReady = true;
+          } else if (innerCleared) {
             moveInnerToAxisSafely();
             if (!nextIsInnerPath(op.id)) rawRapid(2 * rEntry, mouthX);
           } else {
@@ -2346,7 +2360,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
             rawRapid(2 * rEntry, zBot);
             rawRapid(2 * rEntry, mouthX);
           }
-          if (!nextIsInnerPath(op.id)) mv(0, retractX, mouthX, 0, "rapid");
+          if (!directToInnerFinish && !nextIsInnerPath(op.id)) mv(0, retractX, mouthX, 0, "rapid");
         }
         break;
       }
@@ -2364,12 +2378,16 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
         const mouthX = zRimF + p.innerStartClearance;
-        if (!innerCleared || curHolder !== 2) enterFirstInner(2 * rEntry, mouthX);
-        if (innerCleared) {
-          /* مانند آفست: ابتدا از نزدیک‌ترین مسیر امن به محور، سپس روی محور تا کف. */
-          moveInnerToAxisSafely();
-          rawRapid(2 * rEntry, startInnerZ);
-        } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
+        const directFromOffset = innerFinishDirectReady;
+        innerFinishDirectReady = false;
+        if (!directFromOffset && (!innerCleared || curHolder !== 2)) enterFirstInner(2 * rEntry, mouthX);
+        if (!directFromOffset) {
+          if (innerCleared) {
+            /* مانند آفست: ابتدا از نزدیک‌ترین مسیر امن به محور، سپس روی محور تا کف. */
+            moveInnerToAxisSafely();
+            rawRapid(2 * rEntry, startInnerZ);
+          } else mv(1, 2 * rEntry, startInnerZ, p.feedRough * 0.6, "borefin"); // بدون خشن‌کاری: ورود با فیدر
+        }
         emitFinishingPath(IW,IWBase,"borefin",p.feedFinish,true,!!op.reverse);
         if (!finishLastInner(op.id)) {
           if (innerCleared) {
