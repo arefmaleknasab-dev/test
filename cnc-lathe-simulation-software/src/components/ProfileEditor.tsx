@@ -1001,6 +1001,15 @@ export default function ProfileEditor({
   const previousToolRef = useRef<Tool>("select");
   const chooseTool = (next: Tool) => {
     if (next === toolRef.current) return;
+    /* اگر چرخش عددیِ باکس هنوز تأیید نشده باشد، با تغییر ابزار باید
+       پیش‌نمایش به حالت قبل برگردد و ورودی شناور هم بسته شود. */
+    if (toolRef.current === "boxscale" && next !== "boxscale") {
+      if (boxRotateSession) onSegs(boxRotateSession.base, false);
+      boxRotateDrag.current = null;
+      setBoxRotateSession(null);
+      setBoxRotateBox(null);
+      setBoxScalePivot(null);
+    }
     previousToolRef.current = toolRef.current;
     toolRef.current = next;
     setTool(next);
@@ -5560,7 +5569,7 @@ export default function ProfileEditor({
       </div>})()}
 
       {boxRotateBox && boxRotateSession && <div className="absolute z-50" style={{left:boxRotateBox.x,top:boxRotateBox.y,width:`${Math.max(72,28+boxRotateBox.value.length*8)}px`}} dir="ltr">
-        <input ref={boxRotateInputRef} value={boxRotateBox.value} placeholder="Angle" className="h-[30px] w-full rounded-[5px] border border-[#00a9c7] bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none" onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setBoxRotateBox({...boxRotateBox,value,error:""});const n=Number(value);if(boxScaleLive&&value&&Number.isFinite(n)){onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),false);setBoxRotateSession({...boxRotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Escape"){onSegs(boxRotateSession.base,false);setBoxRotateSession(null);setBoxRotateBox(null);return;}if(e.key!=="Enter")return;const n=boxRotateBox.value?Number(boxRotateBox.value):boxRotateSession.angle;if(!Number.isFinite(n))return;onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),true);setBoxRotateSession(null);setBoxRotateBox(null);}}/>
+        <input ref={boxRotateInputRef} value={boxRotateBox.value} placeholder="Angle" className="h-[30px] w-full rounded-[5px] border border-[#00a9c7] bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none" onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setBoxRotateBox({...boxRotateBox,value,error:""});const n=Number(value);if(boxScaleLive&&value&&Number.isFinite(n)){onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),false);setBoxRotateSession({...boxRotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Escape"){onSegs(boxRotateSession.base,false);setBoxRotateSession(null);setBoxRotateBox(null);return;}if(e.key!=="Enter"&&e.code!=="Space")return;e.preventDefault();const n=boxRotateBox.value?Number(boxRotateBox.value):boxRotateSession.angle;if(!Number.isFinite(n))return;onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),true);setBoxRotateSession(null);setBoxRotateBox(null);}}/>
         <div className="mt-1 text-center font-mono text-[10px] font-bold text-[#26e6c7]">{concise(boxRotateSession.angle)}°</div>
       </div>}
 
