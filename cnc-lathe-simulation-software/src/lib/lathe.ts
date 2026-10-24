@@ -2325,7 +2325,15 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zRimF + p.innerStartClearance;
         if (!innerCleared || curHolder !== 2) enterFirstInner(2 * rEntry, mouthX);
-        if (innerCleared) {
+        if (op.reverse && !innerFinishDirectReady) {
+          /* شروع معکوس از دهانه است: ابتدا در محور تا بیرون دهانه برو، سپس
+             در +Y روی صفحهٔ باز دهانه و فقط با G1 در −X به نوک مسیر برس؛
+             ورود شعاعی از داخل دیواره ممنوع است. */
+          if (innerCleared) moveInnerToAxisSafely();
+          rawRapid(0, mouthX);
+          mv(1, 2 * innerOff[0].r, mouthX, p.feedFinish, "boreoff");
+          mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
+        } else if (innerCleared) {
           /* از پایان خشن، با کوتاه‌ترین مسیر امن از قله‌ها به محور می‌رسیم؛ سپس
              روی محور تا کف می‌رویم و از همان‌جا پاس آفست را آغاز می‌کنیم. */
           moveInnerToAxisSafely();
@@ -2381,7 +2389,14 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         const directFromOffset = innerFinishDirectReady;
         innerFinishDirectReady = false;
         if (!directFromOffset && (!innerCleared || curHolder !== 2)) enterFirstInner(2 * rEntry, mouthX);
-        if (!directFromOffset) {
+        if (!directFromOffset && op.reverse) {
+          /* در شروع Reverse نیز از دهانهٔ باز وارد می‌شویم، نه با خط شعاعی
+             از داخل حفره تا دیواره؛ اتصال آخر خشن داخل/کف‌تراشی امن می‌ماند. */
+          if (innerCleared) moveInnerToAxisSafely();
+          rawRapid(2 * rEntry, mouthX);
+          mv(1, 2 * IW[0].r, mouthX, p.feedFinish, "borefin");
+          mv(1, 2 * IW[0].r, IW[0].z, p.feedFinish, "borefin");
+        } else if (!directFromOffset) {
           if (innerCleared) {
             /* مانند آفست: ابتدا از نزدیک‌ترین مسیر امن به محور، سپس روی محور تا کف. */
             moveInnerToAxisSafely();
