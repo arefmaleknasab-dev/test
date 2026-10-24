@@ -22,6 +22,8 @@ interface Props {
   onHolder2: (value: Holder2State) => void;
   onParams: (patch: Partial<Params>) => void;
   points: PPoint[];
+  /** مسیر توپولوژیک برای نمایش شکل (نقاط عمودی هم حفظ می‌شوند). */
+  outerDisplayPoints?: PPoint[];
   innerPoints: PPoint[];
   splitInfo: { outerDir: 1 | -1; innerDir: 1 | -1; at: { z: number; r: number } } | null;
   onAutoSplit: () => void;
@@ -41,6 +43,7 @@ function ControlsPanel({
   onHolder2,
   onParams,
   points,
+  outerDisplayPoints,
   innerPoints,
   activePreset,
   onApplyPreset,
@@ -150,9 +153,10 @@ function ControlsPanel({
     if (!params.split.enabled || innerPoints.length < 2) return [];
     return sampleOrderedProfile(innerPoints, params.blankD / 2);
   }, [innerPoints, params.blankD, params.split.enabled]);
-  const outerDisplaySamples = useMemo(() =>
-    points.length >= 2 ? sampleOrderedProfile(points, params.blankD / 2) : [],
-  [points, params.blankD]);
+  const outerDisplaySamples = useMemo(() => {
+    const displayPoints = outerDisplayPoints && outerDisplayPoints.length >= 2 ? outerDisplayPoints : points;
+    return displayPoints.length >= 2 ? sampleOrderedProfile(displayPoints, params.blankD / 2) : [];
+  }, [outerDisplayPoints, points, params.blankD]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pl-0.5">

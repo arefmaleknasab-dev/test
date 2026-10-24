@@ -1125,6 +1125,7 @@ export default function App() {
             onHolder2={onHolder2SettingsCb}
             onParams={onParamsCb}
             points={points}
+            outerDisplayPoints={outerFinishPoints}
             innerPoints={innerPoints}
             splitInfo={splitInfo}
             onAutoSplit={autoSplit}
