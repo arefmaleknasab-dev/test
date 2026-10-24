@@ -1611,7 +1611,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
               return pts.filter((_, i) => keep[i]);
             };
             /* جهت شروع: نزدیک‌تر به موقعیت فعلی ابزار (مثلاً پایان گرد کردن) */
-            let forward = op.reverse ? Math.abs(cur.z-roughStartZ) > Math.abs(roughEndZ-cur.z) : Math.abs(cur.z-roughStartZ) <= Math.abs(roughEndZ-cur.z);
+            /* جهت خشن شعاعی فقط از Reverse خود همین عملیات می‌آید؛ موقعیت باقی‌مانده
+             از گرد کردن گوشه‌ها نباید آن را ناخواسته معکوس کند. */
+            let forward = !op.reverse;
             let first = true;
             let lastEndZ = NaN;
             let lastEndR = 0;
@@ -1763,7 +1765,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const firstCut=Number.isNaN(curZ);
           const refZ = firstCut ? cur.z : curZ;
           const nearA=Math.abs(c.a-refZ)<=Math.abs(c.b-refZ);
-          const startZ = firstCut&&op.reverse ? (nearA?c.b:c.a) : (nearA?c.a:c.b);
+          /* اولین ورود جهت خود خشن شعاعی را تعیین می‌کند، نه نزدیک‌ترین
+             انتهای باقی‌مانده از عملیات قبلی مثل گرد کردن گوشه‌ها. */
+          const startZ = firstCut ? (op.reverse ? c.b : c.a) : (nearA ? c.a : c.b);
           const endZ = startZ === c.a ? c.b : c.a;
 
           /* ایمنی اتصال مورب: اگر خط مستقیمِ بین انتهای مسیر قبل و ابتدای خط بعد   */
