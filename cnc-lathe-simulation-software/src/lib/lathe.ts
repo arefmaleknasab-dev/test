@@ -1091,25 +1091,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
       return;
     }
     const operationFeed = kind === "rapid" ? undefined : p.feedByKind?.[kind];
-    const resolvedFeed = operationFeed == null ? feed : Math.min(20000, Math.max(1, operationFeed));
-    /* در خشن‌تراشی شعاعی، فقط خطوط G1 شعاعیِ بلند شکسته می‌شوند.
-       بخش اول همان خط با G0 طی می‌شود و بخش پایانی، به‌اندازهٔ ۱۱۰٪
-       گام DOC بیرونی، تنها G1 باقی می‌ماند. حرکت‌های محوری/مورب و خطوط
-       کوتاه دست‌نخورده می‌مانند. مختصات X قطر است، بنابراین طول نهایی
-       در X برابر ۲ × ۱۱۰٪ DOC شعاعی است. */
-    const radialDelta = x - cur.x;
-    if (kind === "rough" && Math.abs(z - cur.z) < 1e-9 && Math.abs(radialDelta) > 5) {
-      const finalLength = Math.min(Math.abs(radialDelta), 2.2 * Math.max(0, p.doc));
-      if (finalLength > 1e-9) {
-        const direction = Math.sign(radialDelta);
-        const rapidX = x - direction * finalLength;
-        pushSeg(0, rapidX, z, 0, "rapid");
-        pushSeg(1, x, z, resolvedFeed, kind);
-        if (forceFeed && segs.length) segs[segs.length - 1].forceFeed = true;
-        return;
-      }
-    }
-    pushSeg(1, x, z, resolvedFeed, kind);
+    pushSeg(1, x, z, operationFeed == null ? feed : Math.min(20000, Math.max(1, operationFeed)), kind);
     if(forceFeed&&segs.length)segs[segs.length-1].forceFeed=true;
   };
 
