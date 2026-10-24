@@ -3094,7 +3094,6 @@ export const PRESETS: Preset[] = [
       holder2: { xOff: 92, yOff: 68 },
       ops: [
         { id: 48, type: "round", on: true, reverse: false, holder: 1 },
-        { id: 49, type: "face", on: false, reverse: false, holder: 1 },
         { id: 50, type: "rough-d", on: true, reverse: false, holder: 1 },
         { id: 51, type: "offset", on: true, reverse: false, holder: 1 },
         { id: 52, type: "finish", on: true, reverse: false, holder: 1 },
