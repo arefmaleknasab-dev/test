@@ -1617,14 +1617,9 @@ export default function ProfileEditor({
            اگر هم‌زمان خط/Polyline و نقطهٔ Split زیر نشانگر باشند، اولین Delete
            خود خط‌ها را حذف می‌کند و نشانگر فقط وقتی حذف می‌شود که هندسه‌ای انتخاب
            نشده باشد. */
-        if (selected.length) {
+        if (selected.length || splitSelected) {
           e.preventDefault();
-          deleteSelected();
-          return;
-        }
-        if (splitSelected) {
-          e.preventDefault();
-          deleteSelectedSplit();
+          deleteSelection();
           return;
         }
         if (selPoints.length) {
@@ -2186,6 +2181,15 @@ export default function ProfileEditor({
     onSplit({ ...split, enabled: false });
     setSplitSelected(false);
     setSplitHovered(false);
+  };
+
+  /* سطل زباله و کلیدهای Delete/Backspace باید همهٔ انتخاب‌های فعلی، از جمله
+     نقطه Split و خطوط پروفایل، را با هم حذف کنند. */
+  const deleteSelection = () => {
+    const hasLines = selected.length > 0;
+    const hasSplit = splitSelected;
+    if (hasLines) deleteSelected();
+    if (hasSplit) deleteSelectedSplit();
   };
 
   /*
@@ -5996,9 +6000,9 @@ export default function ProfileEditor({
             <IconCopy className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={splitSelected ? deleteSelectedSplit : deleteSelected}
+            onClick={deleteSelection}
             disabled={!selected.length && !splitSelected}
-            title={splitSelected ? "حذف نقطه Split (Delete)" : "حذف انتخابی (Delete)"}
+            title={selected.length && splitSelected ? "حذف خطوط و نقطه Split (Delete)" : splitSelected ? "حذف نقطه Split (Delete)" : "حذف انتخابی (Delete)"}
             className={cn(
               "grid h-[27px] w-full place-items-center border-t border-edge transition-colors",
               selected.length || splitSelected ? "text-danger/80 hover:bg-danger/15 hover:text-danger" : "text-dim/40"
