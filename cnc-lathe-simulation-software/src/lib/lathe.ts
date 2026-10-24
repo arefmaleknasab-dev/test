@@ -982,7 +982,7 @@ export function findZones(samples: Sample[]): { a: number; b: number }[] {
 
 /* نواحی نهایی: اگر کاربر مرزهای دستی معتبر تعیین کرده باشد از آن استفاده می‌شود، */
 /* در غیر این صورت تقسیم خودکار بر اساس قله‌ها و دره‌ها.                            */
-export function resolveZones(samples: Sample[], manualBounds: number[], z0: number, z1: number): { a: number; b: number }[] {
+export function resolveZones(_samples: Sample[], manualBounds: number[], z0: number, z1: number): { a: number; b: number }[] {
   if (manualBounds.length) {
     const bounds = [...manualBounds]
       .filter((v) => v > z0 + 0.3 && v < z1 - 0.3)
@@ -997,7 +997,9 @@ export function resolveZones(samples: Sample[], manualBounds: number[], z0: numb
       if (zones.length) return zones;
     }
   }
-  return findZones(samples);
+  /* بدون مرز دستی، کل قطعه یک ناحیهٔ پیش‌فرض است؛ تقسیم قله/دره فقط
+     از طریق انتخاب صریح «خودکار» در ویرایشگر نواحی استفاده می‌شود. */
+  return [{ a: z0, b: z1 }];
 }
 
 /* ---------------- تولید مسیر ابزار و جی‌کد ---------------- */

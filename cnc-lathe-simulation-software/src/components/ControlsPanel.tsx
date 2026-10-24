@@ -1440,8 +1440,10 @@ function ZoneOrderEditor({
 }) {
   /* مرزهای اولیه: از مرزهای کاربر یا از نوک قله‌های تقسیم خودکار (انتهای هر       */
   /* ناحیه = نوک قلهٔ آن؛ با این روش آخرین قله نیز به‌درستی مرز می‌شود)           */
+  /* نبود مرز دستی یعنی کل طول خام یک ناحیه است؛ تقسیم خودکار فقط با
+     دکمهٔ «خودکار» اعمال می‌شود و نباید هنگام بازشدن پنجره ظاهر شود. */
   const [bounds, setBounds] = useState<number[]>(
-    (committedBounds.length ? committedBounds : autoZones.slice(0, autoZones.length - 1).map((z) => z.b)).map((v) => clampZ(v, blankL))
+    committedBounds.map((v) => clampZ(v, blankL))
   );
 
   const svgRef = useRef<SVGSVGElement>(null);
