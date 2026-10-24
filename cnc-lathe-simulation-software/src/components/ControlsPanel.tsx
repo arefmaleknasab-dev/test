@@ -1573,7 +1573,8 @@ function ZoneOrderEditor({
   const dirtyOrder =
     (validCommittedOrder ? JSON.stringify(committedOrder) : "[]") !==
     (complete ? JSON.stringify(order) : "[]");
-  const dirty = dirtyBounds || dirtyOrder;
+  const dirtyPoints = JSON.stringify(linePoints) !== JSON.stringify(committedPoints);
+  const dirty = dirtyBounds || dirtyOrder || dirtyPoints;
 
   const toggle = (i: number) => setOrder((p) => (p.includes(i) ? p.filter((v) => v !== i) : [...p, i]));
 
