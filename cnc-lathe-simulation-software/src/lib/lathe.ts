@@ -2793,7 +2793,7 @@ function collapseNativeArcs(lines: string[], segs: Seg[], p: Params): string[] {
     const d=2*(x1*(z2-z3)+x2*(z3-z1)+x3*(z1-z2)); if(Math.abs(d)<1e-8) continue;
     const cx=((x1*x1+z1*z1)*(z2-z3)+(x2*x2+z2*z2)*(z3-z1)+(x3*x3+z3*z3)*(z1-z2))/d;
     const cz=((x1*x1+z1*z1)*(x3-x2)+(x2*x2+z2*z2)*(x1-x3)+(x3*x3+z3*z3)*(x2-x1))/d;
-    const r=Math.hypot(x1-cx,z1-cz); if (![a,b,c].every(s=>Math.abs(Math.hypot(s.x2-cx,s.z2-cz)-r)<2)) continue;
+    const r=Math.hypot(x1-cx,z1-cz); if (![a,b,c].every(s=>Math.abs(Math.hypot(s.x2-cx,s.z2-cz)-r)<0.08)) continue;
     const cross=(x2-x1)*(z3-z2)-(z2-z1)*(x3-x2); const g=cross<0?"G2":"G3";
     const line=a.line; if(line<0||line>=lines.length) continue;
     const end=`X${f2(c.x2)} Z${f2(c.z2)}`;
