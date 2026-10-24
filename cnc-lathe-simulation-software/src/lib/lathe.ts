@@ -1684,7 +1684,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
 
         /* فهرست برش‌ها — به ترتیب لایه (کلاسیک) یا به ترتیب ناحیه (ناحیه‌ای:      */
         /* همهٔ لایه‌های ناحیهٔ اول، سپس همهٔ لایه‌های ناحیهٔ دوم و …)                  */
-        const cuts: { a: number; b: number; r: number }[] = [];
+        const cuts: { a: number; b: number; r: number; forward?: boolean }[] = [];
         if (p.roughMode === "zone") {
           /* نواحی: مرزهای دستی کاربر (در صورت اعتبار) جایگزین تقسیم خودکار می‌شوند؛ */
           /* سپس ترتیب دستی (در صورت اعتبار) روی همان نواحی اعمال می‌شود.            */
@@ -1703,14 +1703,21 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
           for (const zone of zones) {
             let layer = R - p.doc;
+            let layerNo = 0;
             let guard = 0;
             while (layer > floorR + 1e-6 && guard < 80) {
               guard++;
-              for (const iv of cutIntervals(roughRunSamples, layer)) {
-                const a = Math.max(iv.a, zone.a);
-                const b = Math.min(iv.b, zone.b);
-                if (b - a > 0.3) cuts.push({ a, b, r: layer });
-              }
+              /* در حالت ناحیه‌ای هر لایه جهت مخالف لایه قبل را طی می‌کند.
+                 بنابراین در برگشت نیز خود خطوط برش می‌خورند، نه اینکه فقط با
+                 حرکت سریع به ابتدای خط بعدی برگردیم؛ مخصوصاً بین دو بازه‌ای که
+                 یک قله آن‌ها را از هم جدا کرده است. */
+              const forward = ((layerNo & 1) === 0) !== op.reverse;
+              const intervals = cutIntervals(roughRunSamples, layer)
+                .map(iv => ({ a: Math.max(iv.a, zone.a), b: Math.min(iv.b, zone.b) }))
+                .filter(iv => iv.b - iv.a > 0.3);
+              if (!forward) intervals.reverse();
+              for (const iv of intervals) cuts.push({ ...iv, r: layer, forward });
+              layerNo++;
               layer -= p.doc;
             }
           }
@@ -1770,8 +1777,13 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           const nearA=Math.abs(c.a-refZ)<=Math.abs(c.b-refZ);
           /* اولین ورود جهت خود خشن شعاعی را تعیین می‌کند، نه نزدیک‌ترین
              انتهای باقی‌مانده از عملیات قبلی مثل گرد کردن گوشه‌ها. */
-          const startZ = firstCut ? (op.reverse ? c.b : c.a) : (nearA ? c.a : c.b);
-          const endZ = startZ === c.a ? c.b : c.a;
+          const prescribedDirection = p.roughMode === "zone" && c.forward !== undefined;
+          const startZ = prescribedDirection
+            ? (c.forward ? c.a : c.b)
+            : (firstCut ? (op.reverse ? c.b : c.a) : (nearA ? c.a : c.b));
+          const endZ = prescribedDirection
+            ? (c.forward ? c.b : c.a)
+            : (startZ === c.a ? c.b : c.a);
 
           /* ایمنی اتصال مورب: اگر خط مستقیمِ بین انتهای مسیر قبل و ابتدای خط بعد   */
           /* با خط آفست (و در نتیجه منحنی اصلی) تداخل داشته باشد، اتصال پیوسته      */
