@@ -1193,6 +1193,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
        با نوع و رنگ خود پیشانی ثبت شود، نه با رنگ آخرین عملیات قبلی. */
     const previousCut=[...segs].reverse().find(segment=>segment.motion===1);
     const linkMove=(r:number,z:number)=>{
+      if(kind==="rough"){roughRadialEntry(r,z,feed);return;}
       if(!previousCut||kind==="face"){mv(1,2*r,z,feed,kind);return;}
       const savedOp=curOp,savedOpId=curOpId,savedHolder=curHolder,pendingNotes=notes;
       curOp=previousCut.op;curOpId=previousCut.opId;curHolder=previousCut.holder;notes=[];
@@ -1221,9 +1222,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
     /* برای ورود به آفست، مسیر اتصال تا نقطه‌ای دقیقاً ۲mm مانده به شروع با G0
        طی می‌شود و دو میلی‌متر پایانی با G1 ادامه پیدا می‌کند. */
     const finishLink=(r:number,z:number)=>{
-      /* فقط ورود اولیهٔ خشن الگوی G0/G1 جدید را می‌گیرد؛ اتصال به
-         برش قبلی باید همان خط مستقیم یا مورب قبلی باقی بماند. */
-      if(kind==="rough"&&!previousCut){roughRadialEntry(r,z,feed);return;}
       const useTwoMillimetreLead=!!previousCut&&(kind==="offset"||kind==="finish");
       const currentR=cur.x/2,dr=r-currentR,dz=z-cur.z,distance=Math.hypot(dr,dz);
       if(useTwoMillimetreLead){
@@ -1251,7 +1249,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
       const clearanceR=Math.max(fromR,targetR)+1;
       rapidWithoutTargetNotes(clearanceR,cur.z);
       rapidWithoutTargetNotes(clearanceR,targetZ);
-      mv(1,2*targetR,targetZ,feed,kind);
+      if(kind==="rough") roughRadialEntry(targetR,targetZ,feed);
+      else mv(1,2*targetR,targetZ,feed,kind);
       return;
     }
     if(directSafe){
