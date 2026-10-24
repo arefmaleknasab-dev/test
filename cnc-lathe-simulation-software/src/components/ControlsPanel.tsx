@@ -1380,7 +1380,9 @@ function InnerRadialZoneEditor({blankR,samples,outerSamples,bounds:committed,ord
   const profileSamples=[...samples,...outerSamples];
   const radialMax=samples.length?Math.max(.001,...samples.map(s=>s.r)):blankR;
   const displayMaxR=profileSamples.length?Math.max(.001,...profileSamples.map(s=>s.r)):blankR;
-  const initial=committed.length?[...committed]:[radialMax/2];
+  /* نبود مرز دستی یعنی کل شعاع حفره یک ناحیه است؛ مرز پیش‌فرضِ وسط
+     فقط باعث دو نیم‌شدن ناخواستهٔ کار می‌شد. */
+  const initial=committed.length?[...committed]:[];
   const [bounds,setBounds]=useState<number[]>(initial);
   const [order,setOrder]=useState<number[]>([...committedOrder]);
   const [drag,setDrag]=useState<number|null>(null),[hover,setHover]=useState<number|null>(null);
