@@ -2788,7 +2788,7 @@ function collapseNativeArcs(lines: string[], segs: Seg[], p: Params): string[] {
   const remove = new Set<number>();
   for (let i = 0; i + 2 < segs.length; i++) {
     const a=segs[i], b=segs[i+1], c=segs[i+2];
-    if (a.motion!==1 || b.motion!==1 || c.motion!==1) continue;
+    if (a.motion!==1 || b.motion!==1 || c.motion!==1 || b.kind!==a.kind || c.kind!==a.kind || a.opId!==b.opId || b.opId!==c.opId) continue;
     const x1=a.x1,z1=a.z1,x2=b.x2,z2=b.z2,x3=c.x2,z3=c.z2;
     const d=2*(x1*(z2-z3)+x2*(z3-z1)+x3*(z1-z2)); if(Math.abs(d)<1e-8) continue;
     const cx=((x1*x1+z1*z1)*(z2-z3)+(x2*x2+z2*z2)*(z3-z1)+(x3*x3+z3*z3)*(z1-z2))/d;
