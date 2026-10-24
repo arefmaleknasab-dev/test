@@ -281,7 +281,7 @@ export default function App() {
   const finishCloseProject = (id:string) => {
     const remaining=projectTabs.filter(t=>t.id!==id);projectHandlesRef.current.delete(id);
     if(remaining.length){setProjectTabs(remaining);if(id===activeProjectId){const next=remaining[Math.max(0,projectTabs.findIndex(t=>t.id===id)-1)]??remaining[0];setActiveProjectId(next.id);setSketch(next.sketch);setGenerationSketch(next.sketch);setParams(next.params);setGcodeOvr(next.gcodeOvr);setReferenceImages(next.referenceImages??[]);setActivePreset(next.activePreset);past.current=[...next.past];future.current=[...next.future];setHistVer(v=>v+1);}}
-    else { const p=PRESETS[0], nextSketch=sketchFromPoints(presetPoints(p)), id2=`project-${Date.now()}`;const nextParams=normalizeParams({...params,blankD:p.blankD,blankL:p.blankL,innerZoneOrder:[],innerZoneBounds:[]},false);setProjectTabs([{id:id2,name:"پروژه بدون نام",sketch:nextSketch,params:nextParams,gcodeOvr:{},referenceImages:[],activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);setActiveProjectId(id2);setSketch(nextSketch);setGenerationSketch(nextSketch);setParams(nextParams);setGcodeOvr({});setReferenceImages([]);setActivePreset(p.id);past.current=[];future.current=[];setHistVer(v=>v+1);}
+    else { const p=PRESETS[0], nextSketch=sketchFromPoints(presetPoints(p)), id2=`project-${Date.now()}`;const nextParams=normalizeParams({...params,blankD:p.blankD,blankL:p.blankL,innerZoneOrder:[],innerZoneBounds:[],zoneBoundaryPoints:[],innerZoneBoundaryPoints:[]},false);setProjectTabs([{id:id2,name:"پروژه بدون نام",sketch:nextSketch,params:nextParams,gcodeOvr:{},referenceImages:[],activePreset:p.id,savedSnapshot:null,past:[],future:[]}]);setActiveProjectId(id2);setSketch(nextSketch);setGenerationSketch(nextSketch);setParams(nextParams);setGcodeOvr({});setReferenceImages([]);setActivePreset(p.id);past.current=[];future.current=[];setHistVer(v=>v+1);}
     setPendingCloseProject(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);
   };
   const requestCloseProject=(id:string)=>{const tab=projectTabs.find(t=>t.id===id);if(!tab)return;const dirty=tab.savedSnapshot!==projectSnapshot(tab.sketch,tab.params,tab.gcodeOvr,tab.referenceImages);if(dirty)setPendingCloseProject(id);else finishCloseProject(id);};
@@ -295,7 +295,7 @@ export default function App() {
     const diameter=Number(newProjectDraft.diameter),length=Number(newProjectDraft.length),name=newProjectDraft.name.trim();
     if(!(diameter>=0.01&&diameter<=10000)||!(length>=0.01&&length<=10000)){showToast("قطر و طول قطعه باید بین ۰٫۰۱ تا ۱۰۰۰۰ میلی‌متر باشند","warn");return;}
     const id=`project-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    const nextParams=normalizeParams({...params,blankD:diameter,blankL:length,split:{...params.split,enabled:false},innerZoneOrder:[],innerZoneBounds:[]},false);
+    const nextParams=normalizeParams({...params,blankD:diameter,blankL:length,split:{...params.split,enabled:false},innerZoneOrder:[],innerZoneBounds:[],zoneBoundaryPoints:[],innerZoneBoundaryPoints:[]},false);
     /* پروژه تازه در لحظه ایجاد وضعیت تمیز دارد؛ هشدار فقط پس از نخستین تغییر
        واقعی نسبت به همین Snapshot نمایش داده می‌شود. */
     const initialSnapshot=projectSnapshot([],nextParams,{},[]);
