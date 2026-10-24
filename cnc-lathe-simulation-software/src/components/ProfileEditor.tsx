@@ -2724,8 +2724,14 @@ export default function ProfileEditor({
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
     if(e.button===0&&!editOpen&&(tool==="select"||tool==="move"||tool==="boxscale"||tool==="scale")){
-      const hit=[...referenceImages].reverse().find(img=>{const cz=img.z+img.width/2,cr=img.r-img.height/2,a=-(img.rotation??0)*Math.PI/180,dz=raw.z-cz,dr=raw.r-cr,z=cz+dz*Math.cos(a)-dr*Math.sin(a),r=cr+dz*Math.sin(a)+dr*Math.cos(a);return z>=img.z&&z<=img.z+img.width&&r<=img.r&&r>=img.r-img.height;});
-      if(hit){imageHistoryFocus.current=true;setSelectedImageId(hit.id);if(tool==="scale"&&!hit.locked){if(!imageScaleSession||imageScaleSession.id!==hit.id){setImageScaleSession({id:hit.id,p1:raw,base:{...hit}});setImageScaleValue("");}else if(!imageScaleSession.p2){setImageScaleSession({...imageScaleSession,p2:raw});requestAnimationFrame(()=>imageScaleInputRef.current?.focus());}return;}if(!hit.locked)imageDrag.current={id:hit.id,start:raw,base:{...hit},mode:"move"};return;}
+      /* پروفایل همیشه بر عکسِ زیرین اولویت دارد؛ در غیر این صورت کلیک روی
+         تصویر، انتخاب خط یا جابه‌جایی رأس را می‌بلعد. */
+      const [profileX, profileY] = screenPt(camRef.current, raw.z, raw.r);
+      const profileHit = hitSeg(raw) || hitHandle(raw) || (editOpen && hitBufVx(profileX, profileY) != null);
+      if (!profileHit) {
+        const hit=[...referenceImages].reverse().find(img=>{const cz=img.z+img.width/2,cr=img.r-img.height/2,a=-(img.rotation??0)*Math.PI/180,dz=raw.z-cz,dr=raw.r-cr,z=cz+dz*Math.cos(a)-dr*Math.sin(a),r=cr+dz*Math.sin(a)+dr*Math.cos(a);return z>=img.z&&z<=img.z+img.width&&r<=img.r&&r>=img.r-img.height;});
+        if(hit){imageHistoryFocus.current=true;setSelectedImageId(hit.id);if(tool==="scale"&&!hit.locked){if(!imageScaleSession||imageScaleSession.id!==hit.id){setImageScaleSession({id:hit.id,p1:raw,base:{...hit}});setImageScaleValue("");}else if(!imageScaleSession.p2){setImageScaleSession({...imageScaleSession,p2:raw});requestAnimationFrame(()=>imageScaleInputRef.current?.focus());}return;}if(!hit.locked)imageDrag.current={id:hit.id,start:raw,base:{...hit},mode:"move"};return;}
+      }
     }
     if(imageHistoryFocus.current){imageHistoryFocus.current=false;setImageHistoryVersion(v=>v+1);}
     if (tool === "fillet" && e.button === 0 && !editOpen) {
@@ -4782,7 +4788,12 @@ export default function ProfileEditor({
           const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s;
           return <g key={img.id} ref={img.id===selectedImageId?selectedImageVisualRef:undefined} transform={`rotate(${img.rotation??0} ${x+w/2} ${y+h/2})`}>
             <image data-ref-image="true" href={img.src} x={x} y={y} width={w} height={h} preserveAspectRatio={img.aspectLocked!==false?"xMidYMid meet":"none"} opacity={img.opacity} filter={`url(#ref-level-${img.id})`} onPointerDown={e=>{
-              if(e.button!==0||!(tool==="select"||tool==="move"||tool==="boxscale"))return;e.stopPropagation();setSelectedImageId(img.id);if(!img.locked){const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top);imageDrag.current={id:img.id,start,base:{...img},mode:"move"};e.currentTarget.setPointerCapture?.(e.pointerId);}
+              if(e.button!==0||!(tool==="select"||tool==="move"||tool==="boxscale"))return;
+              const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top);
+              /* اجازه بده رویداد به SVG برسد تا خط/رأس روی عکس انتخاب شود. */
+              const [profileX,profileY]=screenPt(cam,start.z,start.r);
+              if(hitSeg(start)||hitHandle(start)||(editOpen&&hitBufVx(profileX,profileY)!=null))return;
+              e.stopPropagation();setSelectedImageId(img.id);if(!img.locked){imageDrag.current={id:img.id,start,base:{...img},mode:"move"};e.currentTarget.setPointerCapture?.(e.pointerId);}
             }}/>
 
           </g>;
