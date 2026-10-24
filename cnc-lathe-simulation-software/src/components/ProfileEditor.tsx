@@ -1613,17 +1613,18 @@ export default function ProfileEditor({
         if(selectedPaint.length){
           e.preventDefault();commitPaint(all=>all.filter(edge=>!selectedPaint.includes(edge.id)));setSelectedPaint([]);setPaintMenu(null);return;
         }
-        if (splitSelected) {
-          e.preventDefault();
-          deleteSelectedSplit();
-          return;
-        }
-        /* وقتی خود Polyline/Segment انتخاب است، حذف هندسه بر انتخاب نقطه‌ای
-           باقی‌مانده اولویت دارد؛ وگرنه یک رأس ادغام می‌شد و گاهی خط صفرطول
-           به‌شکل نقطه‌ای غیرقابل‌حذف روی بوم باقی می‌ماند. */
+        /* حذف هندسهٔ انتخاب‌شده بر انتخاب نشانگر Split اولویت دارد؛ بنابراین
+           اگر هم‌زمان خط/Polyline و نقطهٔ Split زیر نشانگر باشند، اولین Delete
+           خود خط‌ها را حذف می‌کند و نشانگر فقط وقتی حذف می‌شود که هندسه‌ای انتخاب
+           نشده باشد. */
         if (selected.length) {
           e.preventDefault();
           deleteSelected();
+          return;
+        }
+        if (splitSelected) {
+          e.preventDefault();
+          deleteSelectedSplit();
           return;
         }
         if (selPoints.length) {
