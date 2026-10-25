@@ -4339,7 +4339,7 @@ export default function ProfileEditor({
       /* در حالت طراحی، دابل‌کلیک روی هر ضلع خطیِ Polyline همان‌جا Vertex
          می‌سازد و ضلع را به دو ضلع هم‌عضو تقسیم می‌کند؛ مختصات از محل واقعی
          کلیک گرفته می‌شود، نه از مرکز خط. */
-      if (tool === "polyline" && (s.kind === "line" || s.kind === "quad" || s.kind === "cubic" || s.kind === "arc")) {
+      if ((s.polylineId != null || tool === "polyline") && (s.kind === "line" || s.kind === "quad" || s.kind === "cubic" || s.kind === "arc")) {
         const hit = nearestOnSeg(s, raw), t = hit.t;
         if (t > 1e-5 && t < 1 - 1e-5) {
           const at = evalSeg(s, t);
