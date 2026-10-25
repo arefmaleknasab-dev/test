@@ -2439,20 +2439,16 @@ export default function ProfileEditor({
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
-  const editSplitVertexIds = useMemo(() => {
-    if (!split.enabled || !edit || !edit.verts.length) return new Set<number>();
-    const ranked = edit.verts.map((vertex) => ({
-      id: vertex.id,
-      d: (vertex.z - split.z) ** 2 + (vertex.x / 2 - split.r) ** 2,
-    })).sort((a, b) => a.d - b.d);
-    if (!ranked.length) return new Set<number>();
-    /* خروجی مسیر معمولاً دو رأس هم‌مکان برای Split دارد: یکی از شاخهٔ بیرونی
-       و یکی از شاخهٔ داخلی. هر دو باید قفل شوند. رأس‌های هم‌مکان تکراری نیز
-       عمداً همگی در مجموعه قرار می‌گیرند. */
-    const limit = Math.max(ranked[0].d + 1e-8, ranked[Math.min(1, ranked.length - 1)].d + 1e-8);
-    return new Set(ranked.filter((item) => item.d <= limit).map((item) => item.id));
+  const editSplitVertexId = useMemo(() => {
+    if (!split.enabled || !edit || !edit.verts.length) return null;
+    return edit.verts.reduce((best, vertex) => {
+      const current = edit.verts.find((item) => item.id === best)!;
+      const d = (vertex.z - split.z) ** 2 + (vertex.x / 2 - split.r) ** 2;
+      const bd = (current.z - split.z) ** 2 + (current.x / 2 - split.r) ** 2;
+      return d < bd ? vertex.id : best;
+    }, edit.verts[0].id);
   }, [edit, split.enabled, split.z, split.r]);
-  const splitEditVertexConnected = (vid: number) => editSplitVertexIds.has(vid);
+  const splitEditVertexConnected = (vid: number) => editSplitVertexId != null && vid === editSplitVertexId;
   /* نگاشت قاب هنگام خروج فقط زمانی لازم است که کاربر واقعاً در حالت ویرایش Pan
      کرده باشد. ورود/خروج ساده یا Zoom بدون Pan نباید Camera را دست‌کاری کند. */
   const editPanOccurredRef=useRef(false);
@@ -3263,21 +3259,15 @@ export default function ProfileEditor({
         if (e.shiftKey) ids = selL.includes(bl) ? selL.filter((x) => x !== bl) : [...selL, bl];
         else ids = selL.includes(bl) ? selL : [bl];
         ids = lines.filter((line) => ids.includes(line.id) && bufSelectable(line)).map((line) => line.id);
-        const protectedIds = new Set(lines.filter((line) =>
-          editSplitVertexIds.has(line.va) || editSplitVertexIds.has(line.vb)
-        ).map((line) => line.id));
-        /* اگر همه خطوط انتخاب شده باشند، خطوط متصل به Split از نشست حرکت حذف
-           می‌شوند، اما سایر خطوط همان لحظه قابل جابه‌جایی باقی می‌مانند. */
-        const movableIds = ids.filter((id) => !protectedIds.has(id));
-        selectEditLines(movableIds, movableIds.includes(bl) ? bl : (movableIds[movableIds.length - 1] ?? null), true);
+        selectEditLines(ids, bl, true);
         setSelV([]);
-        const selectedLines = movableIds.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
-        if (!selectedLines.length) { drag.current = null; return; }
-        const vset = new Set<number>();
-        for (const l of selectedLines) {
-          if (!editSplitVertexIds.has(l.va)) vset.add(l.va);
-          if (!editSplitVertexIds.has(l.vb)) vset.add(l.vb);
+        const selectedLines = ids.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
+        if (editSplitVertexId != null && selectedLines.some((line) => line.va === editSplitVertexId || line.vb === editSplitVertexId)) {
+          drag.current = null;
+          return;
         }
+        const vset = new Set<number>();
+        for (const l of selectedLines) { vset.add(l.va); vset.add(l.vb); }
         const base = new Map<number, EVert>();
         for (const vid of vset) base.set(vid, { ...vz(vid) });
         drag.current = {
