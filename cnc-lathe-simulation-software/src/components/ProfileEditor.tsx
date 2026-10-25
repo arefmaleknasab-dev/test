@@ -4249,6 +4249,13 @@ export default function ProfileEditor({
         /* کلیک بدون درگ روی المان */
         const id = d.clicked;
         const objectIds = sketchObjectIds(id);
+        // اتصال هندسیِ تازه‌شده را به‌صورت پایدار در همان Polyline ثبت می‌کنیم
+        // تا حرکت بعدی فقط یک ضلع را از گروه جدا نکند.
+        if (objectIds.length > 1) {
+          const group = objectIds.map(oid => segs.find(s => s.id === oid)?.polylineId).find(v => v != null) ?? (Math.max(0, ...segs.map(s => s.polylineId ?? 0)) + 1);
+          const needsGroup = objectIds.some(oid => segs.find(s => s.id === oid)?.polylineId !== group);
+          if (needsGroup) onSegs(segs.map(s => objectIds.includes(s.id) ? { ...s, polylineId: group } : s), false);
+        }
         if (e.shiftKey) {
           onSelected(selected.includes(id)
             ? selected.filter((x) => !objectIds.includes(x))
