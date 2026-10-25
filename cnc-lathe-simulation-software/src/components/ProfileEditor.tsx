@@ -5380,18 +5380,6 @@ const nv = verts.map((v) => {
           })}
         </g>
 
-        {/* نقطه Split شاخه داخلی در حالت ویرایش مسیر؛ نشان کم‌رنگ‌تر از نشان اصلی */}
-        {editOpen && split.enabled && (() => {
-          const innerVid = [...editSplitVertexIds].find((vid) => lines.some((line) => line.holder === 2 && (line.va === vid || line.vb === vid)));
-          const vertex = innerVid == null ? null : vById.get(innerVid);
-          if (!vertex) return null;
-          const [x, y] = P(vertex.z, vertex.x / 2);
-          return <g pointerEvents="none" opacity={0.58}>
-            <circle cx={x} cy={y} r={6.5} fill="#f72585" fillOpacity={0.10} stroke="#ffb3d1" strokeWidth={1.1} strokeDasharray="2 2" />
-            <circle cx={x} cy={y} r={2.2} fill="#ffb3d1" fillOpacity={0.7} />
-          </g>;
-        })()}
-
         {/* نقطه Split */}
         {split.enabled && (
           <g>
