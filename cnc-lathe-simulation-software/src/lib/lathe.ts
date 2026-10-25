@@ -1432,8 +1432,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* وضعیت اتصال مرحله‌ای کف به خشن داخل: +X امن انجام شده و Y/−X باقی است. */
   let bottomToInnerRoughReady = false;
   let bottomToInnerRoughDirect = false;
-  /* اتصال پرداخت خارجی به خشن داخل مستقل از جایگاه قبلی کف‌تراشی است. */
-  let outerFinishToInnerRoughReady = false;
   for (const op of p.ops) {
     if (!op.on) continue;
     curOpId = op.id;
@@ -1979,14 +1977,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         note(`INNER VERTICAL LAYERS ${layers.length} x ${f2(step)} MM`);
         const rEntry = 0; // محور دوران؛ مسیر داخل‌تراشی باید دقیقاً به Centerline بچسبد
         const mouthX = zOuter + p.innerStartClearance;
-        if (outerFinishToInnerRoughReady) {
-          /* پرداخت خارجی همیشه با همان ورود استاندارد H1→H2 ادامه پیدا می‌کند؛
-             وضعیت کف‌تراشیِ قبلی نباید نوع اتصال را تغییر دهد. */
-          outerFinishToInnerRoughReady = false;
-          enterFirstInner(2 * rEntry, mouthX);
-        } else if (!bottomToInnerRoughReady && !bottomToInnerRoughDirect) {
-          enterFirstInner(2 * rEntry, mouthX);
-        }
+        if (!bottomToInnerRoughReady && !bottomToInnerRoughDirect) enterFirstInner(2 * rEntry, mouthX);
         const layerPlans = layers.map((layerZ) => ({ layerZ, intervals: intervalsAt(layerZ) }));
         type AllowedPoint={r:number;z:number};
         const allowedPoint=(r:number,z:number)=>intervalsAt(z).some(iv=>r>=iv.a-.015&&r<=iv.b+.015);
@@ -2477,7 +2468,6 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           }
         }
         profilePath("finish", p.feedFinish, !!op.reverse);
-        outerFinishToInnerRoughReady = nextEnabledOp(op.id)?.type === "inner-rough";
         /* این خروج باید بعد از هر پرداخت نهایی اجرا شود، حتی اگر عملیات فعال
            دیگری بعد از آن باشد؛ محدودکردن آن به آخرین عملیات باعث می‌شد در
            پروژه‌های داخل+خارج هیچ تغییری دیده نشود. عادی: +X، Reverse: −X. */
