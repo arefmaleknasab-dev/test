@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { EditBuf, ELine, EVert, GenResult, Holder2State, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
-import { continuousPathOffset, deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, sampleOrderedProfile, translateHolder2Edit } from "../lib/lathe";
+import { continuousPathOffset, deleteEditLines, deleteEditVertices, insertEditVertex, normalizeEditBuf, OP_INFO, RAPID_RATE, sampleOrderedProfile } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
 import {
   arcRadius,
@@ -3252,21 +3252,23 @@ export default function ProfileEditor({
         selectEditLines(ids, bl, true);
         setSelV([]);
         const selectedLines = ids.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
-        /* خطوط مسیر داخل‌تراشی فقط قابل انتخاب/مشاهده‌اند و نباید با Drag
-           هندسهٔ پروفایل یا آفست ابزار را جابه‌جا کنند. */
-        if (selectedLines.some((line) => line.holder === 2)) { drag.current = null; return; }
-        const holder2Drag = selectedLines.length > 0 && selectedLines.every((line) => line.holder === 2);
-        const vset = new Set<number>();
-        if (holder2Drag) {
-          /* آفست H2 یک تبدیل سراسری است؛ مبنا باید کل Polyline باشد تا با
-             انتخاب تنها یک Segment، بقیهٔ داخل‌تراشی عقب نماند. */
-          for (const v of verts) vset.add(v.id);
-        } else {
-          for (const l of selectedLines) { vset.add(l.va); vset.add(l.vb); }
+        const splitVertexId = split.enabled && edit
+          ? edit.verts.reduce<number | null>((best, vertex) => {
+              if (best == null) return vertex.id;
+              const current = edit.verts.find((item) => item.id === best)!;
+              const d = (vertex.z - split.z) ** 2 + (vertex.x / 2 - split.r) ** 2;
+              const bd = (current.z - split.z) ** 2 + (current.x / 2 - split.r) ** 2;
+              return d < bd ? vertex.id : best;
+            }, null)
+          : null;
+        if (splitVertexId != null && selectedLines.some((line) => line.va === splitVertexId || line.vb === splitVertexId)) {
+          drag.current = null;
+          return;
         }
+        const vset = new Set<number>();
+        for (const l of selectedLines) { vset.add(l.va); vset.add(l.vb); }
         const base = new Map<number, EVert>();
         for (const vid of vset) base.set(vid, { ...vz(vid) });
-        const holderBase = edit?.holder2 ?? params.holder2;
         drag.current = {
           mode: "eline",
           ids,
@@ -3275,9 +3277,6 @@ export default function ProfileEditor({
           sx: e.clientX,
           sy: e.clientY,
           moved: false,
-          ...(holder2Drag
-            ? { holder2: { base: { ...holderBase }, next: { ...holderBase }, latestVerts: verts } }
-            : {}),
         };
         return;
       }
@@ -3617,37 +3616,15 @@ export default function ProfileEditor({
     }
 
     if (d.mode === "eline") {
-      /* داخل‌تراشی (هلدر ۲) فقط برای مشاهده/انتخاب است؛ حتی اگر نشست Drag
-         از مسیر دیگری ساخته شده باشد، در مرحلهٔ حرکت نیز باید بی‌اثر بماند. */
-      if (d.ids.some((id) => lineById.get(id)?.holder === 2)) { d.moved = false; return; }
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
       /* رأس‌های مشترک = یک‌جا جابه‌جا می‌شوند → همسایه‌ها بی‌درز دنباله می‌آیند؛
          جابه‌جایی از مبنایِ لحظهٔ کلیک و با گامِ شبکه (فقط «میزان» حرکت) */
       const { z: qz, r: qr } = quantStep(raw, d.start);
-      if (d.holder2 && edit) {
-        /* نگاشت نمایش: حرکت راست = Xoff بیشتر؛ حرکت بالا (v بیشتر) = Yoff کمتر،
-           چون Ym = Yw/2 − Yoff. آفست و هندسه از یک دلتا ساخته می‌شوند. */
-        const round2 = (v: number) => Math.round(v * 100) / 100;
-        const next: Holder2State = {
-          xOff: Math.max(MIN_HOLDER2_OFFSET, round2(d.holder2.base.xOff + qz)),
-          yOff: Math.max(MIN_HOLDER2_OFFSET, round2(d.holder2.base.yOff - qr)),
-        };
-        const dz = next.xOff - d.holder2.base.xOff;
-        const dv = d.holder2.base.yOff - next.yOff;
-        const baseVerts = Array.from(d.base.values());
-        const nv = translateHolder2Edit(baseVerts, lines, dz, dv);
-        d.holder2.next = next;
-        d.holder2.latestVerts = nv;
-        /* پیش‌نویس Params را عوض نمی‌کند؛ ControlsPanel مقدار را از EditBuf
-           می‌خواند و اعداد X/Y در همین فریم به‌صورت زنده عوض می‌شوند. */
-        onEditBuf({ ...edit, verts: nv, lines, holder2: next }, false);
-      } else {
-        const nv = verts.map((v) => {
+const nv = verts.map((v) => {
           const b0 = d.base.get(v.id);
           return b0 ? { ...v, z: b0.z + qz, x: b0.x + 2 * qr } : v;
         });
         setBufGeom(nv, lines, false);
-      }
       return;
     }
     if (d.mode === "evert") {
