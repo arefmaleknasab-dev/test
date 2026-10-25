@@ -4311,7 +4311,7 @@ export default function ProfileEditor({
   };
 
   const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (draft.length) {
+    if (draft.length && tool !== "polyline") {
       cancelDraft();
       return;
     }
@@ -4334,18 +4334,18 @@ export default function ProfileEditor({
       /* در حالت طراحی، دابل‌کلیک روی هر ضلع خطیِ Polyline همان‌جا Vertex
          می‌سازد و ضلع را به دو ضلع هم‌عضو تقسیم می‌کند؛ مختصات از محل واقعی
          کلیک گرفته می‌شود، نه از مرکز خط. */
-      if (s.kind === "line" && (s.polylineId != null || tool === "polyline")) {
-        const dz = s.b.z - s.a.z, dr = s.b.r - s.a.r;
-        const den = dz * dz + dr * dr;
-        const t = den > 1e-12 ? Math.max(0, Math.min(1, ((raw.z - s.a.z) * dz + (raw.r - s.a.r) * dr) / den)) : 0.5;
+      if ((s.polylineId != null || tool === "polyline") && (s.kind === "line" || s.kind === "quad" || s.kind === "cubic" || s.kind === "arc")) {
+        const hit = nearestOnSeg(s, raw), t = hit.t;
         if (t > 1e-5 && t < 1 - 1e-5) {
-          const at = { z: s.a.z + dz * t, r: s.a.r + dr * t };
-          const first: SketchSeg = { ...s, id: newSegId(), b: at };
-          const second: SketchSeg = { ...s, id: newSegId(), a: at };
-          const next = segs.flatMap(seg => seg.id === s.id ? [first, second] : [seg]);
-          commit(next);
-          onSelected([first.id, second.id]);
-          return;
+          const at = evalSeg(s, t);
+          const mix = (a: SPoint, b: SPoint, k: number): SPoint => ({ z:a.z+(b.z-a.z)*k, r:a.r+(b.r-a.r)*k });
+          let first: SketchSeg, second: SketchSeg;
+          if (s.kind === "quad" && s.c1) { const ac=mix(s.a,s.c1,t),cb=mix(s.c1,s.b,t); first={...s,id:newSegId(),b:at,c1:ac};second={...s,id:newSegId(),a:at,c1:cb}; }
+          else if (s.kind === "cubic" && s.c1 && s.c2) { const p01=mix(s.a,s.c1,t),p12=mix(s.c1,s.c2,t),p23=mix(s.c2,s.b,t),p012=mix(p01,p12,t),p123=mix(p12,p23,t); first={...s,id:newSegId(),b:at,c1:p01,c2:p012};second={...s,id:newSegId(),a:at,c1:p123,c2:p23}; }
+          else if (s.kind === "arc") { first={...s,id:newSegId(),b:at,via:evalSeg(s,t/2)};second={...s,id:newSegId(),a:at,via:evalSeg(s,(t+1)/2)}; }
+          else { first={...s,id:newSegId(),b:at};second={...s,id:newSegId(),a:at}; }
+          const next = segs.flatMap(seg=>seg.id===s.id?[first,second]:[seg]);
+          commit(next); onSelected([first.id,second.id]); return;
         }
       }
       const chain = chainIds(s.id);
