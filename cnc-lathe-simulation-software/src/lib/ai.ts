@@ -40,6 +40,19 @@ export function parseIllustrator(text: string): AiDocument {
       const a = pop(2); if (a.length === 2 && current) { const next = point(a[0], a[1]); segments.push({ id: ++id, kind: "line", a: current, b: next }); current = next; }
     } else if (op === "c" || op === "curveto") {
       const a = pop(6); if (a.length === 6 && current) { const c1 = point(a[0], a[1]), c2 = point(a[2], a[3]), next = point(a[4], a[5]); segments.push({ id: ++id, kind: "cubic", a: current, b: next, c1, c2 }); current = next; }
+    } else if ((op === "arc" || op === "arcn") && current) {
+      const a = pop(5);
+      if (a.length === 5) {
+        const center = point(a[0], a[1]), radius = a[2] * PT_TO_MM;
+        const start = a[3] * Math.PI / 180, end = a[4] * Math.PI / 180;
+        let sweep = end - start;
+        if (op === "arc") while (sweep < 0) sweep += Math.PI * 2;
+        else while (sweep > 0) sweep -= Math.PI * 2;
+        const viaAngle = start + sweep / 2;
+        const via = { z: center.z + radius * Math.cos(viaAngle), r: center.r + radius * Math.sin(viaAngle) };
+        const next = { z: center.z + radius * Math.cos(start + sweep), r: center.r + radius * Math.sin(start + sweep) };
+        segments.push({ id: ++id, kind: "arc", a: current, b: next, via }); current = next;
+      }
     } else if (op === "v" && current) {
       const a = pop(4); if (a.length === 4) { const c2 = point(a[0], a[1]), next = point(a[2], a[3]); segments.push({ id: ++id, kind: "cubic", a: current, b: next, c1: { ...current }, c2 }); current = next; }
     } else if (op === "y" && current) {
