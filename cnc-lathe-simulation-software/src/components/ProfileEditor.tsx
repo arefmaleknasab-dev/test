@@ -4316,7 +4316,7 @@ export default function ProfileEditor({
       return;
     }
     /* در ویرایش مسیر، دابل‌کلیک روی خط یک Vertex جدید درج می‌کند. */
-    if (tool !== "select" || !camRef.current) return;
+    if (tool !== "select" && tool !== "polyline" || !camRef.current) return;
     const raw = toWorld(e.clientX, e.clientY);
     if (editOpen && edit) {
       const loc = toLocal(e.clientX, e.clientY);
@@ -4334,7 +4334,7 @@ export default function ProfileEditor({
       /* در حالت طراحی، دابل‌کلیک روی هر ضلع خطیِ Polyline همان‌جا Vertex
          می‌سازد و ضلع را به دو ضلع هم‌عضو تقسیم می‌کند؛ مختصات از محل واقعی
          کلیک گرفته می‌شود، نه از مرکز خط. */
-      if (s.kind === "line" && s.polylineId != null) {
+      if (s.kind === "line" && (s.polylineId != null || tool === "polyline")) {
         const dz = s.b.z - s.a.z, dr = s.b.r - s.a.r;
         const den = dz * dz + dr * dr;
         const t = den > 1e-12 ? Math.max(0, Math.min(1, ((raw.z - s.a.z) * dz + (raw.r - s.a.r) * dr) / den)) : 0.5;
