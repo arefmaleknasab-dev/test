@@ -261,9 +261,10 @@ export default function App() {
       if (!open.length) return;
       try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(open)); } catch {}
     };
+    // visibilitychange هنگام بارگذاری اولیه نیز ممکن است اجرا شود و تب موقت اولیه
+    // را روی فهرست ذخیره‌شده بنویسد؛ فقط خروج واقعی مرورگر معتبر است.
     window.addEventListener("beforeunload", saveAllOpenTabs);
-    document.addEventListener("visibilitychange", saveAllOpenTabs);
-    return () => { window.removeEventListener("beforeunload", saveAllOpenTabs); document.removeEventListener("visibilitychange", saveAllOpenTabs); };
+    return () => { window.removeEventListener("beforeunload", saveAllOpenTabs); };
   }, []);
   const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
   const [newProjectDraft,setNewProjectDraft]=useState<{name:string;diameter:string;length:string}|null>(null);
