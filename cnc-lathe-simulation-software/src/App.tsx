@@ -1086,6 +1086,7 @@ export default function App() {
         activeProjectId={activeProjectId}
         onSwitchProject={switchProject}
         onCloseProject={requestCloseProject}
+        onCloseAllProjects={() => { setProjectTabs([]); setWelcomeOpen(true); setPendingCloseProject(null); setEditBuf(null); setEditOpen(false); }}
         onNewProject={openNewProject}
         onOpenProject={() => projectInputRef.current?.click()}
         onSaveProject={() => void saveProject()}
@@ -1302,8 +1303,8 @@ export default function App() {
   );
 }
 
-function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onCloseProject, onNewProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onImportImage, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
-  projects: {id:string;name:string;dirty:boolean}[]; activeProjectId:string; onSwitchProject:(id:string)=>void; onCloseProject:(id:string)=>void;
+function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onCloseProject, onCloseAllProjects, onNewProject, onOpenProject, onSaveProject, onSaveProjectAs, onImportAi, onImportImage, onExportGcode, onExportDxf, onPreferences, onUndo, onRedo, canUndo, canRedo }: {
+  projects: {id:string;name:string;dirty:boolean}[]; activeProjectId:string; onSwitchProject:(id:string)=>void; onCloseProject:(id:string)=>void; onCloseAllProjects:()=>void;
   onNewProject:()=>void; onOpenProject: () => void; onSaveProject: () => void; onSaveProjectAs: () => void;
   onImportAi: () => void; onImportImage: () => void; onExportGcode: () => void; onExportDxf: () => void; onPreferences: () => void;
   onUndo: () => void; onRedo: () => void; canUndo: boolean; canRedo: boolean;
@@ -1342,6 +1343,8 @@ function DesktopMenuBar({ projects, activeProjectId, onSwitchProject, onClosePro
     {open==="edit" && <div className="absolute top-full left-[42px] z-50 w-52 overflow-hidden rounded-b-md border border-edge2 bg-panel/98 py-1 shadow-2xl shadow-black/60" dir="rtl">
       <MenuItem label="واگرد" hint="Ctrl+Z" disabled={!canUndo} onClick={()=>run(onUndo)} />
       <MenuItem label="بازانجام" hint="Ctrl+Y" disabled={!canRedo} onClick={()=>run(onRedo)} />
+      <div className="my-1 border-t border-edge" />
+      <MenuItem label="بستن همه پروژه‌ها" onClick={()=>run(onCloseAllProjects)} />
     </div>}
   </div>;
 }
