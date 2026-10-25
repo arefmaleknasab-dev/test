@@ -3154,7 +3154,6 @@ export default function ProfileEditor({
       /* نشان‌های ابتدا/انتها بر Segment زیرین اولویت دارند تا با یک کلیک ساده
          انتخاب شوند و همان لحظه امکان drag آن‌ها وجود داشته باشد. */
       if (endpointCandidate != null) {
-        const innerTurningVertex = lines.some((line) => line.holder === 2 && (line.va === endpointCandidate || line.vb === endpointCandidate));
         const chosen = selectedHitLine!=null ? [endpointCandidate] : e.shiftKey
           ? (selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate])
           : [endpointCandidate];
@@ -3162,7 +3161,7 @@ export default function ProfileEditor({
         focusEditVertexInGCode(endpointCandidate);
         setHitPicker(null);
         setPickerHover(null);
-        if (innerTurningVertex || splitEditVertexConnected(endpointCandidate)) { drag.current = null; return; }
+        if (splitEditVertexConnected(endpointCandidate)) { drag.current = null; return; }
         drag.current = {
           mode: "evert",
           vids: chosen,
@@ -3217,13 +3216,11 @@ export default function ProfileEditor({
       setPickerHover(null);
       const bv = hitBufVx(ploc.x, ploc.y);
       if (bv != null) {
-        const innerTurningVertex = lines.some((line) => line.holder === 2 && (line.va === bv || line.vb === bv));
         const chosen = selectedHitLine!=null ? [bv] : e.shiftKey
           ? (selV.includes(bv) ? selV.filter((id) => id !== bv) : [...selV, bv])
           : [bv];
         setSelV(chosen);
         focusEditVertexInGCode(bv);
-        if (innerTurningVertex) { drag.current = null; return; }
         drag.current = {
           mode: "evert",
           vids: chosen,
