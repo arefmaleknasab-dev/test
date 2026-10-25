@@ -2766,6 +2766,10 @@ export default function ProfileEditor({
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
+    if(e.button===0&&!editOpen&&tool==="select"){
+      const clicked=hitSeg(raw);
+      if(clicked) onSelected(sketchObjectIds(clicked.id));
+    }
     if(e.button===0&&!editOpen&&(tool==="select"||tool==="move"||tool==="boxscale"||tool==="scale")){
       /* پروفایل همیشه بر عکسِ زیرین اولویت دارد؛ در غیر این صورت کلیک روی
          تصویر، انتخاب خط یا جابه‌جایی رأس را می‌بلعد. */
