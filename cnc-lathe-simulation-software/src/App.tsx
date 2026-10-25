@@ -240,19 +240,22 @@ export default function App() {
   const [recentProjects, setRecentProjects] = useState<ProjectTab[]>(() => { try { return JSON.parse(localStorage.getItem("kharraat-recent-projects") || "[]") as ProjectTab[]; } catch { return []; } });
   const [welcomeOpen, setWelcomeOpen] = useState(true);
   const [confirmClearRecent, setConfirmClearRecent] = useState(false);
+  const initialProjectSnapshot = useRef(projectSnapshot(sketch, params, normGcodeOvr(SAVED?.gcodeOvr), referenceImages));
   const projectTabsHydrated = useRef(false);
+  const persistableTabs = (tabs: ProjectTab[]) => tabs.filter(tab => !(tab.id === initialProjectId.current && projectSnapshot(tab.sketch, tab.params, tab.gcodeOvr, tab.referenceImages) === initialProjectSnapshot.current));
   const projectTabsRef = useRef(projectTabs);
   projectTabsRef.current = projectTabs;
   useEffect(() => {
     // فهرست اخیر باید مجموعهٔ همهٔ تب‌ها باشد، نه فقط تب فعال یا آخرین تب بسته‌شده.
     if (!projectTabsHydrated.current) { projectTabsHydrated.current = true; return; }
-    if (!projectTabs.length) return;
+    const currentTabs = persistableTabs(projectTabs);
+    if (!currentTabs.length) return;
     setRecentProjects(previous => {
       const byId = new Map<string, ProjectTab>();
-      for (const tab of previous) byId.set(tab.id, tab);
+      for (const tab of persistableTabs(previous)) byId.set(tab.id, tab);
       // تب‌های جدیدتر در ابتدای فهرست قرار می‌گیرند؛ ترتیب تب‌های داخل پروژه
       // از چپ به راست/قدیمی به جدید است، بنابراین از انتها وارد می‌کنیم.
-      for (const tab of [...projectTabs].reverse()) { byId.delete(tab.id); byId.set(tab.id, tab); }
+      for (const tab of [...currentTabs].reverse()) { byId.delete(tab.id); byId.set(tab.id, tab); }
       const merged = Array.from(byId.values()).slice(0, 30);
       try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(merged)); } catch {}
       return merged;
@@ -260,7 +263,7 @@ export default function App() {
   }, [projectTabs]);
   useEffect(() => {
     const saveAllOpenTabs = () => {
-      const open = projectTabsRef.current;
+      const open = persistableTabs(projectTabsRef.current);
       if (!open.length) return;
       try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(open)); } catch {}
     };
