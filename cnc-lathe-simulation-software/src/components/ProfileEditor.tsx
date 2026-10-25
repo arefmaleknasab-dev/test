@@ -1490,6 +1490,12 @@ export default function ProfileEditor({
           return;
         }
       }
+      if (!editOpen && tool === "select" && selPoints.length > 1 &&
+          (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        alignSelectedPoints(e.key === "ArrowUp" ? "top" : e.key === "ArrowDown" ? "bottom" : e.key === "ArrowRight" ? "right" : "left");
+        return;
+      }
       if (editOpen && edit && selL.length && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
         const active = activeLine != null && selL.includes(activeLine) ? activeLine : selL[selL.length - 1];
@@ -2299,6 +2305,27 @@ export default function ProfileEditor({
   };
 
   /* ویرایش مختصات یک نقطهٔ مستقل */
+  const alignSelectedPoints = (axis: "top" | "bottom" | "left" | "right") => {
+    const points = selPoints.flatMap((ref) => {
+      const seg = segs.find((item) => item.id === ref.segId);
+      const point = seg?.[ref.part];
+      return point ? [{ ref, point }] : [];
+    });
+    if (points.length < 2) return;
+    const target = axis === "top" ? Math.max(...points.map((item) => item.point.r))
+      : axis === "bottom" ? Math.min(...points.map((item) => item.point.r))
+      : axis === "right" ? Math.max(...points.map((item) => item.point.z))
+      : Math.min(...points.map((item) => item.point.z));
+    const next = segs.map((seg) => {
+      let out = seg;
+      for (const { ref, point } of points) {
+        if (ref.segId === seg.id) out = withSegPoint(out, ref.part, axis === "top" || axis === "bottom" ? { ...point, r: target } : { ...point, z: target });
+      }
+      return out;
+    });
+    onSegs(next, true);
+  };
+
   const patchPoint = (segId: number, part: SketchPointPart, patch: Partial<SPoint>) => {
     const next = segs.map((s) => {
       if (s.id !== segId) return s;
@@ -6416,7 +6443,14 @@ export default function ProfileEditor({
       })()}
       {selPoints.length > 1 && tool === "select" && (
         <div className="anim-in absolute left-2.5 bottom-11 rounded-lg border border-brass/40 bg-panel/95 px-3 py-2 text-[11px] font-bold text-brass2 backdrop-blur-sm">
-          {selPoints.length} نقطه انتخاب شده — بکشید تا با هم جابه‌جا شوند
+          <div>{selPoints.length} نقطه انتخاب شده — بکشید تا با هم جابه‌جا شوند</div>
+          <div className="mt-2 grid grid-cols-4 gap-1" dir="ltr">
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با بالاترین نقطه (↑)" onClick={() => alignSelectedPoints("top")}>↑</button>
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با پایین‌ترین نقطه (↓)" onClick={() => alignSelectedPoints("bottom")}>↓</button>
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با چپ‌ترین نقطه (←)" onClick={() => alignSelectedPoints("left")}>←</button>
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با راست‌ترین نقطه (→)" onClick={() => alignSelectedPoints("right")}>→</button>
+          </div>
+          <div className="mt-1 text-center text-[9px] font-normal text-dim">کلیدهای جهت‌نما نیز فعال هستند</div>
         </div>
       )}
 
