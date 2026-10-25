@@ -4,7 +4,7 @@ import { IconMinus, IconPlus, IconReset, IconWindow, IconX } from "./icons";
 
 /* ---------- مدل چیدمان ---------- */
 
-export type PanelId = "controls" | "editor" | "gcode" | "lathe3d";
+export type PanelId = "controls" | "editor" | "gcode";
 
 export interface PanelState {
   open: boolean;
@@ -14,7 +14,7 @@ export interface PanelState {
 
 export type LayoutState = Record<PanelId, PanelState>;
 
-export const PANEL_IDS: PanelId[] = ["controls", "editor", "gcode", "lathe3d"];
+export const PANEL_IDS: PanelId[] = ["controls", "editor", "gcode"];
 
 export const MIN_PANEL = 180;
 export const MAX_PANEL = 640;
@@ -24,7 +24,6 @@ export function defaultLayout(): LayoutState {
     controls: { open: true, collapsed: false, size: 272 },
     editor: { open: true, collapsed: false, size: 0 },
     gcode: { open: true, collapsed: false, size: 330 },
-    lathe3d: { open: true, collapsed: false, size: 380 },
   };
 }
 
