@@ -4331,6 +4331,23 @@ export default function ProfileEditor({
     }
     const s = editOpen ? null : hitSeg(raw);
     if (s) {
+      /* در حالت طراحی، دابل‌کلیک روی هر ضلع خطیِ Polyline همان‌جا Vertex
+         می‌سازد و ضلع را به دو ضلع هم‌عضو تقسیم می‌کند؛ مختصات از محل واقعی
+         کلیک گرفته می‌شود، نه از مرکز خط. */
+      if (s.kind === "line" && s.polylineId != null) {
+        const dz = s.b.z - s.a.z, dr = s.b.r - s.a.r;
+        const den = dz * dz + dr * dr;
+        const t = den > 1e-12 ? Math.max(0, Math.min(1, ((raw.z - s.a.z) * dz + (raw.r - s.a.r) * dr) / den)) : 0.5;
+        if (t > 1e-5 && t < 1 - 1e-5) {
+          const at = { z: s.a.z + dz * t, r: s.a.r + dr * t };
+          const first: SketchSeg = { ...s, id: newSegId(), b: at };
+          const second: SketchSeg = { ...s, id: newSegId(), a: at };
+          const next = segs.flatMap(seg => seg.id === s.id ? [first, second] : [seg]);
+          commit(next);
+          onSelected([first.id, second.id]);
+          return;
+        }
+      }
       const chain = chainIds(s.id);
       if (e.shiftKey) onSelected([...selected, ...chain.filter((id) => !selected.includes(id))]);
       else onSelected(chain);
