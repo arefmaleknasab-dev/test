@@ -5381,8 +5381,17 @@ const nv = verts.map((v) => {
         {editInnerSplitPoint && (() => {
           const [x, y] = P(editInnerSplitPoint.z, editInnerSplitPoint.r);
           return <g pointerEvents="none">
-            <circle cx={x} cy={y} r={7} fill="#168cff" fillOpacity={0.18} stroke="#63bdff" strokeWidth={1.5} />
-            <circle cx={x} cy={y} r={2.6} fill="#168cff" stroke="#d9f1ff" strokeWidth={0.9} />
+            <rect
+              x={x - 4}
+              y={y - 4}
+              width={8}
+              height={8}
+              transform={`rotate(45 ${x} ${y})`}
+              fill="#168cff"
+              stroke="#120e09"
+              strokeWidth={1.2}
+            />
+            <circle cx={x} cy={y} r={1.25} fill="#ffffff" />
           </g>;
         })()}
 
