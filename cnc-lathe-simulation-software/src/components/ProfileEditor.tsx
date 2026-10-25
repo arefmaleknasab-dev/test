@@ -2752,9 +2752,22 @@ export default function ProfileEditor({
 
   const sketchObjectIds = (id: number): number[] => {
     const segment = segs.find((item) => item.id === id);
-    return segment?.polylineId == null
-      ? [id]
-      : segs.filter((item) => item.polylineId === segment.polylineId).map((item) => item.id);
+    if (!segment) return [];
+    const group = segment.polylineId;
+    const ids = new Set<number>(group == null ? [id] : segs.filter(item => item.polylineId === group).map(item => item.id));
+    // اتصال هندسی را نیز دنبال می‌کنیم تا عنصری که با اتصال نقطه‌ای وارد
+    // Polyline شده ولی هنوز شناسه گروه قدیمی دارد، در انتخاب جا نماند.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const item of segs) {
+        if (ids.has(item.id)) continue;
+        const touches = segs.some(other => ids.has(other.id) &&
+          ([item.a, item.b].some(a => [other.a, other.b].some(b => dist(a,b) < 1e-7))));
+        if (touches) { ids.add(item.id); changed = true; }
+      }
+    }
+    return [...ids];
   };
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
