@@ -2365,6 +2365,7 @@ export default function ProfileEditor({
     const origin = seg[part];
     const tol = 20 / (camRef.current?.s ?? 1);
     let nearest: SPoint | null = null;
+    let nearestSeg: SketchSeg | null = null;
     let nd = tol;
     for (const s of segs) {
       for (const pp of ["a", "b"] as const) {
@@ -2373,12 +2374,24 @@ export default function ProfileEditor({
         if (d > 1e-6 && d < nd) {
           nd = d;
           nearest = s[pp];
+          nearestSeg = s;
         }
       }
     }
-    if (nearest) {
+    if (nearest && nearestSeg) {
       const target = nearest;
-      onSegs(segs.map((s) => (s.id === segId ? ({ ...s, [part]: { ...target } } as SketchSeg) : s)), true);
+      const sourceSeg = seg;
+      const sourceGroup = sourceSeg.polylineId;
+      const targetGroup = nearestSeg.polylineId;
+      const group = sourceGroup ?? targetGroup ?? (Math.max(0, ...segs.map(s => s.polylineId ?? 0)) + 1);
+      const groupsToMerge = new Set<number>([group]);
+      if (sourceGroup != null) groupsToMerge.add(sourceGroup);
+      if (targetGroup != null) groupsToMerge.add(targetGroup);
+      onSegs(segs.map((s) => {
+        const belongs = s.id === segId || s.id === nearestSeg!.id || (s.polylineId != null && groupsToMerge.has(s.polylineId));
+        const next = belongs ? { ...s, polylineId: group } : s;
+        return s.id === segId ? ({ ...next, [part]: { ...target } } as SketchSeg) : next;
+      }), true);
     }
     setSeparated((prev) => {
       const n = new Set(prev);
