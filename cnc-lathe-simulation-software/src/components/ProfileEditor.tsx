@@ -3252,6 +3252,9 @@ export default function ProfileEditor({
         selectEditLines(ids, bl, true);
         setSelV([]);
         const selectedLines = ids.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
+        /* خطوط مسیر داخل‌تراشی فقط قابل انتخاب/مشاهده‌اند و نباید با Drag
+           هندسهٔ پروفایل یا آفست ابزار را جابه‌جا کنند. */
+        if (selectedLines.some((line) => line.holder === 2)) { drag.current = null; return; }
         const holder2Drag = selectedLines.length > 0 && selectedLines.every((line) => line.holder === 2);
         const vset = new Set<number>();
         if (holder2Drag) {
@@ -3614,6 +3617,9 @@ export default function ProfileEditor({
     }
 
     if (d.mode === "eline") {
+      /* داخل‌تراشی (هلدر ۲) فقط برای مشاهده/انتخاب است؛ حتی اگر نشست Drag
+         از مسیر دیگری ساخته شده باشد، در مرحلهٔ حرکت نیز باید بی‌اثر بماند. */
+      if (d.ids.some((id) => lineById.get(id)?.holder === 2)) { d.moved = false; return; }
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
       /* رأس‌های مشترک = یک‌جا جابه‌جا می‌شوند → همسایه‌ها بی‌درز دنباله می‌آیند؛
          جابه‌جایی از مبنایِ لحظهٔ کلیک و با گامِ شبکه (فقط «میزان» حرکت) */
