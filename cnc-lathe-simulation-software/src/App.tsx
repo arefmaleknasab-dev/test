@@ -240,15 +240,31 @@ export default function App() {
   const [recentProjects, setRecentProjects] = useState<ProjectTab[]>(() => { try { return JSON.parse(localStorage.getItem("kharraat-recent-projects") || "[]") as ProjectTab[]; } catch { return []; } });
   const [welcomeOpen, setWelcomeOpen] = useState(true);
   const projectTabsHydrated = useRef(false);
+  const projectTabsRef = useRef(projectTabs);
+  projectTabsRef.current = projectTabs;
   useEffect(() => {
-    // همهٔ تب‌های باز باید پیش از خروج و در هر تغییر مهم در فهرست اخیر ذخیره شوند؛
-    // مقدار اولیهٔ موقت برنامه نباید فهرست ذخیره‌شدهٔ قبلی را پاک کند.
+    // فهرست اخیر باید مجموعهٔ همهٔ تب‌ها باشد، نه فقط تب فعال یا آخرین تب بسته‌شده.
     if (!projectTabsHydrated.current) { projectTabsHydrated.current = true; return; }
-    if (projectTabs.length) {
-      try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(projectTabs)); } catch {}
-      setRecentProjects(projectTabs);
-    }
+    if (!projectTabs.length) return;
+    setRecentProjects(previous => {
+      const byId = new Map<string, ProjectTab>();
+      for (const tab of previous) byId.set(tab.id, tab);
+      for (const tab of projectTabs) byId.set(tab.id, tab);
+      const merged = Array.from(byId.values()).slice(-30);
+      try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(merged)); } catch {}
+      return merged;
+    });
   }, [projectTabs]);
+  useEffect(() => {
+    const saveAllOpenTabs = () => {
+      const open = projectTabsRef.current;
+      if (!open.length) return;
+      try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(open)); } catch {}
+    };
+    window.addEventListener("beforeunload", saveAllOpenTabs);
+    document.addEventListener("visibilitychange", saveAllOpenTabs);
+    return () => { window.removeEventListener("beforeunload", saveAllOpenTabs); document.removeEventListener("visibilitychange", saveAllOpenTabs); };
+  }, []);
   const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
   const [newProjectDraft,setNewProjectDraft]=useState<{name:string;diameter:string;length:string}|null>(null);
   const [pendingEditExit, setPendingEditExit] = useState(false);
