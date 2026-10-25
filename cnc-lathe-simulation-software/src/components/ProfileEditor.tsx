@@ -2449,18 +2449,6 @@ export default function ProfileEditor({
     }, edit.verts[0].id);
   }, [edit, split.enabled, split.z, split.r]);
   const splitEditVertexConnected = (vid: number) => editSplitVertexId != null && vid === editSplitVertexId;
-  const editInnerSplitVertex = useMemo(() => {
-    if (!editOpen || !split.enabled || !edit || !lines.length) return null;
-    const ids = new Set(lines.filter((line) => line.holder === 2).flatMap((line) => [line.va, line.vb]));
-    let best: EVert | null = null;
-    let bestD = Infinity;
-    for (const vertex of edit.verts) {
-      if (!ids.has(vertex.id)) continue;
-      const d = (vertex.z - split.z) ** 2 + (vertex.x / 2 - split.r) ** 2;
-      if (d < bestD) { bestD = d; best = vertex; }
-    }
-    return best;
-  }, [editOpen, split.enabled, split.z, split.r, edit, lines]);
   /* نگاشت قاب هنگام خروج فقط زمانی لازم است که کاربر واقعاً در حالت ویرایش Pan
      کرده باشد. ورود/خروج ساده یا Zoom بدون Pan نباید Camera را دست‌کاری کند. */
   const editPanOccurredRef=useRef(false);
@@ -5381,15 +5369,6 @@ const nv = verts.map((v) => {
             );
           })}
         </g>
-
-        {/* نقطه Split متناظر با شاخه داخلی در ویرایش مسیر؛ با آفست H2 همراه است */}
-        {editInnerSplitVertex && (() => {
-          const [x, y] = P(editInnerSplitVertex.z, editInnerSplitVertex.x / 2);
-          return <g pointerEvents="none">
-            <circle cx={x} cy={y} r={7} fill="#2d9cff" fillOpacity={0.16} stroke="#76c8ff" strokeWidth={1.4} strokeDasharray="2.5 2" />
-            <circle cx={x} cy={y} r={2.5} fill="#4aaeff" stroke="#d8f0ff" strokeWidth={0.8} />
-          </g>;
-        })()}
 
         {/* نقطه Split */}
         {split.enabled && (
