@@ -2449,6 +2449,13 @@ export default function ProfileEditor({
     }, edit.verts[0].id);
   }, [edit, split.enabled, split.z, split.r]);
   const splitEditVertexConnected = (vid: number) => editSplitVertexId != null && vid === editSplitVertexId;
+  const editInnerSplitPoint = useMemo(() => {
+    if (!editOpen || !split.enabled || !edit) return null;
+    const holder2 = edit.holder2 ?? params.holder2;
+    /* seedGcodeEdit در فضای ماشین ذخیره می‌کند: H2 نسبت به نقطه طراحی
+       در +Z به اندازه xOff و در شعاع به اندازه -yOff جابه‌جا است. */
+    return { z: split.z + holder2.xOff, r: split.r - holder2.yOff };
+  }, [editOpen, split.enabled, split.z, split.r, edit, params.holder2]);
   /* نگاشت قاب هنگام خروج فقط زمانی لازم است که کاربر واقعاً در حالت ویرایش Pan
      کرده باشد. ورود/خروج ساده یا Zoom بدون Pan نباید Camera را دست‌کاری کند. */
   const editPanOccurredRef=useRef(false);
@@ -5369,6 +5376,15 @@ const nv = verts.map((v) => {
             );
           })}
         </g>
+
+        {/* نقطه Split شاخه داخلی در مختصات واقعی Offset هلدر دوم */}
+        {editInnerSplitPoint && (() => {
+          const [x, y] = P(editInnerSplitPoint.z, editInnerSplitPoint.r);
+          return <g pointerEvents="none">
+            <circle cx={x} cy={y} r={7} fill="#168cff" fillOpacity={0.18} stroke="#63bdff" strokeWidth={1.5} />
+            <circle cx={x} cy={y} r={2.6} fill="#168cff" stroke="#d9f1ff" strokeWidth={0.9} />
+          </g>;
+        })()}
 
         {/* نقطه Split */}
         {split.enabled && (
