@@ -2142,9 +2142,10 @@ export default function ProfileEditor({
       ((dist(segment.a,vertex)<1e-8&&!!segment.c1&&dist(segment.a,segment.c1)>1e-8)||(dist(segment.b,vertex)<1e-8&&!!segment.c2&&dist(segment.b,segment.c2)>1e-8)));
   });
 
-  const convertPolylineEdge=(id:number,kind:"arc"|"cubic")=>{
+  const convertPolylineEdge=(id:number,kind:"line"|"arc"|"cubic")=>{
     commit(segs.map(segment=>{
       if(segment.id!==id||segment.polylineId==null)return segment;
+      if(kind==="line") return {...segment,kind:"line" as const,c1:undefined,c2:undefined,via:undefined};
       if(kind==="cubic"){
         const [c1,c2]=defaultCubicHandles(segment.a,segment.b);
         return {...segment,kind:"cubic" as const,c1,c2,via:undefined};
@@ -3925,6 +3926,7 @@ export default function ProfileEditor({
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (tool === "polyline" && e.detail === 2) { setDraft([]); drag.current = null; return; }
     if(imageDrag.current){const preview=imageTransformPreviewRef.current;if(imagePreviewFrame.current!=null){cancelAnimationFrame(imagePreviewFrame.current);imagePreviewFrame.current=null;}if(preview)onReferenceImages(referenceImages.map(img=>img.id===preview.id?preview:img));imageDrag.current=null;imageGestureBase.current=null;imageTransformPreviewRef.current=null;setImageTransformPreview(null);setImageDragCursor(null);lastRotationCursorStep.current=null;if(svgRef.current)svgRef.current.style.cursor="";return;}
     if (boxPivotDrag.current) { boxPivotDrag.current=false; return; }
     if (boxRotateDrag.current) { boxRotateDrag.current=null; requestAnimationFrame(()=>{boxRotateInputRef.current?.focus();boxRotateInputRef.current?.select();}); return; }
@@ -4311,6 +4313,9 @@ export default function ProfileEditor({
   };
 
   const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (tool === "polyline") setDraft([]);
     if (draft.length && tool !== "polyline") {
       cancelDraft();
       return;
@@ -5709,7 +5714,7 @@ export default function ProfileEditor({
         </div>
       )}
 
-      {segmentCtxMenu&&(()=>{const segment=segs.find(s=>s.id===segmentCtxMenu.segId);if(!segment)return null;return <div className="anim-in absolute z-30 w-48 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm" style={{left:Math.min(segmentCtxMenu.x,size.w-200),top:Math.min(segmentCtxMenu.y,size.h-120)}}><div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">تبدیل ضلع Polyline</div><button disabled={segment.kind==="arc"} onClick={()=>convertPolylineEdge(segment.id,"arc")} className="block w-full px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به کمان (Arc)</button><button disabled={segment.kind==="cubic"} onClick={()=>convertPolylineEdge(segment.id,"cubic")} className="block w-full border-t border-edge px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به منحنی کنترلی</button><p className="border-t border-edge px-3 py-1.5 text-[9px] leading-4 text-dim">ضلع تبدیل‌شده همچنان عضو همان Polyline باقی می‌ماند.</p></div>})()}
+      {segmentCtxMenu&&(()=>{const segment=segs.find(s=>s.id===segmentCtxMenu.segId);if(!segment)return null;return <div className="anim-in absolute z-30 w-48 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm" style={{left:Math.min(segmentCtxMenu.x,size.w-200),top:Math.min(segmentCtxMenu.y,size.h-120)}}><div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">تبدیل ضلع Polyline</div><button disabled={segment.kind==="line"} onClick={()=>convertPolylineEdge(segment.id,"line")} className="block w-full px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به خط ساده</button><button disabled={segment.kind==="arc"} onClick={()=>convertPolylineEdge(segment.id,"arc")} className="block w-full border-t border-edge px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به کمان (Arc)</button><button disabled={segment.kind==="cubic"} onClick={()=>convertPolylineEdge(segment.id,"cubic")} className="block w-full border-t border-edge px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به منحنی کنترلی</button><p className="border-t border-edge px-3 py-1.5 text-[9px] leading-4 text-dim">ضلع تبدیل‌شده همچنان عضو همان Polyline باقی می‌ماند.</p></div>})()}
 
       {/* ---------- منوی راست‌کلیک: اتصال / جداسازی نقطه ---------- */}
       {ctxMenu && (
