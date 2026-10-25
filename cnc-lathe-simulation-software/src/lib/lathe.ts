@@ -1421,6 +1421,8 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* وقتی آفست مستقیماً به پرداخت داخل وصل می‌شود، پرداخت نباید دوباره
      با G0 به نقطه شروع وارد شود. */
   let innerFinishDirectReady = false;
+  /* اتصال افست داخل به پرداخت داخل مستقل از فعال بودن خشن داخل است. */
+  let innerOffsetToFinishReady = false;
   /* پاس نهایی کف‌تراشی در صفحه Split همان پاس نخست خشن داخل است؛ مالکیت این
      صفحه فقط به عملیاتی داده می‌شود که زودتر اجرا شده تا مسیرها هم‌پوشان نشوند. */
   let splitPlaneAlreadyCut = false;
@@ -2365,9 +2367,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
           rawRapid(0, mouthX);
           mv(1, 2 * innerOff[0].r, mouthX, p.feedFinish, "boreoff");
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedFinish, "boreoff");
-        } else if (innerCleared) {
-          /* از پایان خشن، با کوتاه‌ترین مسیر امن از قله‌ها به محور می‌رسیم؛ سپس
-             روی محور تا کف می‌رویم و از همان‌جا پاس آفست را آغاز می‌کنیم. */
+          } else if (innerCleared || nextEnabledOp(op.id)?.type === "inner-finish") {
+            /* از پایان خشن، یا هنگام حذف خشن و اتصال مستقیم به پرداخت، با کوتاه‌ترین
+               مسیر امن از قله‌ها به محور می‌رسیم؛ سپس روی محور تا کف می‌رویم. */
           moveInnerToAxisSafely();
           rawRapid(0, startInnerZ);
           mv(1, 2 * innerOff[0].r, innerOff[0].z, p.feedRough * 0.6, "bore");
@@ -2379,6 +2381,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         emitFinishingPath(innerOff,innerOffBase,"boreoff",p.feedFinish,true,!!op.reverse);
         if (!finishLastInner(op.id)) {
           const next = nextEnabledOp(op.id);
+          innerOffsetToFinishReady = next?.type === "inner-finish";
           /* اگر جهت دو عملیات مخالف باشد، پایان آفست دقیقاً کنار شروع پرداخت
              قرار می‌گیرد: اتصال باید یک G1 با رنگ و فید پرداخت داخل باشد.
              در این حالت هیچ G0 واسطی تولید نمی‌کنیم. */
@@ -2419,8 +2422,10 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
         /* ورود از صفحه امن، به‌اندازه فاصله تنظیم‌شده جلوتر از شروع مسیر داخل‌تراشی */
         const mouthX = zRimF + p.innerStartClearance;
         const directFromOffset = innerFinishDirectReady;
+        const fromOffsetConnection = innerOffsetToFinishReady;
         innerFinishDirectReady = false;
-        if (!directFromOffset && (!innerCleared || curHolder !== 2)) enterFirstInner(2 * rEntry, mouthX);
+        innerOffsetToFinishReady = false;
+        if (!directFromOffset && !fromOffsetConnection && (!innerCleared || curHolder !== 2)) enterFirstInner(2 * rEntry, mouthX);
         if (!directFromOffset && op.reverse) {
           /* در شروع Reverse نیز از دهانهٔ باز وارد می‌شویم، نه با خط شعاعی
              از داخل حفره تا دیواره؛ اتصال آخر خشن داخل/کف‌تراشی امن می‌ماند. */
