@@ -310,8 +310,14 @@ export default function App() {
     setSelectedIds([]);setEditBuf(null);setEditOpen(false);past.current=tab.past.slice(-limit);future.current=tab.future.slice(-limit);setHistVer(v=>v+1);
   };
   const finishCloseProject = (id:string) => {
-    const recent=[...projectTabs.filter(t=>t.id!==id), ...projectTabs.filter(t=>t.id===id)].slice(-12).reverse(); setRecentProjects(recent); try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(recent)); } catch {}
-    const remaining=projectTabs.filter(t=>t.id!==id);projectHandlesRef.current.delete(id);
+    const closed = projectTabs.find(t=>t.id===id);
+    const remaining=projectTabs.filter(t=>t.id!==id);
+    // هنگام بستن تک‌تک تب‌ها، همان تب بسته‌شده باید در صدر فهرست اخیر قرار بگیرد.
+    const ordered = closed ? [closed, ...remaining, ...recentProjects] : [...remaining, ...recentProjects];
+    const seen = new Set<string>();
+    const recent = ordered.filter(tab => !seen.has(tab.id) && (seen.add(tab.id), true)).slice(0, 30);
+    setRecentProjects(recent); try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(recent)); } catch {}
+    projectHandlesRef.current.delete(id);
     if(remaining.length){setProjectTabs(remaining);if(id===activeProjectId){const next=remaining[Math.max(0,projectTabs.findIndex(t=>t.id===id)-1)]??remaining[0];setActiveProjectId(next.id);setSketch(next.sketch);setGenerationSketch(next.sketch);setParams(next.params);setGcodeOvr(next.gcodeOvr);setReferenceImages(next.referenceImages??[]);setActivePreset(next.activePreset);past.current=[...next.past];future.current=[...next.future];setHistVer(v=>v+1);}}
     else { setProjectTabs([]); setWelcomeOpen(true); }
     setPendingCloseProject(null);setSelectedIds([]);setEditBuf(null);setEditOpen(false);
