@@ -888,6 +888,11 @@ export default function App() {
       next.split = p.split
         ? { enabled: true, z: p.split.z, r: p.split.r }
         : { ...prev.split, enabled: false };
+      // پریست در لحظهٔ ایجاد «تمیز» است؛ بنابراین بستن آن بدون ویرایش نباید
+      // هشدار تغییرات ذخیره‌نشده نشان دهد.
+      setProjectTabs(tabs => tabs.map(tab => tab.id === newProjectId
+        ? { ...tab, savedSnapshot: projectSnapshot(nextSketch, next, {}, []) }
+        : tab));
       return next;
     });
     setActivePreset(p.id);
