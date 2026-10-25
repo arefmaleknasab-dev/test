@@ -2439,6 +2439,16 @@ export default function ProfileEditor({
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
+  const editSplitVertexId = useMemo(() => {
+    if (!split.enabled || !edit || !edit.verts.length) return null;
+    return edit.verts.reduce((best, vertex) => {
+      const current = edit.verts.find((item) => item.id === best)!;
+      const d = (vertex.z - split.z) ** 2 + (vertex.x / 2 - split.r) ** 2;
+      const bd = (current.z - split.z) ** 2 + (current.x / 2 - split.r) ** 2;
+      return d < bd ? vertex.id : best;
+    }, edit.verts[0].id);
+  }, [edit, split.enabled, split.z, split.r]);
+  const splitEditVertexConnected = (vid: number) => editSplitVertexId != null && vid === editSplitVertexId;
   /* نگاشت قاب هنگام خروج فقط زمانی لازم است که کاربر واقعاً در حالت ویرایش Pan
      کرده باشد. ورود/خروج ساده یا Zoom بدون Pan نباید Camera را دست‌کاری کند. */
   const editPanOccurredRef=useRef(false);
@@ -3145,7 +3155,7 @@ export default function ProfileEditor({
         focusEditVertexInGCode(endpointCandidate);
         setHitPicker(null);
         setPickerHover(null);
-        if (innerTurningVertex) { drag.current = null; return; }
+        if (innerTurningVertex || splitEditVertexConnected(endpointCandidate)) { drag.current = null; return; }
         drag.current = {
           mode: "evert",
           vids: chosen,
@@ -3252,16 +3262,7 @@ export default function ProfileEditor({
         selectEditLines(ids, bl, true);
         setSelV([]);
         const selectedLines = ids.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
-        const splitVertexId = split.enabled && edit
-          ? edit.verts.reduce<number | null>((best, vertex) => {
-              if (best == null) return vertex.id;
-              const current = edit.verts.find((item) => item.id === best)!;
-              const d = (vertex.z - split.z) ** 2 + (vertex.x / 2 - split.r) ** 2;
-              const bd = (current.z - split.z) ** 2 + (current.x / 2 - split.r) ** 2;
-              return d < bd ? vertex.id : best;
-            }, null)
-          : null;
-        if (splitVertexId != null && selectedLines.some((line) => line.va === splitVertexId || line.vb === splitVertexId)) {
+        if (editSplitVertexId != null && selectedLines.some((line) => line.va === editSplitVertexId || line.vb === editSplitVertexId)) {
           drag.current = null;
           return;
         }
