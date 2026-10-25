@@ -239,6 +239,16 @@ export default function App() {
   const [projectTabs, setProjectTabs] = useState<ProjectTab[]>([{ id: initialProjectId.current, name: PRESETS.find(p=>p.id===activePreset)?.name ?? "پروژه بدون نام", sketch, params, gcodeOvr: normGcodeOvr(SAVED?.gcodeOvr), referenceImages, activePreset, savedSnapshot: null, past: [], future: [] }]);
   const [recentProjects, setRecentProjects] = useState<ProjectTab[]>(() => { try { return JSON.parse(localStorage.getItem("kharraat-recent-projects") || "[]") as ProjectTab[]; } catch { return []; } });
   const [welcomeOpen, setWelcomeOpen] = useState(true);
+  const projectTabsHydrated = useRef(false);
+  useEffect(() => {
+    // همهٔ تب‌های باز باید پیش از خروج و در هر تغییر مهم در فهرست اخیر ذخیره شوند؛
+    // مقدار اولیهٔ موقت برنامه نباید فهرست ذخیره‌شدهٔ قبلی را پاک کند.
+    if (!projectTabsHydrated.current) { projectTabsHydrated.current = true; return; }
+    if (projectTabs.length) {
+      try { localStorage.setItem("kharraat-recent-projects", JSON.stringify(projectTabs)); } catch {}
+      setRecentProjects(projectTabs);
+    }
+  }, [projectTabs]);
   const [pendingCloseProject, setPendingCloseProject] = useState<string|null>(null);
   const [newProjectDraft,setNewProjectDraft]=useState<{name:string;diameter:string;length:string}|null>(null);
   const [pendingEditExit, setPendingEditExit] = useState(false);
