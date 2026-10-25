@@ -3617,6 +3617,9 @@ export default function ProfileEditor({
     }
 
     if (d.mode === "eline") {
+      /* داخل‌تراشی (هلدر ۲) فقط برای مشاهده/انتخاب است؛ حتی اگر نشست Drag
+         از مسیر دیگری ساخته شده باشد، در مرحلهٔ حرکت نیز باید بی‌اثر بماند. */
+      if (d.ids.some((id) => lineById.get(id)?.holder === 2)) { d.moved = false; return; }
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
       /* رأس‌های مشترک = یک‌جا جابه‌جا می‌شوند → همسایه‌ها بی‌درز دنباله می‌آیند؛
          جابه‌جایی از مبنایِ لحظهٔ کلیک و با گامِ شبکه (فقط «میزان» حرکت) */
