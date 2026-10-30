@@ -619,12 +619,30 @@ export type SegKind = "rapid" | "round" | "face" | "rough" | "roughz" | "copy" |
 
 export type OpType = "round" | "face" | "rough-d" | "rough-z" | "copy" | "offset" | "finish" | "inner-rough" | "inner-offset" | "inner-finish" | "bottom";
 
+export type CompensationInsert = "vnmg" | "rcmt" | "snmg";
+export type CompensationHand = "right" | "left";
+export interface ToolCompensationSpec {
+  enabled: boolean;
+  insert: CompensationInsert;
+  noseRadius: number;
+  diameter: number;
+  sideLength: number;
+  seatingAngle: number;
+  hand: CompensationHand;
+  activeCorner: 1 | 2 | 3 | 4;
+}
+export const DEFAULT_TOOL_COMPENSATION: ToolCompensationSpec = {
+  enabled: false, insert: "vnmg", noseRadius: 0.4, diameter: 6, sideLength: 6,
+  seatingAngle: 93, hand: "right", activeCorner: 1,
+};
+
 export interface Op {
   id: number;
   type: OpType;
   on: boolean;
   reverse?: boolean; // معکوس‌کردن جهت شروع عملیات
   holder: 1 | 2; // هلدر مجری عملیات: ۱ = هلدر اصلی (خارج) ، ۲ = هلدر چرخیده (داخل)
+  compensation?: ToolCompensationSpec;
 }
 
 export const OP_INFO: Record<OpType, { name: string; desc: string; color: string }> = {
@@ -681,6 +699,50 @@ export function defaultOpInsertIndex(ops: { type: OpType }[], type: OpType): num
   return firstInner === -1 ? ops.length : firstInner;
 }
 
+export function toolCompensationRadius(spec: ToolCompensationSpec): number {
+  if (spec.insert === "rcmt") return Math.max(0, spec.diameter / 2);
+  return Math.max(0, spec.noseRadius);
+}
+
+/**
+ * جبران مستقل مرکز شعاع نوک: مختصات مسیر فعلی در فضای Z/X قطری هستند.
+ * این مرحله عمداً بعد از تولید استراتژی و قبل از ساخت G-code اجرا می‌شود؛
+ * بنابراین حالت خاموش دقیقاً همان مسیر قبلی را برمی‌گرداند.
+ */
+export function applyToolTipCompensation(segs: Seg[], ops: Op[]): Seg[] {
+  const byId = new Map(ops.map((op) => [op.id, op]));
+  return segs.map((segment) => {
+    if (!segment.motion) return segment;
+    const op = byId.get(segment.opId), spec = op?.compensation;
+    if (!spec?.enabled) return segment;
+    const radius = toolCompensationRadius(spec);
+    if (radius <= 1e-12) return segment;
+    const dz = segment.z2 - segment.z1, dr = (segment.x2 - segment.x1) / 2;
+    const len = Math.hypot(dz, dr);
+    if (len <= 1e-12) return segment;
+    const inner = INNER_OPS.includes(segment.op as OpType);
+    const direction = (inner ? -1 : 1) * (op?.reverse ? -1 : 1) * (spec.hand === "left" ? -1 : 1);
+    const nz = (-dr / len) * radius * direction;
+    const nr = (dz / len) * radius * direction;
+    return { ...segment, z1: segment.z1 + nz, z2: segment.z2 + nz, x1: segment.x1 + 2 * nr, x2: segment.x2 + 2 * nr };
+  });
+}
+
+export function normalizeToolCompensation(raw: unknown): ToolCompensationSpec {
+  const out = { ...DEFAULT_TOOL_COMPENSATION };
+  if (!raw || typeof raw !== "object") return out;
+  const r = raw as Partial<ToolCompensationSpec>;
+  if (r.enabled === true) out.enabled = true;
+  if (r.insert === "vnmg" || r.insert === "rcmt" || r.insert === "snmg") out.insert = r.insert;
+  if (r.hand === "right" || r.hand === "left") out.hand = r.hand;
+  if (r.activeCorner === 1 || r.activeCorner === 2 || r.activeCorner === 3 || r.activeCorner === 4) out.activeCorner = r.activeCorner;
+  for (const key of ["noseRadius", "diameter", "sideLength", "seatingAngle"] as const) {
+    if (typeof r[key] === "number" && Number.isFinite(r[key])) out[key] = Math.max(0, r[key]!);
+  }
+  if (out.insert === "rcmt") out.noseRadius = out.diameter / 2;
+  return out;
+}
+
 export function normalizeOps(raw: unknown, legacy = false): Op[] | null {
   if (!Array.isArray(raw) || raw.length === 0) return null;
   const out: Op[] = [];
@@ -700,6 +762,7 @@ export function normalizeOps(raw: unknown, legacy = false): Op[] | null {
         on: o.on !== false,
         reverse: (o as { reverse?: unknown }).reverse === true,
         holder: hh === 2 ? 2 : hh === 1 ? 1 : DEFAULT_HOLDER[t as OpType],
+        compensation: normalizeToolCompensation((o as { compensation?: unknown }).compensation),
       });
     }
   }
@@ -1020,7 +1083,7 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
   /* splitChain شاخه داخلی را از لبه به کف می‌دهد؛ ماشین‌کاری پرداخت از کف به لبه است. */
   const innerFinishPath = [...innerPathSamples].reverse();
   const innerSamples = innerRoughEnvelope(innerPathSamples);
-  const segs: Seg[] = [];
+  let segs: Seg[] = [];
   const hasOuter = samples.length >= 2;
   const hasInner = innerSamples.length >= 2;
 
@@ -2602,6 +2665,9 @@ export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFin
       segs[e.i].fanU = (k + 1) * 3;
     });
   }
+
+  /* جبران در صورت فعال بودن فقط برای همان عملیات اعمال می‌شود. */
+  segs = applyToolTipCompensation(segs, p.ops);
 
   /* کلید پایدار هر خط (برای ویرایش مسیر): عملیات:شماره در آن عملیات */
   {

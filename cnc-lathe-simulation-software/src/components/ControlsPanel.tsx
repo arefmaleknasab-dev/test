@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
+import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolCompensationSpec, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
 import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleOrderedProfile, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
+import ToolCompensationDialog from "./ToolCompensationDialog";
 import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconTool, IconTrash } from "./icons";
 
 const COLLAPSIBLE_SECTION_TITLES = [
@@ -85,6 +86,7 @@ function ControlsPanel({
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dropEdge, setDropEdge] = useState<number | null>(null); // k = درج «قبل» از ردیف k (یا انتها اگر k=length)
   const gripRef = useRef<number | null>(null);
+  const [compensationOpId, setCompensationOpId] = useState<number | null>(null);
 
   const setOps = (ops: Op[]) => onParams({ ops });
   const toggleHolder = (id: number) =>
@@ -111,6 +113,7 @@ function ControlsPanel({
   };
   const toggleOp = (id: number) => setOps(params.ops.map((o) => (o.id === id ? { ...o, on: !o.on } : o)));
   const toggleOpDirection = (id: number) => setOps(params.ops.map((o) => (o.id === id ? { ...o, reverse: !o.reverse } : o)));
+  const updateCompensation = (id: number, value: ToolCompensationSpec) => setOps(params.ops.map((o) => o.id === id ? { ...o, compensation: value } : o));
   const removeOp = (id: number) => setOps(params.ops.filter((o) => o.id !== id));
   const addOp = (type: OpType) => {
     const op = makeOps([type])[0];
@@ -160,6 +163,7 @@ function ControlsPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pl-0.5">
+      {compensationOpId != null && (() => { const op=params.ops.find(item=>item.id===compensationOpId); if (!op) return null; return <ToolCompensationDialog inner={INNER_OPS.includes(op.type)} value={op.compensation ?? { enabled:false, insert:"vnmg", noseRadius:0.4, diameter:6, sideLength:6, seatingAngle:93, hand:"right", activeCorner:1 }} onChange={value=>updateCompensation(op.id,value)} onClose={()=>setCompensationOpId(null)} />; })()}
       <div className="sticky top-0 z-20 flex items-center justify-between rounded-lg border border-edge bg-panel/95 px-2.5 py-2 shadow-lg shadow-black/25 backdrop-blur-sm">
         <span className="text-[10.5px] font-bold text-mute">بخش‌های تنظیمات</span>
         <button
@@ -332,6 +336,7 @@ function ControlsPanel({
                 >
                   H{op.holder}
                 </button>
+                <button type="button" onClick={() => setCompensationOpId(op.id)} title={op.compensation?.enabled ? "ویرایش جبران شعاع نوک" : "فعال‌سازی جبران شعاع نوک"} className={cn("grid h-6 w-8 shrink-0 place-items-center rounded border font-mono text-[9px] font-bold transition-all", op.compensation?.enabled ? "border-copper/70 bg-copper/15 text-copper" : "border-edge text-dim hover:border-copper/60 hover:text-copper")}>Rε</button>
                 <button onClick={() => toggleOp(op.id)} className="shrink-0" title={op.on ? "غیرفعال کردن" : "فعال کردن"}>
                   <span
                     className={cn(
