@@ -619,7 +619,7 @@ export type SegKind = "rapid" | "round" | "face" | "rough" | "roughz" | "copy" |
 
 export type OpType = "round" | "face" | "rough-d" | "rough-z" | "copy" | "offset" | "finish" | "inner-rough" | "inner-offset" | "inner-finish" | "bottom";
 
-export type CompensationInsert = "vnmg" | "rcmt" | "snmg";
+export type CompensationInsert = "vnmg" | "rcmt" | "snmg" | "flat";
 export type CompensationHand = "right" | "left";
 export interface ToolCompensationSpec {
   enabled: boolean;
@@ -627,11 +627,13 @@ export interface ToolCompensationSpec {
   noseRadius: number;
   diameter: number;
   sideLength: number;
+  leftRadius: number;
+  rightRadius: number;
   seatingAngle: number;
   hand: CompensationHand;
   activeCorner: 1 | 2 | 3 | 4;
 }
-export const DEFAULT_TOOL_COMPENSATION: ToolCompensationSpec = { enabled:false, insert:"vnmg", noseRadius:0.4, diameter:6, sideLength:6, seatingAngle:93, hand:"right", activeCorner:1 };
+export const DEFAULT_TOOL_COMPENSATION: ToolCompensationSpec = { enabled:false, insert:"vnmg", noseRadius:0.4, diameter:6, sideLength:6, leftRadius:0.4, rightRadius:0.4, seatingAngle:93, hand:"right", activeCorner:1 };
 export interface Op {
   id: number;
   type: OpType;
@@ -702,7 +704,9 @@ export function normalizeToolCompensation(raw: unknown): ToolCompensationSpec {
     noseRadius: Number.isFinite(v.noseRadius) ? Math.max(0, Number(v.noseRadius)) : DEFAULT_TOOL_COMPENSATION.noseRadius,
     diameter: Number.isFinite(v.diameter) ? Math.max(0.01, Number(v.diameter)) : DEFAULT_TOOL_COMPENSATION.diameter,
     sideLength: Number.isFinite(v.sideLength) ? Math.max(0.01, Number(v.sideLength)) : DEFAULT_TOOL_COMPENSATION.sideLength,
-    insert: v.insert === "rcmt" || v.insert === "snmg" ? v.insert : "vnmg",
+    leftRadius: Number.isFinite(v.leftRadius) ? Math.max(0, Number(v.leftRadius)) : DEFAULT_TOOL_COMPENSATION.leftRadius,
+    rightRadius: Number.isFinite(v.rightRadius) ? Math.max(0, Number(v.rightRadius)) : DEFAULT_TOOL_COMPENSATION.rightRadius,
+    insert: v.insert === "rcmt" || v.insert === "snmg" || v.insert === "flat" ? v.insert : "vnmg",
     hand: v.hand === "left" ? "left" : "right",
     activeCorner: v.activeCorner === 2 || v.activeCorner === 3 || v.activeCorner === 4 ? v.activeCorner : 1,
   };
@@ -1030,51 +1034,38 @@ export function resolveZones(_samples: Sample[], manualBounds: number[], z0: num
   return [{ a: z0, b: z1 }];
 }
 
-/* جبران هندسی نوک ابزار، معادل مدل تماس HTML در صفحه (Z, R).
-   مسیر در مختصات واقعی تراش نگه داشته می‌شود: R=X/2، بنابراین فقط تبدیل
-   شعاعیِ نهایی به قطر X با ضریب ۲ انجام می‌شود؛ هیچ G41/G42 صادر نمی‌شود. */
+/* تطبیق مستقیم هندسهٔ HTML در صفحهٔ (Z,R). q همان نقطهٔ تماس اینسرت
+   است و مسیر مرکز ابزار P-q ساخته می‌شود؛ این عمداً با آفست شعاعی فرق دارد. */
+function compensationShape(c: ToolCompensationSpec): {x:number;y:number}[] {
+  const arc=(cx:number,cy:number,r:number,a:number,b:number)=>{const out:{x:number;y:number}[]=[];const n=Math.max(1,Math.ceil(Math.abs(b-a)/(Math.PI/36)));for(let i=0;i<=n;i++){const t=a+(b-a)*i/n;out.push({x:cx+r*Math.cos(t),y:cy+r*Math.sin(t)});}return out;};
+  const w=c.sideLength/2, ang=(c.seatingAngle||93)*Math.PI/180;
+  if(c.insert==='rcmt') return arc(0,c.noseRadius,c.noseRadius,0,Math.PI*2);
+  if(c.insert==='flat') { const l=Math.max(0,c.leftRadius), r=Math.max(0,c.rightRadius); return [{x:-w,y:8},{x:-w,y:l},...arc(-w+l,l,l,Math.PI,1.5*Math.PI),...arc(w-r,r,r,1.5*Math.PI,2*Math.PI),{x:w,y:8}]; }
+  if(c.insert==='snmg' || c.insert==='vnmg') {
+    const included=c.insert==='vnmg'?35*Math.PI/180:80*Math.PI/180;
+    const h=w/Math.tan(included/2), r=c.noseRadius;
+    if(r<=0) return [{x:0,y:0},{x:w,y:h},{x:0,y:2*h},{x:-w,y:h}];
+    const cy=r/Math.sin(included/2), shift=cy-r;
+    return [...arc(0,cy,r,Math.PI+included/2,1.5*Math.PI),...arc(0,cy,r,1.5*Math.PI,2*Math.PI-included/2).slice(1),{x:w,y:h},...arc(0,2*h-cy,r,included/2,Math.PI/2),...arc(0,2*h-cy,r,Math.PI/2,Math.PI-included/2).slice(1),{x:-w,y:h}].map(q=>({x:q.x*Math.cos(ang)- (q.y-shift)*Math.sin(ang), y:q.x*Math.sin(ang)+(q.y-shift)*Math.cos(ang)}));
+  }
+  return [{x:0,y:0}];
+}
+function supportPoint(n:{x:number;y:number}, shape:{x:number;y:number}[]) { let best=-Infinity,q=shape[0]; for(const v of shape){const d=v.x*n.x+v.y*n.y;if(d>best+1e-8){best=d;q=v;}} return q; }
+function compensationContact(n:{x:number;y:number}, shape:{x:number;y:number}[]) {
+  // HTML برای تراش نیز تماس را از support(-n) می‌گیرد؛ فقط حالت
+  // دایره‌ای ماشین فرز تماس را مستقیماً روی دایره محاسبه می‌کند.
+  return supportPoint({x:-n.x,y:-n.y},shape);
+}
 function applyToolCompensation(segs: Seg[], p: Params) {
-  const byId = new Map(p.ops.map((o) => [o.id, o]));
-  const active = segs.filter((s) => s.motion === 1 && byId.get(s.opId)?.compensation?.enabled);
-  const radiusFor = (c: ToolCompensationSpec) => {
-    // تماس گرد: R؛ تماس VNMG/SNMG: شعاع گوشهٔ فعال، با حد هندسی اینسرت
-    // (قطر و طول لبه مانع شعاع غیرممکن می‌شوند).
-    const limit = Math.min(c.diameter / 2, c.sideLength / 2);
-    return Math.min(c.noseRadius, limit);
-  };
-  const groups = new Map<number, Seg[]>();
-  for (const s of active) { const a = groups.get(s.opId) ?? []; a.push(s); groups.set(s.opId, a); }
-  for (const [opId, group] of groups) {
-    const op = byId.get(opId); const c = op?.compensation; if (!c) continue;
-    const r = radiusFor(c); if (r <= 1e-9) continue;
-    const side = (c.hand === "left" ? -1 : 1) * (op && (op.type.startsWith("inner")) ? -1 : 1);
-    const shifted = group.map((s, index) => {
-      const prev = group[Math.max(0, index - 1)];
-      const next = group[Math.min(group.length - 1, index + 1)];
-      const dz = (next.z2 - prev.z1) || (s.z2 - s.z1);
-      const dx = ((next.x2 - next.x1) || (s.x2 - s.x1)) / 2;
-      const len = Math.hypot(dz, dx) || 1;
-      // HTML: n=(-t_v,t_u), then C=P+R*n.  The sign selects material side.
-      const nz = -dx / len * side;
-      const nr = dz / len * side;
-      return { s, a: { z: s.z1 + r * nz, r: s.x1 / 2 + r * nr }, b: { z: s.z2 + r * nz, r: s.x2 / 2 + r * nr } };
-    });
-    // اتصال گوشه‌ها: تقاطع دو خط انتقال‌یافته؛ fallback به سرپوش نرمال برای
-    // گوشه‌های موازی. این کار از آفست شعاعی مستقل در هر محور جلوگیری می‌کند.
-    for (let i = 0; i < shifted.length; i++) {
-      const q = shifted[i];
-      if (i > 0) { const hit = lineIntersection(shifted[i - 1].a, shifted[i - 1].b, q.a, q.b); if (hit) q.a = hit; }
-      if (i + 1 < shifted.length) { const hit = lineIntersection(q.a, q.b, shifted[i + 1].a, shifted[i + 1].b); if (hit) q.b = hit; }
-      q.s.z1 = q.a.z; q.s.x1 = q.a.r * 2; q.s.z2 = q.b.z; q.s.x2 = q.b.r * 2;
-    }
+  const ops=new Map(p.ops.map(o=>[o.id,o]));
+  const groups=new Map<number,Seg[]>();
+  for(const s of segs){const c=ops.get(s.opId)?.compensation;if(s.motion===1&&c?.enabled){const g=groups.get(s.opId)||[];g.push(s);groups.set(s.opId,g);}}
+  for(const [id,g] of groups){const op=ops.get(id), c=op?.compensation;if(!c||c.noseRadius<=0)continue;const shape=compensationShape(c);const side=(c.hand==='left'?-1:1)*(op?.type.startsWith('inner')?-1:1);const shifted=g.map((s)=>{// نرمال هر سگمنت، دقیقاً t=ΔP/|ΔP| و n=(-t_R,t_Z) است.
+    const tx=(s.x2-s.x1)/2,tz=s.z2-s.z1,l=Math.hypot(tz,tx)||1;const n={x:-tx/l*side,y:tz/l*side};const q=compensationContact(n,shape);return {s,n,a:{x:s.z1-q.x,y:s.x1/2-q.y},b:{x:s.z2-q.x,y:s.x2/2-q.y}};});
+    for(let i=0;i<shifted.length;i++){const q=shifted[i];if(i){const h=lineIntersection(shifted[i-1].a,shifted[i-1].b,q.a,q.b);if(h)q.a=h;}if(i+1<shifted.length){const h=lineIntersection(q.a,q.b,shifted[i+1].a,shifted[i+1].b);if(h)q.b=h;}q.s.z1=q.a.x;q.s.x1=q.a.y*2;q.s.z2=q.b.x;q.s.x2=q.b.y*2;}
   }
 }
-function lineIntersection(a: {z:number;r:number}, b: {z:number;r:number}, c: {z:number;r:number}, d: {z:number;r:number}) {
-  const x1=b.z-a.z, y1=b.r-a.r, x2=d.z-c.z, y2=d.r-c.r;
-  const den=x1*y2-y1*x2; if (Math.abs(den)<1e-9) return null;
-  const t=((c.z-a.z)*y2-(c.r-a.r)*x2)/den;
-  return { z:a.z+t*x1, r:a.r+t*y1 };
-}
+function lineIntersection(a:{x:number;y:number},b:{x:number;y:number},c:{x:number;y:number},d:{x:number;y:number}){const x1=b.x-a.x,y1=b.y-a.y,x2=d.x-c.x,y2=d.y-c.y,den=x1*y2-y1*x2;if(Math.abs(den)<1e-9)return null;const t=((c.x-a.x)*y2-(c.y-a.y)*x2)/den;return{x:a.x+t*x1,y:a.y+t*y1};}
 
 export function generate(pts: PPoint[], p: Params, innerPts?: PPoint[], outerFinishPts?: PPoint[]): GenResult {
   const R = p.blankD / 2;

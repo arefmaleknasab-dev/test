@@ -748,12 +748,14 @@ function ControlsPanel({
             <div className="mb-3 flex items-center justify-between"><b>جبران شعاع نوک ابزار — {OP_INFO[compOp.type].name}</b><button onClick={() => setCompOpId(null)}>×</button></div>
             <div className="grid grid-cols-2 gap-2 text-[11px]">
               <label className="col-span-2 flex items-center justify-between rounded border border-edge p-2">فعال <input type="checkbox" checked={compOp.compensation?.enabled ?? false} onChange={e => setComp({ enabled:e.target.checked })}/></label>
-              <label>اینسرت<select className="input mt-1 w-full" value={compOp.compensation?.insert ?? "vnmg"} onChange={e => setComp({insert:e.target.value as ToolCompensationSpec["insert"]})}><option value="vnmg">VNMG</option><option value="snmg">SNMG</option><option value="rcmt">RCMT</option></select></label>
+              <label>اینسرت<select className="input mt-1 w-full" value={compOp.compensation?.insert ?? "vnmg"} onChange={e => setComp({insert:e.target.value as ToolCompensationSpec["insert"]})}><option value="vnmg">VNMG</option><option value="snmg">SNMG</option><option value="rcmt">RCMT / گرد</option><option value="flat">Flat / تخت</option></select></label>
               <label>جهت هلدر<select className="input mt-1 w-full" value={compOp.compensation?.hand ?? "right"} onChange={e => setComp({hand:e.target.value as ToolCompensationSpec["hand"]})}><option value="right">راست</option><option value="left">چپ</option></select></label>
               <label>شعاع نوک<input className="input mt-1 w-full" type="number" min="0" step="0.01" value={compOp.compensation?.noseRadius ?? .4} onChange={e => setComp({noseRadius:Number(e.target.value)})}/></label>
               <label>قطر اینسرت<input className="input mt-1 w-full" type="number" min=".01" step=".1" value={compOp.compensation?.diameter ?? 6} onChange={e => setComp({diameter:Number(e.target.value)})}/></label>
               <label>طول لبه<input className="input mt-1 w-full" type="number" min=".01" step=".1" value={compOp.compensation?.sideLength ?? 6} onChange={e => setComp({sideLength:Number(e.target.value)})}/></label>
               <label>زاویه نشیمن<input className="input mt-1 w-full" type="number" value={compOp.compensation?.seatingAngle ?? 93} onChange={e => setComp({seatingAngle:Number(e.target.value)})}/></label>
+              <label>شعاع چپ<input className="input mt-1 w-full" type="number" min="0" step=".01" value={compOp.compensation?.leftRadius ?? .4} onChange={e => setComp({leftRadius:Number(e.target.value)})}/></label>
+              <label>شعاع راست<input className="input mt-1 w-full" type="number" min="0" step=".01" value={compOp.compensation?.rightRadius ?? .4} onChange={e => setComp({rightRadius:Number(e.target.value)})}/></label>
             </div>
             <p className="mt-3 text-[10px] leading-5 text-dim">مسیر با نرمال لحظه‌ای و اتصال خطوط انتقال‌یافته محاسبه می‌شود؛ خروجی از G41/G42 استفاده نمی‌کند.</p>
           </div>
