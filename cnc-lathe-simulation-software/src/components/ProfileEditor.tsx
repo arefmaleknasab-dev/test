@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import type { EditBuf, ELine, EVert, GenResult, Holder2State, OffPatch, Op, Params, SegKind, SplitState } from "../lib/lathe";
-import { deleteEditLines, deleteEditVertices, insertEditVertex, MIN_HOLDER2_OFFSET, normalizeEditBuf, OP_INFO, RAPID_RATE, translateHolder2Edit } from "../lib/lathe";
+import { continuousPathOffset, deleteEditLines, deleteEditVertices, insertEditVertex, normalizeEditBuf, OP_INFO, RAPID_RATE, sampleOrderedProfile } from "../lib/lathe";
 import type { SketchKind, SketchSeg, SnapPoint, SPoint } from "../lib/sketch";
 import {
   arcRadius,
@@ -11,6 +11,7 @@ import {
   dist,
   distToSeg,
   endFromLenAngle,
+  evalSeg,
   intersectionPoints,
   KIND_FA,
   lineAngle,
@@ -36,6 +37,7 @@ import {
   IconCubic,
   IconCursor,
   IconFit,
+  IconFillet,
   IconGrid,
   IconHand,
   IconLayers,
@@ -43,7 +45,13 @@ import {
   IconMagnet,
   IconMagnetSm,
   IconMinus,
+  IconMove,
+  IconMirror,
   IconPlus,
+  IconPolyline,
+  IconRotate,
+  IconReferenceScale,
+  IconScale,
   IconQuad,
   IconRedo,
   IconSplit,
@@ -52,9 +60,23 @@ import {
   IconX,
 } from "./icons";
 
+// Curved, double-ended rotation cursor. Each corner gets the same cursor rotated
+// to follow its two adjoining box edges (Photoshop-style transform feedback).
+const rotationCursor=(angle:number)=>{const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g transform="rotate(${angle} 10 10)" fill="none" stroke-linecap="square" stroke-linejoin="miter"><path d="M4 16H16V4M4 16l4-3.5M4 16l4 3.5M16 4l-3.5 4M16 4l3.5 4" stroke="#000" stroke-width="3.5"/><path d="M4 16H16V4M4 16l4-3.5M4 16l4 3.5M16 4l-3.5 4M16 4l3.5 4" stroke="#fff" stroke-width="1.5"/></g></svg>`;return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 10 10, alias`;};
+const BOX_ROTATE_CURSORS = [180,270,0,90].map(rotationCursor);
+const resizeCursor=(mode:"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w",rotation:number)=>{const base:{[K in typeof mode]:number}={e:0,w:0,n:90,s:90,ne:-45,sw:-45,nw:45,se:45},angle=base[mode]+rotation,svg=`<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="rotate(${angle} 12 12)" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h18M3 12l4-4M3 12l4 4M21 12l-4-4M21 12l-4 4" stroke="#000" stroke-width="4"/><path d="M3 12h18M3 12l4-4M3 12l4 4M21 12l-4-4M21 12l-4 4" stroke="#fff" stroke-width="2"/></g></svg>`;return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 12 12, move`;};
+
+const movePolylineSelection=(all:SketchSeg[],ids:number[],dz:number,dr:number)=>{
+  const chosen=new Set(ids),keys=new Set<string>();
+  for(const s of all)if(chosen.has(s.id)&&s.polylineId!=null){keys.add(`${s.polylineId}:${s.a.z}:${s.a.r}`);keys.add(`${s.polylineId}:${s.b.z}:${s.b.r}`);}
+  return all.map(s=>{if(chosen.has(s.id))return moveSeg(s,dz,dr);if(s.polylineId==null)return s;const a=keys.has(`${s.polylineId}:${s.a.z}:${s.a.r}`),b=keys.has(`${s.polylineId}:${s.b.z}:${s.b.r}`);if(!a&&!b)return s;const next={...s,a:a?{z:s.a.z+dz,r:s.a.r+dr}:s.a,b:b?{z:s.b.z+dz,r:s.b.r+dr}:s.b};if(s.kind==="cubic"){if(a&&s.c1)next.c1={z:s.c1.z+dz,r:s.c1.r+dr};if(b&&s.c2)next.c2={z:s.c2.z+dz,r:s.c2.r+dr};}return next;});
+};
+
 export interface EdSettings {
   snap: number;
   smartSnap: boolean;
+  /** شعاع تشخیص اسنپ در فضای صفحه، مستقل از زوم. */
+  snapTolerancePx: number;
   showRough: boolean;
   showFinish: boolean;
   showOffset: boolean;
@@ -66,6 +88,7 @@ export interface EdSettings {
   showBottom: boolean;
   showRapids: boolean;
   showGhost: boolean;
+  showInnerArea: boolean;
   /** شفافیت مشترک همهٔ لایه‌های مسیر و سایهٔ طرح (۰٫۱ تا ۱). */
   layerOpacity: number;
   /** گرید مستقل حالت ویرایش مسیر (نمایش + فاصله خطوط اصلی + تقسیمات داخلی). */
@@ -74,29 +97,54 @@ export interface EdSettings {
   editGridDivisions: number;
 }
 
-type Tool = "select" | "line" | "quad" | "cubic" | "arc" | "split";
+type Tool = "select" | "paint" | "move" | "rotate" | "boxscale" | "copy" | "mirror" | "scale" | "fillet" | "line" | "polyline" | "quad" | "cubic" | "arc" | "split";
 
 const TOOLS: { id: Tool; name: string; key: string; icon: React.ReactNode; hint: string }[] = [
   { id: "select", name: "انتخاب", key: "V", icon: <IconCursor className="h-4 w-4" />, hint: "انتخاب" },
+  { id: "move", name: "جابجایی", key: "M", icon: <IconMove className="h-4 w-4" />, hint: "جابجایی دقیق با مقدار یا عبارت ریاضی" },
+  { id: "rotate", name: "چرخش (Rotate)", key: "R", icon: <IconRotate className="h-4 w-4" />, hint: "چرخش حول مرکز دلخواه" },
+  { id: "scale", name: "مقیاس مرجع", key: "S", icon: <IconScale className="h-[18px] w-[18px]" />, hint: "تغییر اندازه با طول مرجع" },
+  { id: "boxscale", name: "مقیاس باکس", key: "B", icon: <IconReferenceScale className="h-[18px] w-[18px]" />, hint: "تغییر اندازه با اضلاع و گوشه‌های باکس" },
+  { id: "copy", name: "کپی (Copy)", key: "K", icon: <IconCopy className="h-4 w-4" />, hint: "کپی متوالی؛ الگوهای *عدد و /عدد" },
+  { id: "mirror", name: "قرینه (Mirror)", key: "I", icon: <IconMirror className="h-[19px] w-[19px]" />, hint: "قرینه‌سازی حول محور دو نقطه‌ای" },
+  { id: "fillet", name: "فیلت", key: "F", icon: <IconFillet className="h-4 w-4" />, hint: "ایجاد قوس مماس بین دو خط" },
   { id: "line", name: "خط", key: "L", icon: <IconLine className="h-4 w-4" />, hint: "خط مستقیم: نقطهٔ شروع و پایان" },
+  { id: "polyline", name: "Polyline", key: "P", icon: <IconPolyline className="h-4 w-4" />, hint: "چندخطی پیوسته: Enter برای پایان، Esc برای لغو" },
   { id: "quad", name: "منحنی", key: "C", icon: <IconQuad className="h-4 w-4" />, hint: "منحنی ساده: شروع، پایان، یک نقطهٔ کنترل" },
   { id: "cubic", name: "منحنی کنترلی", key: "B", icon: <IconCubic className="h-4 w-4" />, hint: "منحنی پیشرفته: شروع، پایان، سپس دستهٔ خروج از پایان و دستهٔ ورود به شروع" },
   { id: "arc", name: "کمان", key: "A", icon: <IconArc3 className="h-4 w-4" />, hint: "کمان سه‌نقطه‌ای: شروع، پایان، نقطه‌ای روی کمان" },
+  { id: "paint", name: "نقاشی جهت‌دار", key: "N", icon: <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 17L10 10L16 14L21 5"/><path d="M16 5H21V10"/></svg>, hint: "خط نمایشی جهت‌دار؛ بدون تأثیر بر G-code" },
   { id: "split", name: "نقطه Split", key: "S", icon: <IconSplit className="h-4 w-4" />, hint: "قرار دادن نقطه تعیین‌کننده داخل/خارج روی پروفیل" },
 ];
 
-const NEED_PTS: Record<Tool, number> = { select: 0, line: 2, quad: 3, cubic: 4, arc: 3, split: 1 };
+const NEED_PTS: Record<Tool, number> = { select: 0, paint: 0, move: 0, rotate: 0, boxscale: 0, copy: 0, mirror: 0, scale: 0, fillet: 0, line: 2, polyline: 0, quad: 3, cubic: 4, arc: 3, split: 1 };
 
 const STEP_HINT: Record<Tool, string[]> = {
   select: [],
+  paint: ["نقطه شروع نقاشی", "نقطه بعدی — Enter پایان"],
+  move: [],
+  rotate: [],
+  boxscale: [],
+  copy: [],
+  mirror: [],
+  scale: [],
+  fillet: [],
   line: ["نقطهٔ شروع خط", "نقطهٔ پایان خط"],
+  polyline: ["نقطهٔ شروع Polyline", "نقطهٔ بعدی — Enter پایان، Esc لغو"],
   quad: ["نقطهٔ شروع", "نقطهٔ پایان", "نقطهٔ کنترل منحنی"],
   cubic: ["نقطهٔ شروع", "نقطهٔ پایان", "دستهٔ خروج از پایان", "دستهٔ ورود به شروع"],
   arc: ["نقطهٔ شروع کمان", "نقطهٔ پایان کمان", "نقطه‌ای روی کمان"],
   split: ["کلیک روی پروفیل برای قرار دادن نقطه Split"],
 };
 
+export interface ReferenceImage { id:number; src:string; name:string; z:number; r:number; width:number; height:number; locked:boolean; black:number; gamma:number; white:number; opacity:number; rotation?:number; aspectLocked?:boolean; originalRatio?:number; grayscale?:boolean; preLockWidth?:number; preLockHeight?:number; }
+
 interface Props {
+  projectId: string;
+  referenceImages: ReferenceImage[];
+  onReferenceImages: (images:ReferenceImage[])=>void;
+  imageImportRequest: number;
+  registerImageHistory: (api:{undo:()=>void;redo:()=>void;canUndo:boolean;canRedo:boolean})=>void;
   segs: SketchSeg[];
   onSegs: (next: SketchSeg[], commit: boolean) => void;
   selected: number[];
@@ -107,6 +155,7 @@ interface Props {
   onSplit: (s: SplitState) => void;
   settings: EdSettings;
   onSettings: (patch: Partial<EdSettings>) => void;
+  toolShortcuts: Record<string, string>;
   ops: Op[];
   isolatedOpId: number | null;
   onClearIsolate: () => void;
@@ -124,6 +173,29 @@ interface Props {
   onEditConfirm: () => void;
   onEditCancel: () => void;
   onEditDiscard: () => void;
+  keepEditDraft: boolean;
+  showCanvasPaintTool: boolean;
+  rightClickToolToggle: boolean;
+  deferMarqueeControlPoints: boolean;
+  profileLineWidth: number;
+  pointScale: number;
+  disableSelectionGlow: boolean;
+  profileColor: string;
+  selectedColor: string;
+  guideLineColor: string;
+}
+
+interface PaintEdge {
+  id: number;
+  a: SPoint;
+  b: SPoint;
+  color: string;
+  text: string;
+  arrowSize: number;
+  dashed?: boolean;
+  textSize?: number;
+  alignText?: boolean;
+  hideArrow?: boolean;
 }
 
 interface Cam {
@@ -208,7 +280,8 @@ type LayerKey =
   | "showFace"
   | "showBottom"
   | "showRapids"
-  | "showGhost";
+  | "showGhost"
+  | "showInnerArea";
 
 const CHIPS: { key: LayerKey; label: string; color: string }[] = [
   { key: "showRound", label: "گرد کردن", color: "#b48ee0" },
@@ -222,8 +295,9 @@ const CHIPS: { key: LayerKey; label: string; color: string }[] = [
   { key: "showBottom", label: "کف‌تراشی", color: "#ffd166" },
   { key: "showRapids", label: "حرکت سریع", color: "#93a1ad" },
   { key: "showGhost", label: "سایه طرح", color: "#c9955a" },
+  { key: "showInnerArea", label: "محدوده داخل‌تراشی", color: "#69d7ff" },
 ];
-const TOOLPATH_LAYER_KEYS = CHIPS.filter((chip) => chip.key !== "showGhost").map((chip) => chip.key);
+const TOOLPATH_LAYER_KEYS = CHIPS.filter((chip) => chip.key !== "showGhost" && chip.key !== "showInnerArea").map((chip) => chip.key);
 
 /* منوی کرکره‌ای لایه‌های نمایش — جایگزین نوار چیپ‌های افقی */
 function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings: (p: Partial<EdSettings>) => void }) {
@@ -342,9 +416,11 @@ function LayerMenu({ settings, onSettings }: { settings: EdSettings; onSettings:
 function EditGridControl({
   settings,
   onSettings,
+  placement = "down",
 }: {
   settings: EdSettings;
   onSettings: (patch: Partial<EdSettings>) => void;
+  placement?: "down" | "up";
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -407,7 +483,7 @@ function EditGridControl({
       </button>
 
       {open && (
-        <div className="anim-in absolute top-[calc(100%+6px)] right-0 z-40 w-60 rounded-lg border border-edge2 bg-panel/97 p-2.5 text-right shadow-2xl shadow-black/60 backdrop-blur-sm">
+        <div className={cn("anim-in absolute right-0 z-40 w-60 rounded-lg border border-edge2 bg-panel/97 p-2.5 text-right shadow-2xl shadow-black/60 backdrop-blur-sm", placement === "up" ? "bottom-[calc(100%+6px)]" : "top-[calc(100%+6px)]")}>
           <div className="mb-2 flex items-center gap-2">
             <span className="grid h-6 w-6 place-items-center rounded-md border border-teal/35 bg-teal/10 text-teal">
               <IconGrid className="h-3.5 w-3.5" />
@@ -563,7 +639,216 @@ const constrainSegPointToStock = (
   };
 };
 
+/* پس از حذف در Edit Path نزدیک‌ترین خط باقی‌مانده به محل حذف انتخاب می‌شود. */
+function replacementEditLine(original: ELine[], remaining: ELine[], affected: Set<number>): number | null {
+  if (!remaining.length) return null;
+  const remainingIds = new Set(remaining.map((line) => line.id));
+  const indices = original.map((line, index) => affected.has(line.id) ? index : -1).filter((index) => index >= 0);
+  const pivot = indices.length ? Math.min(...indices) : 0;
+  for (let distance = 0; distance < original.length; distance++) {
+    const after = pivot + distance;
+    if (after < original.length && remainingIds.has(original[after].id)) return original[after].id;
+    const before = pivot - 1 - distance;
+    if (before >= 0 && remainingIds.has(original[before].id)) return original[before].id;
+  }
+  return remaining[0].id;
+}
+
+type FilletPick = { id: number; click: SPoint };
+type FilletResult = { first: SketchSeg; second: SketchSeg; arc: SketchSeg };
+
+/** Fillet دقیق دو پاره‌خط: محل کلیک، شاخه‌ای را که باید باقی بماند تعیین می‌کند. */
+function buildLineFillet(a: SketchSeg, b: SketchSeg, pickA: SPoint, pickB: SPoint, radius: number, blankL: number, blankR: number): { result?: FilletResult; error?: string; maxRadius?: number } {
+  if (a.kind !== "line" || b.kind !== "line" || a.id === b.id) return { error: "دو خط متفاوت انتخاب کنید" };
+  if (!(radius > 0) || !Number.isFinite(radius)) return { error: "شعاع باید بزرگ‌تر از صفر باشد" };
+  const ad = { z: a.b.z - a.a.z, r: a.b.r - a.a.r };
+  const bd = { z: b.b.z - b.a.z, r: b.b.r - b.a.r };
+  const cross = ad.z * bd.r - ad.r * bd.z;
+  if (Math.abs(cross) < 1e-9) return { error: "خطوط موازی یا منطبق هستند" };
+  const q = { z: b.a.z - a.a.z, r: b.a.r - a.a.r };
+  const ta = (q.z * bd.r - q.r * bd.z) / cross;
+  const intersection = { z: a.a.z + ad.z * ta, r: a.a.r + ad.r * ta };
+  const unitToward = (line: SketchSeg, click: SPoint) => {
+    const d = { z: line.b.z - line.a.z, r: line.b.r - line.a.r };
+    const len = Math.hypot(d.z, d.r);
+    const u = { z: d.z / len, r: d.r / len };
+    const sign = (click.z - intersection.z) * u.z + (click.r - intersection.r) * u.r >= 0 ? 1 : -1;
+    return { z: u.z * sign, r: u.r * sign };
+  };
+  const u1 = unitToward(a, pickA), u2 = unitToward(b, pickB);
+  const dot = Math.max(-1, Math.min(1, u1.z * u2.z + u1.r * u2.r));
+  const theta = Math.acos(dot);
+  if (theta < 1e-5 || Math.PI - theta < 1e-5) return { error: "زاویه خطوط برای Fillet معتبر نیست" };
+  const tanHalf = Math.tan(theta / 2);
+  const tangentDistance = radius / tanHalf;
+  const available = (line: SketchSeg, u: SPoint) => Math.max(
+    (line.a.z - intersection.z) * u.z + (line.a.r - intersection.r) * u.r,
+    (line.b.z - intersection.z) * u.z + (line.b.r - intersection.r) * u.r,
+  );
+  const availA = available(a, u1), availB = available(b, u2);
+  const maxRadius = Math.max(0, Math.min(availA, availB) * tanHalf);
+  /* نقطه مماس مجاز است به سمت تقاطع خطوط برگردد. این حالت هنگام جایگزینی
+     Fillet موجود با شعاع کوچک‌تر ضروری است، چون دو خط قبلاً تا نقاط مماس
+     شعاع بزرگ‌تر کوتاه شده‌اند و باید دوباره به سمت گوشه امتداد یابند. */
+  if (tangentDistance > availA + 1e-7 || tangentDistance > availB + 1e-7 || maxRadius <= 1e-7) {
+    return { error: `شعاع نامعتبر — حداکثر ${Math.max(0, maxRadius).toFixed(2)}`, maxRadius };
+  }
+  const t1 = { z: intersection.z + u1.z * tangentDistance, r: intersection.r + u1.r * tangentDistance };
+  const t2 = { z: intersection.z + u2.z * tangentDistance, r: intersection.r + u2.r * tangentDistance };
+  const bisector = { z: u1.z + u2.z, r: u1.r + u2.r };
+  const bl = Math.hypot(bisector.z, bisector.r);
+  const centerDistance = radius / Math.sin(theta / 2);
+  const center = { z: intersection.z + bisector.z / bl * centerDistance, r: intersection.r + bisector.r / bl * centerDistance };
+  const v1 = { z: t1.z - center.z, r: t1.r - center.r }, v2 = { z: t2.z - center.z, r: t2.r - center.r };
+  const vm = { z: v1.z + v2.z, r: v1.r + v2.r };
+  const vl = Math.hypot(vm.z, vm.r);
+  const via = { z: center.z + vm.z / vl * radius, r: center.r + vm.r / vl * radius };
+  const trim = (line: SketchSeg, tangent: SPoint, u: SPoint) => {
+    const pa = (line.a.z - intersection.z) * u.z + (line.a.r - intersection.r) * u.r;
+    const pb = (line.b.z - intersection.z) * u.z + (line.b.r - intersection.r) * u.r;
+    return pa >= pb ? { ...line, b: tangent } : { ...line, a: tangent };
+  };
+  const result = { first: trim(a, t1, u1), second: trim(b, t2, u2), arc: { id: -999999, kind: "arc" as const, a: t1, b: t2, via } };
+  if (!segInsideStock(result.first, blankL, blankR) || !segInsideStock(result.second, blankL, blankR) || !segInsideStock(result.arc, blankL, blankR)) {
+    return { error: "قوس از محدوده خام خارج می‌شود", maxRadius };
+  }
+  return { result, maxRadius };
+}
+
+/** Evaluates a deliberately small arithmetic grammar; no eval/Function is used. */
+function arithmeticValue(source: string): number | null {
+  const text = latinDigits(source).replace(/\s+/g, "");
+  if (!text) return null;
+  let i = 0;
+  const expression = (): number => {
+    let value = term();
+    while (text[i] === "+" || text[i] === "-") { const op = text[i++]; const rhs = term(); value = op === "+" ? value + rhs : value - rhs; }
+    return value;
+  };
+  const term = (): number => {
+    let value = factor();
+    while (text[i] === "*" || text[i] === "/") { const op = text[i++]; const rhs = factor(); if (op === "/" && Math.abs(rhs) < 1e-14) throw Error(); value = op === "*" ? value * rhs : value / rhs; }
+    return value;
+  };
+  const factor = (): number => {
+    if (text[i] === "+" || text[i] === "-") { const sign = text[i++] === "-" ? -1 : 1; return sign * factor(); }
+    if (text[i] === "(") { i++; const value = expression(); if (text[i++] !== ")") throw Error(); return value; }
+    const match = text.slice(i).match(/^(?:\d+(?:\.\d*)?|\.\d+)/);
+    if (!match) throw Error(); i += match[0].length; return Number(match[0]);
+  };
+  try { const value = expression(); return i === text.length && Number.isFinite(value) ? Math.round(value * 1e12) / 1e12 : null; } catch { return null; }
+}
+
+type MoveAxis = "free" | "x" | "y";
+type RotateSession = {
+  ids: number[]; base: SketchSeg[]; center: SPoint; startAngle: number; pointer: SPoint; angle: number;
+  mode: "angle" | "step"; step: number;
+};
+
+function rotateSegment(segment: SketchSeg, center: SPoint, degrees: number): SketchSeg {
+  const radians=degrees*Math.PI/180, c=Math.cos(radians), s=Math.sin(radians);
+  const point=(p:SPoint):SPoint=>{const z=p.z-center.z,r=p.r-center.r;return {z:center.z+z*c-r*s,r:center.r+z*s+r*c};};
+  return {...segment,a:point(segment.a),b:point(segment.b),c1:segment.c1?point(segment.c1):undefined,c2:segment.c2?point(segment.c2):undefined,via:segment.via?point(segment.via):undefined};
+}
+
+type ScaleSession = {
+  ids: number[];
+  base: SketchSeg[];
+  origin: SPoint;
+  reference?: SPoint;
+  pointer?: SPoint;
+  referenceLength?: number;
+};
+
+function scalePoint(point: SPoint, origin: SPoint, factor: number): SPoint {
+  return { z: origin.z + (point.z - origin.z) * factor, r: origin.r + (point.r - origin.r) * factor };
+}
+
+function scaleSegmentXY(segment: SketchSeg, origin: SPoint, sx: number, sy: number): SketchSeg {
+  const point = (p: SPoint) => ({ z: origin.z + (p.z - origin.z) * sx, r: origin.r + (p.r - origin.r) * sy });
+  return { ...segment, a: point(segment.a), b: point(segment.b), c1: segment.c1 ? point(segment.c1) : undefined, c2: segment.c2 ? point(segment.c2) : undefined, via: segment.via ? point(segment.via) : undefined };
+}
+
+function scaleSegment(segment: SketchSeg, origin: SPoint, factor: number): SketchSeg {
+  return {
+    ...segment,
+    a: scalePoint(segment.a, origin, factor),
+    b: scalePoint(segment.b, origin, factor),
+    c1: segment.c1 ? scalePoint(segment.c1, origin, factor) : undefined,
+    c2: segment.c2 ? scalePoint(segment.c2, origin, factor) : undefined,
+    via: segment.via ? scalePoint(segment.via, origin, factor) : undefined,
+  };
+}
+
+type MirrorSession = {
+  ids: number[];
+  base: SketchSeg[];
+  source: SketchSeg[];
+  p1?: SPoint;
+  p2?: SPoint;
+  cursor?: SPoint;
+  mirrored?: SketchSeg[];
+  keepCopy: boolean;
+};
+
+function reflectPoint(point: SPoint, a: SPoint, b: SPoint): SPoint {
+  const vx = b.z - a.z, vy = b.r - a.r;
+  const length2 = vx * vx + vy * vy;
+  if (length2 < 1e-12) return { ...point };
+  const t = ((point.z - a.z) * vx + (point.r - a.r) * vy) / length2;
+  const pz = a.z + t * vx, pr = a.r + t * vy;
+  return { z: 2 * pz - point.z, r: 2 * pr - point.r };
+}
+
+function reflectSegment(segment: SketchSeg, a: SPoint, b: SPoint): SketchSeg {
+  return {
+    ...segment,
+    a: reflectPoint(segment.a, a, b),
+    b: reflectPoint(segment.b, a, b),
+    c1: segment.c1 ? reflectPoint(segment.c1, a, b) : undefined,
+    c2: segment.c2 ? reflectPoint(segment.c2, a, b) : undefined,
+    via: segment.via ? reflectPoint(segment.via, a, b) : undefined,
+  };
+}
+
+function makeMirroredSegments(source: SketchSeg[], a: SPoint, b: SPoint): SketchSeg[] {
+  const groupMap = new Map<number, number>();
+  const mirrored = source.map((segment) => reflectSegment(cloneSeg(segment), a, b));
+  source.forEach((segment, index) => {
+    if (segment.polylineId != null && !groupMap.has(segment.polylineId)) groupMap.set(segment.polylineId, mirrored[index].id);
+  });
+  mirrored.forEach((segment, index) => {
+    const oldGroup = source[index].polylineId;
+    segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
+  });
+  return mirrored;
+}
+
+type CopySession = {
+  sourceIds: number[];
+  base: SketchSeg[];
+  copies: SketchSeg[];
+  origin: SPoint;
+  pointer: SPoint;
+  axis: MoveAxis;
+  distanceConfirmed: boolean;
+};
+
+type MoveSession = {
+  ids: number[]; base: SketchSeg[]; origin: SPoint; clientX: number; clientY: number;
+  pointer: SPoint; axis: MoveAxis; mode: "relative" | "absolute";
+  dirX: 1 | -1; dirY: 1 | -1;
+  lastClientX: number; lastClientY: number;
+  editBase?: EVert[]; editVertexIds?: number[];
+  pointRefs?: { segId: number; part: SketchPointPart }[];
+};
+
 export default function ProfileEditor({
+  projectId,
+  referenceImages,
+  onReferenceImages,
+  imageImportRequest,
+  registerImageHistory,
   segs,
   onSegs,
   selected,
@@ -574,6 +859,7 @@ export default function ProfileEditor({
   onSplit,
   settings,
   onSettings,
+  toolShortcuts,
   ops,
   isolatedOpId,
   onClearIsolate,
@@ -589,6 +875,16 @@ export default function ProfileEditor({
   onEditConfirm,
   onEditCancel,
   onEditDiscard,
+  keepEditDraft,
+  showCanvasPaintTool,
+  rightClickToolToggle,
+  deferMarqueeControlPoints,
+  profileLineWidth,
+  pointScale,
+  disableSelectionGlow,
+  profileColor,
+  selectedColor,
+  guideLineColor,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -596,13 +892,275 @@ export default function ProfileEditor({
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [cam, setCam] = useState<Cam | null>(null);
   const [tool, setTool] = useState<Tool>("select");
+  const paintStorageKey=`kharraat-canvas-paint-v1:${projectId}`;
+  const [paintEdges,setPaintEdges]=useState<PaintEdge[]>(()=>{
+    try{return JSON.parse(localStorage.getItem(paintStorageKey)||"[]") as PaintEdge[];}catch{return [];}
+  });
+  const [paintMenu,setPaintMenu]=useState<{id:number;x:number;y:number}|null>(null);
+  const [selectedImageId,setSelectedImageId]=useState<number|null>(null);
+  const [imageTransformPreview,setImageTransformPreview]=useState<ReferenceImage|null>(null);
+  const [imageDragCursor,setImageDragCursor]=useState<string|null>(null);
+  const selectedImageVisualRef=useRef<SVGGElement|null>(null),selectedImageControlsRef=useRef<SVGGElement|null>(null),dragCursorOverlayRef=useRef<SVGRectElement|null>(null),lastRotationCursorStep=useRef<number|null>(null);
+  const [imageScaleSession,setImageScaleSession]=useState<{id:number;p1:SPoint;p2?:SPoint;base:ReferenceImage}|null>(null);
+  const [imageScaleValue,setImageScaleValue]=useState("");
+  const imageScaleInputRef=useRef<HTMLInputElement>(null);
+  const imageTransformPreviewRef=useRef<ReferenceImage|null>(null),imagePreviewFrame=useRef<number|null>(null);
+  const displayImages=imageTransformPreview?referenceImages.map(img=>img.id===imageTransformPreview.id?imageTransformPreview:img):referenceImages;
+  const imageInputRef=useRef<HTMLInputElement>(null);
+  const [imageHistoryVersion,setImageHistoryVersion]=useState(0);
+  const imagePast=useRef<ReferenceImage[][]>([]),imageFuture=useRef<ReferenceImage[][]>([]),imageGestureBase=useRef<ReferenceImage[]|null>(null),imageHistoryFocus=useRef(false);
+  const cloneImages=(images:ReferenceImage[])=>images.map(img=>({...img}));
+  const commitImages=(next:ReferenceImage[])=>{imageHistoryFocus.current=true;imagePast.current.push(cloneImages(referenceImages));if(imagePast.current.length>100)imagePast.current.shift();imageFuture.current=[];onReferenceImages(next);setImageHistoryVersion(v=>v+1);};
+  const undoImage=()=>{const prev=imagePast.current.pop();if(!prev)return;imageFuture.current.push(cloneImages(referenceImages));onReferenceImages(cloneImages(prev));setImageHistoryVersion(v=>v+1);};
+  const redoImage=()=>{const next=imageFuture.current.pop();if(!next)return;imagePast.current.push(cloneImages(referenceImages));onReferenceImages(cloneImages(next));setImageHistoryVersion(v=>v+1);};
+  const lastImageImportRequest=useRef(imageImportRequest);
+  useEffect(()=>{if(imageImportRequest!==lastImageImportRequest.current){lastImageImportRequest.current=imageImportRequest;imageInputRef.current?.click();}},[imageImportRequest]);
+  const imageDrag=useRef<{id:number;start:SPoint;base:ReferenceImage;mode:"move"|"rotate"|"nw"|"ne"|"sw"|"se"|"n"|"s"|"e"|"w";startAngle?:number;cursorBaseAngle?:number}|null>(null);
+  const paintPast=useRef<PaintEdge[][]>([]),paintFuture=useRef<PaintEdge[][]>([]);
+  const [paintHistoryVersion,setPaintHistoryVersion]=useState(0);
+  const clonePaint=(edges:PaintEdge[])=>edges.map(edge=>({...edge,a:{...edge.a},b:{...edge.b}}));
+  const commitPaint=(updater:(current:PaintEdge[])=>PaintEdge[])=>setPaintEdges(current=>{
+    paintPast.current.push(clonePaint(current));if(paintPast.current.length>100)paintPast.current.shift();paintFuture.current=[];setPaintHistoryVersion(v=>v+1);return updater(current);
+  });
+  const undoPaint=()=>{const previous=paintPast.current.pop();if(!previous)return;setPaintEdges(current=>{paintFuture.current.push(clonePaint(current));return clonePaint(previous);});setPaintHistoryVersion(v=>v+1);};
+  const redoPaint=()=>{const next=paintFuture.current.pop();if(!next)return;setPaintEdges(current=>{paintPast.current.push(clonePaint(current));return clonePaint(next);});setPaintHistoryVersion(v=>v+1);};
+  const [selectedPaint,setSelectedPaint]=useState<number[]>([]);
+  const [selectedPaintPoints,setSelectedPaintPoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
+  /* تاریخچهٔ محلی عکس/نقاشی را با همان اولویت Ctrl+Z/Ctrl+Y در اختیار
+     نوار بالایی هم می‌گذاریم؛ در غیر این صورت نوار بالایی ممکن است تاریخچهٔ
+     پروژه را اجرا کند، در حالی که میانبر هنوز عکس یا Paint را برمی‌گرداند. */
+  useEffect(()=>{
+    const paintContext=tool==="paint"||selectedPaint.length>0||selectedPaintPoints.length>0;
+    const imageUndo=imageHistoryFocus.current&&imagePast.current.length>0;
+    const imageRedo=imageHistoryFocus.current&&imageFuture.current.length>0;
+    const paintUndo=paintContext&&paintPast.current.length>0;
+    const paintRedo=paintContext&&paintFuture.current.length>0;
+    registerImageHistory({
+      undo:()=>imageUndo?undoImage():paintUndo?undoPaint():onUndo(),
+      redo:()=>imageRedo?redoImage():paintRedo?redoPaint():onRedo(),
+      canUndo:imageUndo||paintUndo,
+      canRedo:imageRedo||paintRedo,
+    });
+  },[imageHistoryVersion,paintHistoryVersion,referenceImages,registerImageHistory,tool,selectedPaint.length,selectedPaintPoints.length,onUndo,onRedo]);
+  const [paintMarqueeHits,setPaintMarqueeHits]=useState<number[]>([]);
+  const [paintMarqueePoints,setPaintMarqueePoints]=useState<Array<{id:number;point:"a"|"b"}>>([]);
+  const paintDrag=useRef<{ids:number[];point?:"a"|"b";pointId?:number;points?:Array<{id:number;point:"a"|"b"}>;start:SPoint;base:PaintEdge[];moved?:boolean}|null>(null);
+  useEffect(()=>{localStorage.setItem(paintStorageKey,JSON.stringify(paintEdges));},[paintEdges,paintStorageKey]);
+  const importReferenceFiles=async(files:File[],drop?:SPoint)=>{const valid=files.filter(file=>file.type.startsWith("image/")||/\.(avif|bmp|gif|jpe?g|png|svg|webp|ico|tiff?)$/i.test(file.name)),added=await Promise.all(valid.map(file=>new Promise<ReferenceImage|null>(resolve=>{const reader=new FileReader();reader.onerror=()=>resolve(null);reader.onload=()=>{const src=String(reader.result||""),probe=new Image();probe.onerror=()=>resolve(null);probe.onload=()=>{const width=100,height=100*(probe.naturalHeight||1)/(probe.naturalWidth||1);resolve({id:Date.now()+Math.random(),src,name:file.name,z:drop?drop.z-width/2:(params.blankL-width)/2,r:drop?drop.r+height/2:height/2,width,height,locked:false,black:0,gamma:1,white:255,opacity:.65,aspectLocked:true,originalRatio:width/height,grayscale:false});};probe.src=src;};reader.readAsDataURL(file);})));const images=added.filter((x):x is ReferenceImage=>!!x);if(images.length){commitImages([...referenceImages,...images]);setSelectedImageId(images[images.length-1].id);}};
+  const addPaintDraft=(points:SPoint[])=>{
+    if(points.length<2)return;
+    const stamp=Date.now();
+    commitPaint(prev=>[...prev,...points.slice(1).map((b,i)=>({id:stamp+i,a:points[i],b,color:"#ef4444",text:"",arrowSize:17,dashed:false,textSize:17,alignText:true,hideArrow:false}))]);
+  };
+  const paintHitsInRect=(rectW:{z0:number;z1:number;r0:number;r1:number},mode:"window"|"crossing")=>{
+    const inside=(p:SPoint)=>p.z>=rectW.z0&&p.z<=rectW.z1&&p.r>=rectW.r0&&p.r<=rectW.r1;
+    const orient=(a:SPoint,b:SPoint,c:SPoint)=>(b.z-a.z)*(c.r-a.r)-(b.r-a.r)*(c.z-a.z);
+    const crosses=(a:SPoint,b:SPoint)=>{
+      if(inside(a)||inside(b))return true;
+      const corners:SPoint[]=[{z:rectW.z0,r:rectW.r0},{z:rectW.z1,r:rectW.r0},{z:rectW.z1,r:rectW.r1},{z:rectW.z0,r:rectW.r1}];
+      return corners.some((c,i)=>{const q=corners[(i+1)%4];return orient(a,b,c)*orient(a,b,q)<=0&&orient(c,q,a)*orient(c,q,b)<=0;});
+    };
+    return {
+      ids:paintEdges.filter(edge=>mode==="window"?(inside(edge.a)&&inside(edge.b)):crosses(edge.a,edge.b)).map(edge=>edge.id),
+      points:paintEdges.flatMap(edge=>(["a","b"] as const).filter(part=>inside(edge[part])).map(point=>({id:edge.id,point}))),
+    };
+  };
+  useEffect(()=>{
+    const move=(e:PointerEvent)=>{
+      const d=paintDrag.current,rect=svgRef.current?.getBoundingClientRect();
+      if(!d||!rect||!cam)return;
+      const now={z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s};
+      let dz=now.z-d.start.z,dr=now.r-d.start.r;
+      /* Shift هنگام جابه‌جایی نقطه، جهت غالب را نگه می‌دارد و مؤلفه دیگر را
+         صفر می‌کند؛ در نتیجه نقطه دقیقاً روی محور افقی یا عمودی قفل می‌شود. */
+      if(e.shiftKey&&d.point){if(Math.abs(dz)>=Math.abs(dr))dr=0;else dz=0;}
+      /* جابه‌جایی نقاشی از همان گام «گیر شبکه» بوم پیروی می‌کند. مبنا یکی از
+         نقاط واقعی انتخاب است تا پس از Drag خود نقطه روی خطوط شبکه بنشیند، نه
+         اینکه صرفاً مقدار حرکت گرد شود. در قفل Shift مؤلفه ثابت دست‌نخورده است. */
+      const gridSnap=settings.snap;
+      if(gridSnap>0){
+        const baseEdge=d.base.find(edge=>edge.id===(d.pointId??d.ids[0]));
+        const anchor=baseEdge?(d.point?baseEdge[d.point]:baseEdge.a):d.start;
+        if(!(d.point&&dr===0))dr=Math.round((anchor.r+dr)/gridSnap)*gridSnap-anchor.r;
+        if(!(d.point&&dz===0))dz=Math.round((anchor.z+dz)/gridSnap)*gridSnap-anchor.z;
+      }
+      if(Math.hypot(dz,dr)>1e-7)d.moved=true;
+      setPaintEdges(all=>{
+        const selectedBases=d.base.filter(x=>d.ids.includes(x.id));
+        /* نقاط مشترک خطوط مجاور همراه نقطه اتصال حرکت می‌کنند، اما سر دیگر
+           خط قبل/بعد ثابت می‌ماند؛ بنابراین Polyline کش می‌آید و گسسته نمی‌شود. */
+        const movingAnchors:SPoint[]=d.points?.length
+          ? d.points.flatMap(point=>{const edge=d.base.find(item=>item.id===point.id);return edge?[edge[point.point]]:[];})
+          : selectedBases.flatMap(x=>[x.a,x.b]);
+        const matches=(p:SPoint)=>movingAnchors.some(q=>Math.hypot(p.z-q.z,p.r-q.r)<1e-6);
+        const pointChosen=(id:number,point:"a"|"b")=>!!d.points?.some(item=>item.id===id&&item.point===point);
+        return all.map(edge=>{
+          const base=d.base.find(x=>x.id===edge.id);if(!base)return edge;
+          if(d.points?.length)return {...base,
+            a:(pointChosen(edge.id,"a")||matches(base.a))?{z:base.a.z+dz,r:base.a.r+dr}:base.a,
+            b:(pointChosen(edge.id,"b")||matches(base.b))?{z:base.b.z+dz,r:base.b.r+dr}:base.b,
+          };
+          if(d.ids.includes(edge.id))return {...base,a:{z:base.a.z+dz,r:base.a.r+dr},b:{z:base.b.z+dz,r:base.b.r+dr}};
+          return {...base,
+            a:matches(base.a)?{z:base.a.z+dz,r:base.a.r+dr}:base.a,
+            b:matches(base.b)?{z:base.b.z+dz,r:base.b.r+dr}:base.b,
+          };
+        });
+      });
+    };
+    const up=()=>{const d=paintDrag.current;if(d?.moved){paintPast.current.push(clonePaint(d.base));if(paintPast.current.length>100)paintPast.current.shift();paintFuture.current=[];setPaintHistoryVersion(v=>v+1);}paintDrag.current=null;};
+    window.addEventListener("pointermove",move);window.addEventListener("pointerup",up);
+    return()=>{window.removeEventListener("pointermove",move);window.removeEventListener("pointerup",up);};
+  },[cam,settings.snap]);
+  const toolRef = useRef<Tool>("select");
+  const previousToolRef = useRef<Tool>("select");
+  const chooseTool = (next: Tool) => {
+    if (next === toolRef.current) return;
+    /* اگر چرخش عددیِ باکس هنوز تأیید نشده باشد، با تغییر ابزار باید
+       پیش‌نمایش به حالت قبل برگردد و ورودی شناور هم بسته شود. */
+    if (toolRef.current === "boxscale" && next !== "boxscale") {
+      if (boxRotateSession) onSegs(boxRotateSession.base, false);
+      boxRotateDrag.current = null;
+      setBoxRotateSession(null);
+      setBoxRotateBox(null);
+      setBoxScalePivot(null);
+    }
+    previousToolRef.current = toolRef.current;
+    toolRef.current = next;
+    setTool(next);
+  };
+  const [filletPicks, setFilletPicks] = useState<FilletPick[]>([]);
+  const [filletBox, setFilletBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const filletInputRef = useRef<HTMLInputElement>(null);
+  const [moveBox, setMoveBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const [moveSession, setMoveSession] = useState<MoveSession | null>(null);
+  const [copySession, setCopySession] = useState<CopySession | null>(null);
+  const [mirrorSession, setMirrorSession] = useState<MirrorSession | null>(null);
+  const [mirrorKeepCopy, setMirrorKeepCopy] = useState(true);
+  const [rotateSession, setRotateSession] = useState<RotateSession | null>(null);
+  const [rotateBox, setRotateBox] = useState<{x:number;y:number;value:string;error:string}|null>(null);
+  const [rotateLive, setRotateLive] = useState(false);
+  const [rotateGhost, setRotateGhost] = useState(true);
+  const rotateInputRef = useRef<HTMLInputElement>(null);
+  const [boxScaleLocked, setBoxScaleLocked] = useState(false);
+  const [boxScaleLive, setBoxScaleLive] = useState(false);
+  const [boxScaleGhost, setBoxScaleGhost] = useState(true);
+  const [boxScaleWidthText, setBoxScaleWidthText] = useState<string | null>(null);
+  const [boxScaleHeightText, setBoxScaleHeightText] = useState<string | null>(null);
+  const boxScaleNumericBase = useRef<{ segs: SketchSeg[]; bounds: { minZ: number; maxZ: number; minR: number; maxR: number } } | null>(null);
+  const boxScaleLastHandle = useRef<string | null>(null);
+  const boxScaleWidthInputRef = useRef<HTMLInputElement>(null);
+  const boxScaleHeightInputRef = useRef<HTMLInputElement>(null);
+  const boxScaleDrag = useRef<{ handle: string; base: SketchSeg[]; ids: number[]; bounds: { minZ: number; maxZ: number; minR: number; maxR: number } } | null>(null);
+  const [boxScalePivot, setBoxScalePivot] = useState<SPoint | null>(null);
+  const boxPivotDrag = useRef(false);
+  const boxRotateDrag = useRef<{ base: SketchSeg[]; ids: number[]; pivot: SPoint; startAngle: number; angle: number } | null>(null);
+  const [boxRotateSession, setBoxRotateSession] = useState<{ base: SketchSeg[]; ids: number[]; pivot: SPoint; angle: number } | null>(null);
+  const [boxRotateBox, setBoxRotateBox] = useState<{x:number;y:number;value:string;error:string}|null>(null);
+  const boxRotateInputRef = useRef<HTMLInputElement>(null);
+  const [scaleSession, setScaleSession] = useState<ScaleSession | null>(null);
+  const [scaleBox, setScaleBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const scaleInputRef = useRef<HTMLInputElement>(null);
+  const [copyBox, setCopyBox] = useState<{ x: number; y: number; value: string; error: string } | null>(null);
+  const copyInputRef = useRef<HTMLInputElement>(null);
+  const moveInputRef = useRef<HTMLInputElement>(null);
+  const [lastMove, setLastMove] = useState<{ dz: number; dr: number } | null>(null);
+  useEffect(() => { if (filletBox) requestAnimationFrame(() => { filletInputRef.current?.focus(); filletInputRef.current?.select(); }); }, [!!filletBox]);
+  useEffect(() => { if (moveBox) requestAnimationFrame(() => { moveInputRef.current?.focus(); moveInputRef.current?.select(); }); }, [!!moveBox]);
+  useEffect(() => { if (copyBox) requestAnimationFrame(() => copyInputRef.current?.focus()); }, [!!copyBox]);
+  useEffect(() => { if (scaleBox) requestAnimationFrame(() => scaleInputRef.current?.focus()); }, [!!scaleBox]);
+  useEffect(() => { if (rotateBox) requestAnimationFrame(() => rotateInputRef.current?.focus()); }, [!!rotateBox]);
+  useEffect(() => {
+    const releaseAxis = (event: KeyboardEvent) => {
+      if (event.key === "Shift") setMoveSession((session) => session ? { ...session, axis: "free" } : session);
+    };
+    window.addEventListener("keyup", releaseAxis);
+    return () => window.removeEventListener("keyup", releaseAxis);
+  }, []);
+  /* در Copy، Shift یک کلید Toggle است: بار اول قفل محور غالب و بار دوم آزاد. */
+  useEffect(() => {
+    const toggleCopyAxis = (event: KeyboardEvent) => {
+      if (event.key !== "Shift" || event.repeat || !copySession) return;
+      const dz = copySession.pointer.z - copySession.origin.z;
+      const dr = copySession.pointer.r - copySession.origin.r;
+      const axis: MoveAxis = copySession.axis === "free" ? (Math.abs(dz) >= Math.abs(dr) ? "x" : "y") : "free";
+      let pointer = copySession.pointer;
+      const numericDistance = copyBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(copyBox.value) : null;
+      if (axis === "x") pointer = { z: copySession.origin.z + (numericDistance == null ? dz : Math.sign(dz || 1) * numericDistance), r: copySession.origin.r };
+      else if (axis === "y") pointer = { z: copySession.origin.z, r: copySession.origin.r + (numericDistance == null ? dr : Math.sign(dr || 1) * numericDistance) };
+      const ndx = pointer.z - copySession.origin.z;
+      const ndr = pointer.r - copySession.origin.r;
+      onSegs([...copySession.base, ...copySession.copies.map((segment) => moveSeg(segment, ndx, ndr))], false);
+      setCopySession({ ...copySession, axis, pointer });
+    };
+    window.addEventListener("keydown", toggleCopyAxis, true);
+    return () => window.removeEventListener("keydown", toggleCopyAxis, true);
+  }, [copySession, copyBox?.value, onSegs]);
+  /* عدد ساده در Copy، بدون Enter فاصله را شعاعی قفل می‌کند. */
+  useEffect(() => {
+    if (!copySession || !copyBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/)) return;
+    const amount = Number(copyBox.value);
+    const dz0 = copySession.pointer.z - copySession.origin.z;
+    const dr0 = copySession.pointer.r - copySession.origin.r;
+    const length = Math.hypot(dz0, dr0);
+    let dz = length > 1e-9 ? amount * dz0 / length : amount;
+    let dr = length > 1e-9 ? amount * dr0 / length : 0;
+    if (copySession.axis === "x") { dz = Math.sign(dz0 || 1) * amount; dr = 0; }
+    else if (copySession.axis === "y") { dz = 0; dr = Math.sign(dr0 || 1) * amount; }
+    const pointer = { z: copySession.origin.z + dz, r: copySession.origin.r + dr };
+    onSegs([...copySession.base, ...copySession.copies.map((segment) => moveSeg(segment, dz, dr))], false);
+    setCopySession((session) => session ? { ...session, pointer } : session);
+  }, [copyBox?.value]);
+  /* پیش‌نمایش عددی بدون ثبت در تاریخچه؛ Enter همان هندسه را به یک گام Undo تبدیل می‌کند. */
+  useEffect(() => {
+    if (!moveBox?.value.trim() || !moveSession) return;
+    const parts = moveBox.value.split(",");
+    const values = parts.map(arithmeticValue);
+    if (parts.length > 2 || values.some((v) => v == null)) return;
+    const dx = moveSession.pointer.z - moveSession.origin.z, dy = moveSession.pointer.r - moveSession.origin.r;
+    let dz = 0, dr = 0;
+    if (values.length === 2) { dz = values[0]!; dr = values[1]!; }
+    else {
+      const amount = values[0]!;
+      if (moveSession.axis === "x") dz = amount * moveSession.dirX;
+      else if (moveSession.axis === "y") dr = amount * moveSession.dirY;
+      else {
+        /* مقدار تکی شعاع حرکت است، نه قفل مختصات: نشانگر جهت را تعیین می‌کند
+           و نقطه/خط آزادانه روی دایره‌ای با همین شعاع حرکت می‌کند. */
+        const length = Math.hypot(dx, dy);
+        if (length > 1e-9) { dz = amount * dx / length; dr = amount * dy / length; }
+        else { dz = amount * moveSession.dirX; dr = 0; }
+      }
+    }
+    if (moveSession.mode === "absolute") {
+      /* مبدأ ABS همان نقطه‌ای است که کاربر برای برداشتن Move کلیک کرده است؛
+         نه ابتدای اولین Segment انتخاب‌شده. بنابراین خود نقطهٔ کلیک‌شده دقیقاً
+         روی مختصات واردشده قرار می‌گیرد و کل Selection به همان اندازه منتقل می‌شود. */
+      const anchor = moveSession.origin;
+      if (values.length === 2) { dz -= anchor.z; dr -= anchor.r; }
+      else if (dz) dz = Math.abs(dz) - anchor.z; else dr = Math.abs(dr) - anchor.r;
+    }
+    if (moveSession.editBase && moveSession.editVertexIds && edit) {
+      const moving = new Set(moveSession.editVertexIds);
+      onEditBuf({
+        ...edit,
+        verts: moveSession.editBase.map((vertex) => moving.has(vertex.id)
+          ? { ...vertex, z: vertex.z + dz, x: vertex.x + 2 * dr }
+          : vertex),
+      }, false);
+    } else {
+      onSegs(movePolylineSelection(moveSession.base,moveSession.ids,dz,dr), false);
+    }
+  }, [moveBox?.value, moveSession?.pointer, moveSession?.axis, moveSession?.mode]);
   const [draft, setDraft] = useState<SPoint[]>([]);
   /* در منحنی کنترلی، پس از کلیک دوم ابتدا دستهٔ متصل به نقطهٔ پایان (c2) و سپس  */
   /* دستهٔ متصل به نقطهٔ شروع (c1) تنظیم می‌شود — مانند ابزار Pen.                */
   const draftSecondSet = useRef(false); // آیا دستهٔ دوم (c2) ثبت شده است؟
+  const [lineLengthText, setLineLengthText] = useState("");
   const cancelDraft = () => {
     draftSecondSet.current = false;
     setDraft([]);
+    setLineLengthText("");
   };
   const [cursor, setCursor] = useState<SPoint | null>(null);
   const [snapHit, setSnapHit] = useState<SnapPoint | null>(null);
@@ -696,6 +1254,9 @@ export default function ProfileEditor({
   useEffect(() => {
     if (editOpen) {
       /* ابزارهای ترسیم پروفایل در ویرایش مسیر مجاز نیستند. */
+      /* state و ref ابزار باید همگام بمانند؛ اختلاف آن‌ها باعث می‌شد chooseTool
+         تصور کند Move از قبل فعال است و کلیک کاربر را نادیده بگیرد. */
+      toolRef.current = "select";
       setTool("select");
       setDraft([]);
       setCursor(null);
@@ -739,6 +1300,9 @@ export default function ProfileEditor({
     setSplitHovered(false);
   }, [split.enabled]);
   useEffect(() => {
+    if (tool !== "fillet") { setFilletPicks([]); setFilletBox(null); }
+  }, [tool]);
+  useEffect(() => {
     if (tool !== "select") {
       setSplitSelected(false);
       setSplitHovered(false);
@@ -747,6 +1311,8 @@ export default function ProfileEditor({
   /* نقاط جداشده (unjoined) — به‌صورت پیش‌فرض همهٔ نقاطِ هم‌مکان متصل‌اند */
   const [separated, setSeparated] = useState<Set<string>>(new Set());
   /* منوی راست‌کلیک برای اتصال/جداسازی نقطه */
+  const [splitCtxMenu, setSplitCtxMenu] = useState<{ x: number; y: number } | null>(null);
+  const [segmentCtxMenu,setSegmentCtxMenu]=useState<{x:number;y:number;segId:number}|null>(null);
   const [ctxMenu, setCtxMenu] = useState<{
     x: number;
     y: number;
@@ -771,8 +1337,6 @@ export default function ProfileEditor({
   const [marqueePointHits, setMarqueePointHits] = useState<{ segId: number; part: "a" | "b" | "via" | "c1" | "c2" }[]>([]);
   const [marqueeSplitHit, setMarqueeSplitHit] = useState(false);
   const [panMode, setPanMode] = useState(false);
-  const [spaceDown, setSpaceDown] = useState(false);
-  const spaceRef = useRef(false);
   /* فیلتر نوع المان برای انتخاب (همه روشن = بدون فیلتر) */
   const [selFilter, setSelFilter] = useState<Record<SketchKind, boolean>>({
     line: true,
@@ -838,6 +1402,78 @@ export default function ProfileEditor({
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
 
+      /* ورود طول مستقیم برای Line و هر بخش Polyline. */
+      const drawingStraight = !editOpen &&
+        ((tool === "line" && draft.length === 1) || ((tool === "polyline" || tool === "paint") && draft.length >= 1));
+      if (drawingStraight && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        if (/^\d$/.test(e.key)) {
+          e.preventDefault();
+          setLineLengthText((value) => value === "0" ? e.key : value + e.key);
+          return;
+        }
+        if ((e.key === "." || e.key === ",") && !/[.,]/.test(lineLengthText)) {
+          e.preventDefault();
+          setLineLengthText((value) => value ? `${value}.` : "0.");
+          return;
+        }
+        if (e.key === "Backspace" && lineLengthText) {
+          e.preventDefault();
+          setLineLengthText((value) => value.slice(0, -1));
+          return;
+        }
+        if ((e.key === "Enter" || e.code === "Space") && measuredLineEnd) {
+          e.preventDefault();
+          if ((tool === "polyline" || tool === "paint")) {
+            setDraft([...draft, measuredLineEnd]);
+          } else {
+            const seg = makeSeg("line", [draft[0], measuredLineEnd]);
+            if (seg) {
+              commit([...segs, seg]);
+              onSelected([seg.id]);
+            }
+            setDraft([]);
+          }
+          setLineLengthText("");
+          return;
+        }
+        if ((e.key === "Enter" || e.code === "Space") && tool === "line" && lineCursor) {
+          e.preventDefault();
+          const seg = makeSeg("line", [draft[0], lineCursor]);
+          if (seg) {
+            commit([...segs, seg]);
+            onSelected([seg.id]);
+          }
+          setDraft([]);
+          setLineLengthText("");
+          return;
+        }
+        if ((e.key === "Enter" || e.code === "Space") && (tool === "polyline" || tool === "paint") && draft.length >= 2) {
+          e.preventDefault();
+          if(tool==="paint")addPaintDraft(draft);
+          else {
+            const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
+            if (parts.length) {
+              const groupId = parts[0].id;
+              const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
+              commit([...segs, ...grouped]);
+              onSelected(grouped.map((part) => part.id));
+            }
+          }
+          setDraft([]);
+          setLineLengthText("");
+          return;
+        }
+      }
+      /* در Polyline، Backspace و Ctrl+Z فقط یک رأس تأییدشده از Draft کم می‌کنند؛
+         تا پیش از Enter هیچ History سراسری ساخته نشده است. */
+      if (!editOpen && (tool === "polyline" || tool === "paint") && draft.length &&
+          ((e.key === "Backspace" && !lineLengthText) || ((e.ctrlKey || e.metaKey) && (e.code === "KeyZ" || e.key.toLowerCase() === "z")))) {
+        e.preventDefault();
+        setDraft((points) => points.slice(0, -1));
+        setLineLengthText("");
+        return;
+      }
+
       /* ---------- حالت ویرایش مسیر: Esc اول انتخاب، بعد خروج ---------- */
       if (editOpen && e.key === "Escape") {
         if (selL.length || selV.length || selOff.length) {
@@ -853,6 +1489,12 @@ export default function ProfileEditor({
           onEditCancel();
           return;
         }
+      }
+      if (!editOpen && tool === "select" && selPoints.length > 1 &&
+          (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+        alignSelectedPoints(e.key === "ArrowUp" ? "top" : e.key === "ArrowDown" ? "bottom" : e.key === "ArrowRight" ? "right" : "left");
+        return;
       }
       if (editOpen && edit && selL.length && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         e.preventDefault();
@@ -870,30 +1512,36 @@ export default function ProfileEditor({
       if (editOpen && (e.key === "Delete" || e.key === "Backspace") && edit) {
         if (selV.length) {
           e.preventDefault();
+          const affected = new Set(edit.lines.filter((line) => selV.includes(line.va) || selV.includes(line.vb)).map((line) => line.id));
           const fin = deleteEditVertices(edit.verts, edit.lines, selV);
-          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: [], activeLine: null }, true);
-          setSelV([]); setSelL([]); setActiveLine(null);
+          const replacement = replacementEditLine(edit.lines, fin.lines, affected);
+          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: replacement == null ? [] : [replacement], activeLine: replacement }, true);
+          setSelV([]); setSelL(replacement == null ? [] : [replacement]); setActiveLine(replacement);
           return;
         }
         if (selL.length) {
           e.preventDefault();
+          const removed = new Set(selL);
           const fin = deleteEditLines(edit.verts, edit.lines, selL);
-          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: [], activeLine: null }, true);
-          setSelL([]); setActiveLine(null); setSelV([]);
+          const replacement = replacementEditLine(edit.lines, fin.lines, removed);
+          if (fin.lines.length) onEditBuf({ ...edit, verts: fin.verts, lines: fin.lines, selLines: replacement == null ? [] : [replacement], activeLine: replacement }, true);
+          setSelL(replacement == null ? [] : [replacement]); setActiveLine(replacement); setSelV([]);
           return;
         }
       }
-      const k = e.key.toLowerCase();
+      /* میانبر ابزارها بر پایه موقعیت فیزیکی کلید است تا با فارسی، عربی و
+         سایر Layoutها نیز همان کلید لاتین تنظیم‌شده عمل کند. */
+      const k = /^Key[A-Z]$/.test(e.code) ? e.code.slice(3).toLowerCase() : e.key.toLowerCase();
       const undoKey = e.code === "KeyZ" || k === "z";
       const redoKey = e.code === "KeyY" || k === "y";
       if ((e.ctrlKey || e.metaKey) && undoKey && !e.shiftKey) {
         e.preventDefault();
-        onUndo();
+        if(imageHistoryFocus.current&&imagePast.current.length)undoImage();else if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintPast.current.length)undoPaint();else onUndo();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && (redoKey || (e.shiftKey && undoKey))) {
         e.preventDefault();
-        onRedo();
+        if(imageHistoryFocus.current&&imageFuture.current.length)redoImage();else if((tool==="paint"||selectedPaint.length||selectedPaintPoints.length)&&paintFuture.current.length)redoPaint();else onRedo();
         return;
       }
       if ((e.ctrlKey || e.metaKey) && k === "d") {
@@ -925,6 +1573,36 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Escape") {
+        if (tool === "rotate") { if(rotateSession)onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");return; }
+        if (tool === "scale") {
+          if (scaleSession) onSegs(scaleSession.base, false);
+          setScaleSession(null); setScaleBox(null); setImageScaleSession(null); setImageScaleValue(""); drag.current = null; chooseTool("select");
+          return;
+        }
+        if (tool === "mirror") {
+          if (mirrorSession) onSegs(mirrorSession.base, false);
+          setMirrorSession(null);
+          drag.current = null;
+          chooseTool("select");
+          return;
+        }
+        if (tool === "copy") {
+          if (copySession) onSegs(copySession.base, false);
+          setCopySession(null);
+          setCopyBox(null);
+          drag.current = null;
+          chooseTool("select");
+          return;
+        }
+        if (tool === "move") {
+          if (moveSession?.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+          else if (moveSession) onSegs(moveSession.base, false);
+          setMoveBox(null);
+          setMoveSession(null);
+          drag.current = null;
+          chooseTool("select");
+          return;
+        }
         if (drag.current?.mode === "marquee") {
           drag.current = null;
           setMarquee(null);
@@ -943,7 +1621,7 @@ export default function ProfileEditor({
         }
         if (draft.length) cancelDraft();
         else if (isolatedOpId != null) onClearIsolate();
-        else if (tool !== "select") setTool("select");
+        else if (tool !== "select") chooseTool("select");
         else if (splitSelected) setSplitSelected(false);
         else {
           if (selPoints.length) setSelPoints([]);
@@ -952,33 +1630,42 @@ export default function ProfileEditor({
         return;
       }
       if (e.key === "Delete" || e.key === "Backspace") {
-        if (splitSelected) {
+        if(selectedImageId!=null){e.preventDefault();commitImages(referenceImages.filter(img=>img.id!==selectedImageId));setSelectedImageId(null);return;}
+        if(selectedPaint.length){
+          e.preventDefault();commitPaint(all=>all.filter(edge=>!selectedPaint.includes(edge.id)));setSelectedPaint([]);setPaintMenu(null);return;
+        }
+        /* حذف هندسهٔ انتخاب‌شده بر انتخاب نشانگر Split اولویت دارد؛ بنابراین
+           اگر هم‌زمان خط/Polyline و نقطهٔ Split زیر نشانگر باشند، اولین Delete
+           خود خط‌ها را حذف می‌کند و نشانگر فقط وقتی حذف می‌شود که هندسه‌ای انتخاب
+           نشده باشد. */
+        if (selected.length || splitSelected) {
           e.preventDefault();
-          deleteSelectedSplit();
+          deleteSelection();
           return;
         }
         if (selPoints.length) {
           e.preventDefault();
           deleteSelectedPoints();
-          return;
-        }
-        if (selected.length) {
-          e.preventDefault();
-          deleteSelected();
         }
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      const t = TOOLS.find((x) => x.key.toLowerCase() === k);
+      if (k === "r" && tool === "move" && lastMove && selected.length) {
+        e.preventDefault();
+        const next = movePolylineSelection(segs,selected,lastMove.dz,lastMove.dr);
+        onSegs(next, true);
+        return;
+      }
+      const t = TOOLS.find((x) => (toolShortcuts[x.id] ?? x.key).toLowerCase() === k);
       if (t && (!editOpen || t.id === "select")) {
-        setTool(t.id);
+        chooseTool(t.id);
         cancelDraft();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu]);
+  }, [draft, selected, tool, isolatedOpId, segs, selFilter, selPoints, splitSelected, split, editOpen, selL, activeLine, selV, selOff, edit, marquee, ctxMenu, speedMenu, lastMove, lineLengthText, cursor, shiftDown, selectedImageId, referenceImages]);
 
   /* وضعیت فیزیکی Shift برای پیش‌نمایش بازه؛ مستقل از زبان صفحه‌کلید. */
   useEffect(() => {
@@ -1006,30 +1693,22 @@ export default function ProfileEditor({
     };
   }, []);
 
-  /* نگه‌داشتن Space برای پن موقت */
+  /* Space بین دو ابزار آخر سوییچ می‌کند؛ پن همچنان با دکمه وسط/راست در دسترس است. */
   useEffect(() => {
-    const dn = (e: KeyboardEvent) => {
+    const toggleLastTool = (e: KeyboardEvent) => {
       const tgt = e.target as HTMLElement;
       if (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA") return;
-      if (e.code === "Space" && !e.repeat) {
-        e.preventDefault();
-        spaceRef.current = true;
-        setSpaceDown(true);
-      }
+      if (e.code !== "Space" || e.repeat) return;
+      if (draft.length) return;
+      e.preventDefault();
+      const previous = previousToolRef.current;
+      if (editOpen && previous !== "select" && previous !== "move") return;
+      chooseTool(previous);
+      cancelDraft();
     };
-    const up = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        spaceRef.current = false;
-        setSpaceDown(false);
-      }
-    };
-    window.addEventListener("keydown", dn);
-    window.addEventListener("keyup", up);
-    return () => {
-      window.removeEventListener("keydown", dn);
-      window.removeEventListener("keyup", up);
-    };
-  }, []);
+    window.addEventListener("keydown", toggleLastTool);
+    return () => window.removeEventListener("keydown", toggleLastTool);
+  }, [editOpen, draft.length]);
 
   /* ---------- اسنپ ---------- */
   const snapPts = useMemo(() => snapCandidates(segs), [segs]);
@@ -1038,7 +1717,7 @@ export default function ProfileEditor({
   const applySnap = (raw: SPoint, skipIds: number[] = []): { p: SPoint; hit: SnapPoint | null } => {
     const c = camRef.current;
     if (!c) return { p: raw, hit: null };
-    const tolW = 11 / c.s; // ۱۱ پیکسل
+    const tolW = Math.min(30, Math.max(3, settings.snapTolerancePx)) / c.s;
     if (settings.smartSnap) {
       let best: SnapPoint | null = null;
       let bestD = tolW;
@@ -1072,6 +1751,16 @@ export default function ProfileEditor({
 
   /** نقطهٔ نشانگرِ مرحلهٔ فعلی ترسیم؛ دسته‌های بزیه به خود خام clamp نمی‌شوند. */
   const constrainDraftPoint = (p: SPoint): SPoint => {
+    /* Shift در ابزار Line جهت را با محور غالب حرکت ماوس تعیین می‌کند. این قفل
+       هم در preview و هم در نقطه‌ای که با کلیک ثبت می‌شود اعمال می‌گردد. */
+    if ((tool === "line" || (tool === "polyline" || tool === "paint")) && draft.length >= 1 && shiftRef.current) {
+      const start = draft[draft.length - 1];
+      const dz = p.z - start.z;
+      const dr = p.r - start.r;
+      return clampPt(Math.abs(dz) >= Math.abs(dr)
+        ? { z: p.z, r: start.r }
+        : { z: start.z, r: p.r });
+    }
     if (tool === "quad" && draft.length === 2) {
       const base: SketchSeg = {
         id: -1,
@@ -1141,18 +1830,38 @@ export default function ProfileEditor({
   };
 
   /* نزدیک‌ترین نقطه روی پروفیل (برای ابزار Split) */
+  const nearestOnSeg = (s: SketchSeg, w: SPoint): { point: SPoint; t: number; distance: number } => {
+    /* جست‌وجوی پارامتری باعث می‌شود وسط Line نیز واقعاً قابل انتخاب باشد؛ روش
+       قبلی برای Line فقط دو سر را آزمایش می‌کرد. برای همه انواع منحنی نیز نقطه
+       نهایی روی خود هندسه باقی می‌ماند. */
+    if (s.kind === "line") {
+      const dz = s.b.z - s.a.z, dr = s.b.r - s.a.r;
+      const l2 = dz * dz + dr * dr;
+      const t = l2 > 1e-12 ? Math.max(0, Math.min(1, ((w.z - s.a.z) * dz + (w.r - s.a.r) * dr) / l2)) : 0;
+      const point = evalSeg(s, t);
+      return { point, t, distance: dist(point, w) };
+    }
+    let bestT = 0, bestD = Infinity;
+    const samples = 80;
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples, d = dist(evalSeg(s, t), w);
+      if (d < bestD) { bestD = d; bestT = t; }
+    }
+    let lo = Math.max(0, bestT - 1 / samples), hi = Math.min(1, bestT + 1 / samples);
+    for (let i = 0; i < 18; i++) {
+      const t1 = lo + (hi - lo) / 3, t2 = hi - (hi - lo) / 3;
+      if (dist(evalSeg(s, t1), w) <= dist(evalSeg(s, t2), w)) hi = t2;
+      else lo = t1;
+    }
+    const t = (lo + hi) / 2, point = evalSeg(s, t);
+    return { point, t, distance: dist(point, w) };
+  };
+
   const nearestOnSketch = (w: SPoint): SPoint | null => {
-    let best: SPoint | null = null;
-    let bestD = Infinity;
+    let best: SPoint | null = null, bestD = Infinity;
     for (const s of segs) {
-      const pts = s.kind === "line" ? [s.a, s.b] : segPoints(s, 40);
-      for (const p of pts) {
-        const d = dist(p, w);
-        if (d < bestD) {
-          bestD = d;
-          best = p;
-        }
-      }
+      const hit = nearestOnSeg(s, w);
+      if (hit.distance < bestD) { bestD = hit.distance; best = hit.point; }
     }
     return best ? clampPt({ ...best }) : null;
   };
@@ -1197,16 +1906,22 @@ export default function ProfileEditor({
     };
     for (const s of segs) {
       const isSel = selected.includes(s.id);
-      /* اگر حتی یک نقطهٔ المان مستقل انتخاب شده باشد، دسته‌های کنترلش قابل دسترسی‌اند */
-      const hasSelPoint = selPointSegIds.includes(s.id);
+      const selectedPoint=(part:HandleRef["part"])=>selPoints.some(point=>point.segId===s.id&&point.part===part);
+      const selectedEndpointAt=(endpoint:SPoint)=>selPoints.some(point=>{
+        if(point.part!=="a"&&point.part!=="b")return false;
+        const owner=segs.find(segment=>segment.id===point.segId);
+        return !!owner&&dist(owner[point.part],endpoint)<1e-8;
+      });
+      const activeA=selectedEndpointAt(s.a),activeB=selectedEndpointAt(s.b);
+      const hasSelPoint = selPointSegIds.includes(s.id)||activeA||activeB;
       if (!filterAllows(s.kind) && !isSel && !hasSelPoint) continue;
       check(s.id, "a", s.a);
       check(s.id, "b", s.b);
-      if (s.via) check(s.id, "via", s.via);
-      if (isSel || hasSelPoint) {
-        check(s.id, "c1", s.c1);
-        check(s.id, "c2", s.c2);
-      }
+      if (s.via&&(isSel||selectedPoint("via"))) check(s.id, "via", s.via);
+      /* فقط دسته‌ای Hit-test می‌شود که واقعاً روی بوم نمایش داده شده است؛ دستهٔ
+         ضلع هم‌جوارِ رأس انتخابی نیز با تطبیق مختصات همان رأس قابل Drag است. */
+      if (s.c1&&dist(s.c1,s.a)>1e-8&&(isSel||selectedPoint("c1")||activeA)) check(s.id, "c1", s.c1);
+      if (s.c2&&dist(s.c2,s.b)>1e-8&&(isSel||selectedPoint("c2")||activeB)) check(s.id, "c2", s.c2);
     }
     return best;
   };
@@ -1252,10 +1967,7 @@ export default function ProfileEditor({
     p.z >= r.z0 - 1e-9 && p.z <= r.z1 + 1e-9 && p.r >= r.r0 - 1e-9 && p.r <= r.r1 + 1e-9;
 
   const marqueeHitsSplit = (r: { z0: number; z1: number; r0: number; r1: number }) =>
-    !editOpen && split.enabled && (
-      pointInRectW({ z: split.z, r: split.r }, r) ||
-      pointInRectW({ z: split.z, r: -split.r }, r)
-    );
+    !editOpen && split.enabled && pointInRectW({ z: split.z, r: split.r }, r);
 
   const segSegInt = (p1: SPoint, p2: SPoint, p3: SPoint, p4: SPoint) => {
     const d = (p2.z - p1.z) * (p4.r - p3.r) - (p2.r - p1.r) * (p4.z - p3.z);
@@ -1308,7 +2020,7 @@ export default function ProfileEditor({
         const pt = s[pp];
         if (pt && pointInRectW(pt, rectW)) out.push({ segId: s.id, part: pp });
       }
-      if (selPointSegIds.includes(s.id) || selected.includes(s.id)) {
+      if (!deferMarqueeControlPoints || selPointSegIds.includes(s.id) || selected.includes(s.id)) {
         for (const pp of ["c1", "c2"] as const) {
           const pt = s[pp];
           if (pt && pointInRectW(pt, rectW)) out.push({ segId: s.id, part: pp });
@@ -1368,10 +2080,122 @@ export default function ProfileEditor({
   /* ---------- عملیات ویرایش ---------- */
   const commit = (next: SketchSeg[]) => onSegs(next, true);
 
+  const convertSelectedPolylineVertices=(fallback:{segId:number;part:"a"|"b"})=>{
+    const chosen=selPoints.filter((p):p is {segId:number;part:"a"|"b"}=>p.part==="a"||p.part==="b");
+    const points=chosen.length?chosen:[fallback];
+    let next=segs.map(s=>({...s}));
+    const done=new Set<string>();
+    for(const pick of points){
+      const source=next.find(s=>s.id===pick.segId);if(!source||source.polylineId==null)continue;
+      const vertex=source[pick.part],key=`${source.polylineId}:${vertex.z}:${vertex.r}`;if(done.has(key))continue;done.add(key);
+      const incident=next.filter(s=>s.polylineId===source.polylineId&&(dist(s.a,vertex)<1e-8||dist(s.b,vertex)<1e-8));
+      if(incident.length<2)continue;
+      const pair=incident.slice(0,2);
+      const others=pair.map(s=>dist(s.a,vertex)<1e-8?s.b:s.a);
+      const l0=dist(vertex,others[0]),l1=dist(vertex,others[1]),arm=Math.min(l0,l1)/3;
+      const u0={z:(others[0].z-vertex.z)/(l0||1),r:(others[0].r-vertex.r)/(l0||1)};
+      const u1={z:(others[1].z-vertex.z)/(l1||1),r:(others[1].r-vertex.r)/(l1||1)};
+      /* نیمساز جهت‌های ورودی/خروجی، مستقل از طول اضلاع، محور پایدار دسته‌هاست.
+         علامت براساس جایگاه Segment در جفت تعیین می‌شود تا دو دسته حتی در
+         گوشه‌های تند، برگشت مسیر و اضلاع هم‌اندازه دقیقاً روبه‌روی هم باشند. */
+      let tz=u0.z-u1.z,tr=u0.r-u1.r,tl=Math.hypot(tz,tr);
+      if(tl<1e-9){tz=-u0.r;tr=u0.z;tl=Math.hypot(tz,tr)||1;}
+      const ux=tz/tl,ur=tr/tl;
+      next=next.map(s=>{
+        const pairIndex=pair.findIndex(item=>item.id===s.id);if(pairIndex<0)return s;
+        const atA=dist(s.a,vertex)<1e-8;
+        const sign=pairIndex===0?1:-1;
+        const handle={z:vertex.z+ux*arm*sign,r:vertex.r+ur*arm*sign};
+        /* فقط رأس انتخاب‌شده دسته می‌گیرد. کنترل سمت دیگر Segment دقیقاً روی
+           نقطهٔ انتهایی می‌ماند تا روی دو رأس هم‌جوار منحنی کنترلی ایجاد نشود.
+           اگر آن رأس قبلاً مستقلاً منحنی شده باشد، کنترل موجودش حفظ می‌شود. */
+        return {...s,kind:"cubic" as const,via:undefined,c1:atA?handle:(s.kind==="cubic"&&s.c1?s.c1:{...s.a}),c2:atA?(s.kind==="cubic"&&s.c2?s.c2:{...s.b}):handle,[atA?"independentA":"independentB"]:false};
+      });
+    }
+    commit(next);setCtxMenu(null);
+  };
+
+  const selectedVerticesFor=(fallback:{segId:number;part:"a"|"b"})=>{
+    const endpoints=selPoints.filter((point):point is {segId:number;part:"a"|"b"}=>point.part==="a"||point.part==="b");
+    const source=segs.find(segment=>segment.id===fallback.segId),vertex=source?.[fallback.part];
+    const clickedIsSelected=!!vertex&&endpoints.some(point=>{const owner=segs.find(segment=>segment.id===point.segId);return !!owner&&dist(owner[point.part],vertex)<1e-8;});
+    return clickedIsSelected?endpoints:[fallback];
+  };
+
+  const simplifyPolylineVertex=(fallback:{segId:number;part:"a"|"b"})=>{
+    const points=selectedVerticesFor(fallback);
+    let next=segs.map(segment=>({...segment}));
+    const done=new Set<string>();
+    for(const point of points){
+      const source=next.find(segment=>segment.id===point.segId);if(!source||source.polylineId==null)continue;
+      const vertex=source[point.part],key=`${source.polylineId}:${vertex.z}:${vertex.r}`;if(done.has(key))continue;done.add(key);
+      next=next.map(segment=>{
+        if(segment.polylineId!==source.polylineId||segment.kind!=="cubic")return segment;
+        const atA=dist(segment.a,vertex)<1e-8,atB=dist(segment.b,vertex)<1e-8;if(!atA&&!atB)return segment;
+        const c1=atA?{...segment.a}:segment.c1,c2=atB?{...segment.b}:segment.c2;
+        const noStart=!c1||dist(c1,segment.a)<1e-8,noEnd=!c2||dist(c2,segment.b)<1e-8;
+        return noStart&&noEnd?{...segment,kind:"line" as const,c1:undefined,c2:undefined}:{...segment,c1,c2};
+      });
+    }
+    /* تغییر نوع رأس نباید انتخاب فعلی Polyline را از بین ببرد. */
+    commit(next);setSelPoints(points);setCtxMenu(null);
+  };
+
+  const vertexHasControl=(segId:number,part:"a"|"b")=>selectedVerticesFor({segId,part}).some(point=>{
+    const source=segs.find(segment=>segment.id===point.segId);if(!source||source.polylineId==null)return false;
+    const vertex=source[point.part];
+    return segs.some(segment=>segment.polylineId===source.polylineId&&segment.kind==="cubic"&&
+      ((dist(segment.a,vertex)<1e-8&&!!segment.c1&&dist(segment.a,segment.c1)>1e-8)||(dist(segment.b,vertex)<1e-8&&!!segment.c2&&dist(segment.b,segment.c2)>1e-8)));
+  });
+
+  const convertPolylineEdge=(id:number,kind:"line"|"arc"|"cubic")=>{
+    commit(segs.map(segment=>{
+      if(segment.id!==id||segment.polylineId==null)return segment;
+      if(kind==="line") return {...segment,kind:"line" as const,c1:undefined,c2:undefined,via:undefined};
+      if(kind==="cubic"){
+        const [c1,c2]=defaultCubicHandles(segment.a,segment.b);
+        return {...segment,kind:"cubic" as const,c1,c2,via:undefined};
+      }
+      const dz=segment.b.z-segment.a.z,dr=segment.b.r-segment.a.r,length=Math.hypot(dz,dr);
+      const via={z:(segment.a.z+segment.b.z)/2-(length?dr/length:0)*length*.18,r:(segment.a.r+segment.b.r)/2+(length?dz/length:0)*length*.18};
+      return {...segment,kind:"arc" as const,via,c1:undefined,c2:undefined};
+    }));
+    onSelected([id]);setSelPoints([]);setSegmentCtxMenu(null);
+  };
+
   const deleteSelected = () => {
     if (!selected.length) return;
-    commit(segs.filter((s) => !selected.includes(s.id)));
+    const removed=new Set(selected);
+    const next=segs.map(s=>({...s}));
+    const byGroup=new Map<number,SketchSeg[]>();
+    for(const s of next)if(s.polylineId!=null){const list=byGroup.get(s.polylineId)??[];list.push(s);byGroup.set(s.polylineId,list);}
+    const same=(a:SPoint,b:SPoint)=>Math.abs(a.z-b.z)<1e-8&&Math.abs(a.r-b.r)<1e-8;
+    const sharedPart=(a:SketchSeg,b:SketchSeg):"a"|"b"|null=>same(a.a,b.a)||same(a.a,b.b)?"a":same(a.b,b.a)||same(a.b,b.b)?"b":null;
+    /* با حذف یک یا چند ضلع متوالی Polyline، انتهای ضلع قبلی به نقطهٔ اتصال
+       ضلع بعدی کشیده می‌شود تا زنجیره باز نماند. */
+    for(const group of byGroup.values())for(let i=0;i<group.length;){
+      if(!removed.has(group[i].id)){i++;continue;}
+      const first=i;while(i+1<group.length&&removed.has(group[i+1].id))i++;const last=i;
+      const prev=first>0&&!removed.has(group[first-1].id)?group[first-1]:null;
+      const after=last+1<group.length&&!removed.has(group[last+1].id)?group[last+1]:null;
+      if(prev&&after){
+        const prevPart=sharedPart(prev,group[first]);
+        const afterPart=sharedPart(after,group[last]);
+        if(prevPart&&afterPart){
+          const target=after[afterPart],old=prev[prevPart],dz=target.z-old.z,dr=target.r-old.r;
+          prev[prevPart]={...target};
+          if(prev.kind==="cubic"){
+            if(prevPart==="a"&&prev.c1)prev.c1={z:prev.c1.z+dz,r:prev.c1.r+dr};
+            if(prevPart==="b"&&prev.c2)prev.c2={z:prev.c2.z+dz,r:prev.c2.r+dr};
+          }
+        }
+      }
+      i++;
+    }
+    const kept=next.filter(s=>!removed.has(s.id)&&!(s.kind==="line"&&dist(s.a,s.b)<1e-8));
+    commit(kept);
     onSelected([]);
+    setSelPoints([]);
   };
 
   const deleteSelectedSplit = () => {
@@ -1379,6 +2203,15 @@ export default function ProfileEditor({
     onSplit({ ...split, enabled: false });
     setSplitSelected(false);
     setSplitHovered(false);
+  };
+
+  /* سطل زباله و کلیدهای Delete/Backspace باید همهٔ انتخاب‌های فعلی، از جمله
+     نقطه Split و خطوط پروفایل، را با هم حذف کنند. */
+  const deleteSelection = () => {
+    const hasLines = selected.length > 0;
+    const hasSplit = splitSelected;
+    if (hasLines) deleteSelected();
+    if (hasSplit) deleteSelectedSplit();
   };
 
   /*
@@ -1435,7 +2268,9 @@ export default function ProfileEditor({
         next = next.filter((s) => s.id !== o1.seg.id && s.id !== o2.seg.id);
         removedSegIds.add(o1.seg.id);
         removedSegIds.add(o2.seg.id);
-        next.push(newSeg);
+        /* ادغام دو سر هم‌مکان نباید Segment صفرطول بسازد؛ چنین Segmentی فقط
+           به‌صورت یک نقطه با linecap گرد دیده می‌شود و Hit-test خط ندارد. */
+        if(dist(newSeg.a,newSeg.b)>=1e-8||newSeg.kind!=="line")next.push(newSeg);
         nextSelPoints = nextSelPoints.filter((p) => p.segId !== o1.seg.id && p.segId !== o2.seg.id);
       } else if (owners.length === 1) {
         /* نقطه فقط متعلق به یک المان — حذف همان المان */
@@ -1445,8 +2280,10 @@ export default function ProfileEditor({
       }
     }
 
+    next=next.filter(segment=>!(segment.kind==="line"&&dist(segment.a,segment.b)<1e-8));
+    const survivingIds=new Set(next.map(segment=>segment.id));
     commit(next);
-    setSelPoints(nextSelPoints.filter((p) => !removedSegIds.has(p.segId)));
+    setSelPoints(nextSelPoints.filter((p) => !removedSegIds.has(p.segId)&&survivingIds.has(p.segId)));
   };
 
   const duplicateSelected = () => {
@@ -1468,6 +2305,27 @@ export default function ProfileEditor({
   };
 
   /* ویرایش مختصات یک نقطهٔ مستقل */
+  const alignSelectedPoints = (axis: "top" | "bottom" | "left" | "right") => {
+    const points = selPoints.flatMap((ref) => {
+      const seg = segs.find((item) => item.id === ref.segId);
+      const point = seg?.[ref.part];
+      return point ? [{ ref, point }] : [];
+    });
+    if (points.length < 2) return;
+    const target = axis === "top" ? Math.max(...points.map((item) => item.point.r))
+      : axis === "bottom" ? Math.min(...points.map((item) => item.point.r))
+      : axis === "right" ? Math.max(...points.map((item) => item.point.z))
+      : Math.min(...points.map((item) => item.point.z));
+    const next = segs.map((seg) => {
+      let out = seg;
+      for (const { ref, point } of points) {
+        if (ref.segId === seg.id) out = withSegPoint(out, ref.part, axis === "top" || axis === "bottom" ? { ...point, r: target } : { ...point, z: target });
+      }
+      return out;
+    });
+    onSegs(next, true);
+  };
+
   const patchPoint = (segId: number, part: SketchPointPart, patch: Partial<SPoint>) => {
     const next = segs.map((s) => {
       if (s.id !== segId) return s;
@@ -1495,7 +2353,34 @@ export default function ProfileEditor({
 
   /* جداسازی نقطه: دیگر با نقاط هم‌مکان خود جابه‌جا نمی‌شود */
   const doUnjoin = (segId: number, part: "a" | "b") => {
-    setSeparated((prev) => new Set(prev).add(handleKey(segId, part)));
+    const target = segs.find((segment) => segment.id === segId);
+    const origin = target?.[part];
+    setSeparated((prev) => {
+      const next = new Set(prev);
+      next.add(handleKey(segId, part));
+      /* هر دو سوی اتصال علامت می‌خورند تا حرکت هر سمت بتواند Marker را پاک کند. */
+      if (origin) for (const segment of segs) for (const endpoint of ["a", "b"] as const) {
+        if (Math.hypot(segment[endpoint].z - origin.z, segment[endpoint].r - origin.r) < 1e-8) next.add(handleKey(segment.id, endpoint));
+      }
+      return next;
+    });
+    if (target?.polylineId != null) {
+      const members = segs.filter((segment) => segment.polylineId === target.polylineId);
+      const index = members.findIndex((segment) => segment.id === segId);
+      const cut = part === "a" ? index : index + 1;
+      const left = new Set(members.slice(0, cut).map((segment) => segment.id));
+      const right = new Set(members.slice(cut).map((segment) => segment.id));
+      const leftGroup = left.size > 1 ? members.find((segment) => left.has(segment.id))!.id : undefined;
+      const rightGroup = right.size > 1 ? members.find((segment) => right.has(segment.id))!.id : undefined;
+      /* دو سوی Unjoin شناسه‌های مستقل می‌گیرند؛ عضو تک‌خطی دیگر Polyline نیست. */
+      onSegs(segs.map((segment) => {
+        if (left.has(segment.id)) return { ...segment, polylineId: leftGroup };
+        if (right.has(segment.id)) return { ...segment, polylineId: rightGroup };
+        return segment;
+      }), true);
+      /* سمتی که نقطهٔ انتخاب‌شده به آن تعلق دارد، به‌طور کامل Select می‌شود. */
+      onSelected([...(part === "a" ? right : left)]);
+    }
     setCtxMenu(null);
   };
 
@@ -1507,6 +2392,7 @@ export default function ProfileEditor({
     const origin = seg[part];
     const tol = 20 / (camRef.current?.s ?? 1);
     let nearest: SPoint | null = null;
+    let nearestSeg: SketchSeg | null = null;
     let nd = tol;
     for (const s of segs) {
       for (const pp of ["a", "b"] as const) {
@@ -1515,12 +2401,24 @@ export default function ProfileEditor({
         if (d > 1e-6 && d < nd) {
           nd = d;
           nearest = s[pp];
+          nearestSeg = s;
         }
       }
     }
-    if (nearest) {
+    if (nearest && nearestSeg) {
       const target = nearest;
-      onSegs(segs.map((s) => (s.id === segId ? ({ ...s, [part]: { ...target } } as SketchSeg) : s)), true);
+      const sourceSeg = seg;
+      const sourceGroup = sourceSeg.polylineId;
+      const targetGroup = nearestSeg.polylineId;
+      const group = sourceGroup ?? targetGroup ?? (Math.max(0, ...segs.map(s => s.polylineId ?? 0)) + 1);
+      const groupsToMerge = new Set<number>([group]);
+      if (sourceGroup != null) groupsToMerge.add(sourceGroup);
+      if (targetGroup != null) groupsToMerge.add(targetGroup);
+      onSegs(segs.map((s) => {
+        const belongs = s.id === segId || s.id === nearestSeg!.id || (s.polylineId != null && groupsToMerge.has(s.polylineId));
+        const next = belongs ? { ...s, polylineId: group } : s;
+        return s.id === segId ? ({ ...next, [part]: { ...target } } as SketchSeg) : next;
+      }), true);
     }
     setSeparated((prev) => {
       const n = new Set(prev);
@@ -1541,6 +2439,39 @@ export default function ProfileEditor({
   const pathEndVid = lines[lines.length - 1]?.vb ?? null;
   const vById = useMemo(() => new Map(verts.map((v) => [v.id, v])), [verts]);
   const lineById = useMemo(() => new Map(lines.map((l) => [l.id, l])), [lines]);
+  const editSplitVertexId = useMemo(() => {
+    if (!split.enabled || !edit || !edit.verts.length) return null;
+    return edit.verts.reduce((best, vertex) => {
+      const current = edit.verts.find((item) => item.id === best)!;
+      const d = (vertex.z - split.z) ** 2 + (vertex.x / 2 - split.r) ** 2;
+      const bd = (current.z - split.z) ** 2 + (current.x / 2 - split.r) ** 2;
+      return d < bd ? vertex.id : best;
+    }, edit.verts[0].id);
+  }, [edit, split.enabled, split.z, split.r]);
+  const splitEditVertexConnected = (vid: number) => editSplitVertexId != null && vid === editSplitVertexId;
+  const editInnerSplitPoint = useMemo(() => {
+    if (!editOpen || !split.enabled || !edit) return null;
+    const holder2 = edit.holder2 ?? params.holder2;
+    /* seedGcodeEdit در فضای ماشین ذخیره می‌کند: H2 نسبت به نقطه طراحی
+       در +Z به اندازه xOff و در شعاع به اندازه -yOff جابه‌جا است. */
+    return { z: split.z + holder2.xOff, r: split.r - holder2.yOff };
+  }, [editOpen, split.enabled, split.z, split.r, edit, params.holder2]);
+  /* نگاشت قاب هنگام خروج فقط زمانی لازم است که کاربر واقعاً در حالت ویرایش Pan
+     کرده باشد. ورود/خروج ساده یا Zoom بدون Pan نباید Camera را دست‌کاری کند. */
+  const editPanOccurredRef=useRef(false);
+  const returnFocusRef=useRef<{screenX:number;screenY:number;profile:SPoint}|null>(null);
+  const wasEditOpenRef=useRef(editOpen);
+  useEffect(()=>{
+    if(editOpen&&!wasEditOpenRef.current){editPanOccurredRef.current=false;returnFocusRef.current=null;}
+    if(editOpen&&editPanOccurredRef.current&&cam&&size.w>0&&size.h>0){
+      returnFocusRef.current=null;
+      const center=worldPt(cam,size.w/2,size.h/2);let toolPoint:SPoint|null=null,toolBest=Infinity;
+      for(const line of lines){if(line.kind!=="bore"&&line.kind!=="boreoff"&&line.kind!=="borefin")continue;const a=vById.get(line.va),b=vById.get(line.vb);if(!a||!b)continue;const az=a.z,ar=a.x/2,dz=b.z-az,dr=b.x/2-ar,len2=dz*dz+dr*dr,t=len2?Math.max(0,Math.min(1,((center.z-az)*dz+(center.r-ar)*dr)/len2)):0,q={z:az+dz*t,r:ar+dr*t},d=Math.hypot(q.z-center.z,q.r-center.r);if(d<toolBest){toolBest=d;toolPoint=q;}}
+      if(toolPoint){const [screenX,screenY]=screenPt(cam,toolPoint.z,toolPoint.r),margin=40;if(screenX>=-margin&&screenX<=size.w+margin&&screenY>=-margin&&screenY<=size.h+margin){let profile:SPoint|null=null,best=Infinity;for(const seg of segs){if(split.enabled&&segSide.get(seg.id)!=="inner")continue;const hit=nearestOnSeg(seg,toolPoint);if(hit.distance<best){best=hit.distance;profile=hit.point;}}if(profile)returnFocusRef.current={screenX,screenY,profile};}}
+    }
+    if(!editOpen&&wasEditOpenRef.current&&editPanOccurredRef.current&&returnFocusRef.current){const anchor=returnFocusRef.current;setCam(c=>c?{s:c.s,ox:anchor.screenX-anchor.profile.z*c.s,oy:anchor.screenY+anchor.profile.r*c.s}:c);returnFocusRef.current=null;editPanOccurredRef.current=false;}
+    wasEditOpenRef.current=editOpen;
+  },[editOpen,cam,size.w,size.h,lines,vById,segs,split.enabled,segSide]);
   const vertexLineCount = useMemo(() => {
     const count = new Map<number, number>();
     for (const line of lines) {
@@ -1598,18 +2529,8 @@ export default function ProfileEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isolatedOpId, editOpen]);
 
-  /* با ورود به ویرایش مسیر، قاب دور کل مسیر واقعی ماشین (شامل آفست هلدر ۲) تنظیم می‌شود. */
-  const editFitDone = useRef(false);
-  useEffect(() => {
-    if (!editOpen) { editFitDone.current = false; return; }
-    if (editFitDone.current || !verts.length || size.w < 40 || size.h < 40) return;
-    let z0 = 0, z1 = L, r0 = -R, r1 = R;
-    for (const v of verts) { z0 = Math.min(z0, v.z); z1 = Math.max(z1, v.z); r0 = Math.min(r0, v.x / 2); r1 = Math.max(r1, v.x / 2); }
-    const pad = 56, sw = Math.max(1, z1 - z0), sh = Math.max(1, r1 - r0);
-    const scale = Math.max(0.2, Math.min(90, Math.min((size.w - 2 * pad) / sw, (size.h - 2 * pad) / sh)));
-    setCam({ s: scale, ox: (size.w - sw * scale) / 2 - z0 * scale, oy: (size.h + (r0 + r1) * scale) / 2 });
-    editFitDone.current = true;
-  }, [editOpen, verts, size.w, size.h, L, R]);
+  /* ورود به ویرایش مسیر نباید Pan، Zoom یا قاب فعلی کاربر را تغییر دهد.
+     جاگذاری نما فقط با دکمهٔ صریح خود کاربر انجام می‌شود. */
 
   /* ران‌های بافر برای رسم — مسیرِ کامل، یک زنجیرۀ پیوسته (اتصال‌ها رأسِ مشترک‌اند) */
   const bufRuns = useMemo(() => {
@@ -1721,10 +2642,17 @@ export default function ProfileEditor({
     else applySelectedSpeed(1, value);
   };
   const openSpeedMenu = (clientX: number, clientY: number) => {
-    if (!editOpen || !selL.length) return;
+    if (!editOpen) return;
     const loc = toLocal(clientX, clientY);
-    const hit = hitBufLines(loc.x, loc.y).find((id) => selectedLineIds.has(id));
+    const hit = hitBufLine(loc.x, loc.y);
     if (hit == null) return;
+    /* راست‌کلیک روی خط انتخاب‌نشده همان خط را همان لحظه فعال می‌کند؛ بنابراین
+       برای بازکردن منوی سرعت نیازی به کلیک چپ اولیه نیست. انتخاب چندتایی موجود
+       فقط وقتی حفظ می‌شود که راست‌کلیک روی یکی از همان خطوط انجام شده باشد. */
+    if (!selectedLineIds.has(hit)) {
+      selectEditLines([hit], hit, true);
+      setSelV([]);
+    }
     const rect = wrapRef.current!.getBoundingClientRect();
     setManualSpeed("");
     setSpeedError("");
@@ -1845,35 +2773,292 @@ export default function ProfileEditor({
         /** Drag روی Segmentهای H2 یعنی تغییر سراسری آفست، نه اعوجاج یک خط. */
         holder2?: { base: Holder2State; next: Holder2State; latestVerts: EVert[] };
       }
-    | { mode: "evert"; vid: number; start: SPoint; base: EVert; sx: number; sy: number; moved: boolean }
+    | { mode: "evert"; vids: number[]; start: SPoint; base: Map<number, EVert>; sx: number; sy: number; moved: boolean }
     | { mode: "eoff"; id: number; last: SPoint; seed: SketchSeg; sx: number; sy: number; moved: boolean }
     | { mode: "eoffh"; id: number; part: "a" | "b" | "c1" | "c2" | "via"; sx: number; sy: number; moved: boolean }
     | null
   >(null);
+  /* Pan موقت با دکمه وسط/راست، بدون از دست‌دادن Drag فعالِ رأس Edit Path. */
+  const editVertexPan = useRef<{ pointerId: number; sx: number; sy: number; cam0: Cam } | null>(null);
 
   const toLocal = (clientX: number, clientY: number): { x: number; y: number } => {
     const rect = svgRef.current!.getBoundingClientRect();
     return { x: clientX - rect.left, y: clientY - rect.top };
   };
 
-  /* هر دو نشانِ بالا/پایین نمایندهٔ یک Split منطقی‌اند و محدودهٔ کلیک آن‌ها
-     کمی بزرگ‌تر از علامت کوچک بصری است تا انتخاب در هر سطح زوم راحت بماند. */
+  /* فقط نشان اصلی Split روی پروفایل فعال است؛ قرینهٔ سمت مقابل حذف شده است. */
   const hitSplitMarker = (px: number, py: number): boolean => {
     const c = camRef.current;
     if (!c || editOpen || !split.enabled) return false;
     const [x, y] = screenPt(c, split.z, split.r);
-    const [, ym] = screenPt(c, split.z, -split.r);
-    return Math.min(Math.hypot(px - x, py - y), Math.hypot(px - x, py - ym)) <= 10;
+    return Math.hypot(px - x, py - y) <= 10;
+  };
+
+  const sketchObjectIds = (id: number): number[] => {
+    const segment = segs.find((item) => item.id === id);
+    if (!segment) return [];
+    const group = segment.polylineId;
+    const ids = new Set<number>(group == null ? [id] : segs.filter(item => item.polylineId === group).map(item => item.id));
+    // اتصال هندسی را نیز دنبال می‌کنیم تا عنصری که با اتصال نقطه‌ای وارد
+    // Polyline شده ولی هنوز شناسه گروه قدیمی دارد، در انتخاب جا نماند.
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const item of segs) {
+        if (ids.has(item.id)) continue;
+        const touches = segs.some(other => ids.has(other.id) &&
+          ([item.a, item.b].some(a => [other.a, other.b].some(b => dist(a,b) < 1e-7))));
+        if (touches) { ids.add(item.id); changed = true; }
+      }
+    }
+    return [...ids];
   };
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     if (!camRef.current) return;
     setCtxMenu(null);
+    setSegmentCtxMenu(null);
+    setSplitCtxMenu(null);
     setSpeedMenu(null);
     /* گرفتن اشاره‌گر روی خودِ SVG تا رویدادهای move/up همیشه به آن برسند */
     svgRef.current?.setPointerCapture?.(e.pointerId);
     const raw = toWorld(e.clientX, e.clientY);
-    if (tool === "move" && e.button === 0) { const r = wrapRef.current!.getBoundingClientRect(); setMoveBox({x:e.clientX-r.left+12,y:e.clientY-r.top+12,value:"",error:""}); }
+    if(e.button===0&&!editOpen&&(tool==="select"||tool==="move"||tool==="boxscale"||tool==="scale")){
+      /* پروفایل همیشه بر عکسِ زیرین اولویت دارد؛ در غیر این صورت کلیک روی
+         تصویر، انتخاب خط یا جابه‌جایی رأس را می‌بلعد. */
+      const [profileX, profileY] = screenPt(camRef.current, raw.z, raw.r);
+      const profileHit = hitSeg(raw) || hitHandle(raw) || (editOpen && hitBufVx(profileX, profileY) != null);
+      if (!profileHit) {
+        const hit=[...referenceImages].reverse().find(img=>{const cz=img.z+img.width/2,cr=img.r-img.height/2,a=-(img.rotation??0)*Math.PI/180,dz=raw.z-cz,dr=raw.r-cr,z=cz+dz*Math.cos(a)-dr*Math.sin(a),r=cr+dz*Math.sin(a)+dr*Math.cos(a);return z>=img.z&&z<=img.z+img.width&&r<=img.r&&r>=img.r-img.height;});
+        if(hit){imageHistoryFocus.current=true;setSelectedImageId(hit.id);if(tool==="scale"&&!hit.locked){if(!imageScaleSession||imageScaleSession.id!==hit.id){setImageScaleSession({id:hit.id,p1:raw,base:{...hit}});setImageScaleValue("");}else if(!imageScaleSession.p2){setImageScaleSession({...imageScaleSession,p2:raw});requestAnimationFrame(()=>imageScaleInputRef.current?.focus());}return;}if(!hit.locked)imageDrag.current={id:hit.id,start:raw,base:{...hit},mode:"move"};return;}
+      }
+    }
+    if(imageHistoryFocus.current){imageHistoryFocus.current=false;setImageHistoryVersion(v=>v+1);}
+    if (tool === "fillet" && e.button === 0 && !editOpen) {
+      const hit = hitSeg(raw);
+      if (!hit || hit.kind !== "line") {
+        if (filletPicks.length === 0) setFilletBox(null);
+        return;
+      }
+      if (filletPicks.length === 0 || filletPicks[0].id === hit.id) {
+        setFilletPicks([{ id: hit.id, click: raw }]);
+        onSelected([hit.id]);
+        setFilletBox(null);
+      } else {
+        const next = [filletPicks[0], { id: hit.id, click: raw }];
+        setFilletPicks(next);
+        onSelected(next.map((pick) => pick.id));
+        const rect = wrapRef.current!.getBoundingClientRect();
+        setFilletBox({ x: Math.min(rect.width - 128, Math.max(40, e.clientX - rect.left + 14)), y: Math.min(rect.height - 58, Math.max(8, e.clientY - rect.top - 44)), value: "5", error: "" });
+      }
+      drag.current = null;
+      return;
+    }
+    if (tool === "rotate" && e.button === 0 && !editOpen) {
+      if (rotateSession) {
+        onSegs(segs,true); setRotateSession(null); setRotateBox(null); chooseTool("select"); return;
+      }
+      if (!selected.length) { const hit=hitSeg(raw); if(hit) onSelected(sketchObjectIds(hit.id)); return; }
+      const source=segs.filter(s=>selected.includes(s.id)), bounds=source.map(segBounds);
+      if(!bounds.length)return;
+      const centroid={z:(Math.min(...bounds.map(b=>b.minZ))+Math.max(...bounds.map(b=>b.maxZ)))/2,r:(Math.min(...bounds.map(b=>b.minR))+Math.max(...bounds.map(b=>b.maxR)))/2};
+      const startAngle=Math.atan2(centroid.r-raw.r,centroid.z-raw.z);
+      const rect=wrapRef.current!.getBoundingClientRect();
+      setRotateSession({ids:[...selected],base:segs.map(s=>({...s})),center:raw,startAngle,pointer:centroid,angle:0,mode:"angle",step:15});
+      setRotateBox({x:Math.min(rect.width-72,Math.max(4,e.clientX-rect.left+12)),y:Math.min(rect.height-48,Math.max(4,e.clientY-rect.top-48)),value:"",error:""});
+      return;
+    }
+    if (tool === "boxscale" && e.button === 0 && !editOpen) {
+      if (!selected.length) {
+        const hit = hitSeg(raw);
+        if (hit) onSelected(sketchObjectIds(hit.id));
+      }
+      return;
+    }
+    if (tool === "scale" && e.button === 0 && !editOpen) {
+      if (!scaleSession) {
+        /* اگر چیزی انتخاب نشده، کلیک اول فقط آبجکت/Polyline را انتخاب می‌کند.
+           کلیک بعدی نقطه مبنا را تعیین کرده و نشست Scale را آغاز می‌کند. */
+        if (!selected.length) {
+          const hit = hitSeg(raw);
+          if (!hit) return;
+          onSelected(sketchObjectIds(hit.id));
+          setSnapHit(null);
+          return;
+        }
+        const ids = [...selected];
+        const origin = raw;
+        setScaleSession({ ids, base: segs.map((segment) => ({ ...segment })), origin });
+        setSnapHit(null);
+        return;
+      }
+      if (!scaleSession.reference) {
+        const snapped = applySnap(raw);
+        const hit = hitSeg(raw);
+        const reference = snapped.hit ? snapped.p : hit ? nearestOnSeg(hit, raw).point : raw;
+        const referenceLength = dist(scaleSession.origin, reference);
+        if (referenceLength < 1e-8) return;
+        const rect = wrapRef.current!.getBoundingClientRect();
+        setScaleSession({ ...scaleSession, reference, pointer: reference, referenceLength });
+        setScaleBox({ x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 48, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+        /* نشان اسنپِ نقطه دوم عمداً باقی می‌ماند تا کاربر از اتصال مطمئن شود. */
+        setSnapHit(snapped.hit);
+        return;
+      }
+      onSegs(segs, true);
+      setScaleSession(null);
+      setScaleBox(null);
+      chooseTool("select");
+      return;
+    }
+    if (tool === "mirror" && e.button === 0 && !editOpen) {
+      if (!mirrorSession) {
+        const hit = hitSeg(raw);
+        const ids = selected.length ? [...selected] : (hit ? sketchObjectIds(hit.id) : []);
+        if (!ids.length) return;
+        if (!selected.length) onSelected(ids);
+        setSnapHit(null);
+        setMirrorSession({
+          ids,
+          base: segs.map((segment) => ({ ...segment })),
+          source: segs.filter((segment) => ids.includes(segment.id)),
+          keepCopy: mirrorKeepCopy,
+          p1: selected.length ? raw : undefined,
+          cursor: selected.length ? raw : undefined,
+        });
+        return;
+      }
+      if (!mirrorSession.p1) {
+        setSnapHit(null);
+        setMirrorSession({ ...mirrorSession, p1: raw, cursor: raw });
+        return;
+      }
+      if (!mirrorSession.p2) {
+        let p2 = raw;
+        const dz = raw.z - mirrorSession.p1.z, dr = raw.r - mirrorSession.p1.r;
+        if (e.shiftKey) p2 = Math.abs(dz) >= Math.abs(dr) ? { z: raw.z, r: mirrorSession.p1.r } : { z: mirrorSession.p1.z, r: raw.r };
+        if (dist(mirrorSession.p1, p2) < 1e-8) return;
+        const mirrored = makeMirroredSegments(mirrorSession.source, mirrorSession.p1, p2);
+        const next = mirrorSession.keepCopy
+          ? [...mirrorSession.base, ...mirrored]
+          : [...mirrorSession.base.filter((segment) => !mirrorSession.ids.includes(segment.id)), ...mirrored];
+        onSegs(next, true);
+        onSelected(mirrored.map((segment) => segment.id));
+        setMirrorSession(null);
+        chooseTool("select");
+        return;
+      }
+    }
+    if (tool === "copy" && e.button === 0 && !editOpen) {
+      if (copySession) {
+        onSegs(segs, true);
+        onSelected(copySession.copies.map((segment) => segment.id));
+        setCopySession(null);
+        setCopyBox(null);
+        return;
+      }
+      const hit = hitSeg(raw);
+      const sourceIds = hit ? (selected.includes(hit.id) ? [...selected] : sketchObjectIds(hit.id)) : [...selected];
+      if (!sourceIds.length) return;
+      const source = segs.filter((segment) => sourceIds.includes(segment.id));
+      const copies = source.map((segment) => cloneSeg(segment));
+      const groupMap = new Map<number, number>();
+      source.forEach((segment, index) => {
+        if (segment.polylineId != null && !groupMap.has(segment.polylineId)) groupMap.set(segment.polylineId, copies[index].id);
+      });
+      copies.forEach((segment, index) => {
+        const oldGroup = source[index].polylineId;
+        segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
+      });
+      if (hit) onSelected(sourceIds);
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setCopySession({ sourceIds, base: segs.map((segment) => ({ ...segment })), copies, origin: raw, pointer: raw, axis: "free", distanceConfirmed: false });
+      setCopyBox({ x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+      return;
+    }
+    if (tool === "move" && e.button === 0) {
+      /* کلیک دوم، پیش‌نمایش فعلی را تأیید می‌کند و پنجره را می‌بندد. */
+      if (moveSession) {
+        const base = moveSession.base.find((segment) => moveSession.ids.includes(segment.id));
+        const current = base ? segs.find((segment) => segment.id === base.id) : null;
+        if (base && current) setLastMove({ dz: current.a.z - base.a.z, dr: current.a.r - base.a.r });
+        if (moveSession.editBase && edit) onEditBuf({ ...edit }, true);
+        else onSegs(segs, true);
+        setMoveBox(null); setMoveSession(null);
+        return;
+      }
+      let ids: number[];
+      let editBase: EVert[] | undefined;
+      let editVertexIds: number[] | undefined;
+      if (editOpen && edit) {
+        const loc = toLocal(e.clientX, e.clientY);
+        const hitVertex = hitBufVx(loc.x, loc.y);
+        const hit = hitVertex == null ? hitBufLine(loc.x, loc.y) : null;
+        const vertexSet = new Set<number>();
+        if (selV.length) {
+          ids = selV.map((id) => -id - 1);
+          for (const id of selV) vertexSet.add(id);
+        } else if (selL.length) {
+          ids = [...selL];
+          for (const line of edit.lines) if (ids.includes(line.id)) { vertexSet.add(line.va); vertexSet.add(line.vb); }
+        } else if (hitVertex != null) {
+          setSelV([hitVertex]);
+          ids = [-hitVertex - 1]; // کلید داخلی برای نشست Move نقطه‌ای
+          vertexSet.add(hitVertex);
+        } else if (hit != null) {
+          ids = [hit];
+          selectEditLines(ids, hit, true);
+          for (const line of edit.lines) if (line.id === hit) { vertexSet.add(line.va); vertexSet.add(line.vb); }
+        } else return;
+        editVertexIds = [...vertexSet];
+        editBase = edit.verts.map((vertex) => ({ ...vertex }));
+      } else {
+        /* انتخاب موجود همیشه بر هندسهٔ زیر کلیک اولویت دارد. */
+        if (selPoints.length) {
+          const refs = new Map<string, { segId: number; part: SketchPointPart }>();
+          for (const point of selPoints) {
+            const members = point.part === "a" || point.part === "b" ? clusterOf(point.segId, point.part) : [point];
+            for (const member of members) refs.set(`${member.segId}:${member.part}`, member);
+          }
+          for (const member of [...refs.values()]) {
+            const segment = segs.find((item) => item.id === member.segId);
+            if (member.part === "a" && segment?.c1) refs.set(`${member.segId}:c1`, { segId: member.segId, part: "c1" });
+            if (member.part === "b" && segment?.c2) refs.set(`${member.segId}:c2`, { segId: member.segId, part: "c2" });
+          }
+          ids = [];
+          const rect = wrapRef.current!.getBoundingClientRect();
+          setMoveSession({ ids, pointRefs: [...refs.values()], base: segs.map((segment) => ({ ...segment })), origin: raw, pointer: raw, clientX: e.clientX, clientY: e.clientY, axis: "free", mode: "relative", dirX: 1, dirY: 1, lastClientX: e.clientX, lastClientY: e.clientY });
+          setMoveBox({ x: Math.min(rect.width - 58, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+          setLastMove(null);
+          e.currentTarget.setPointerCapture?.(e.pointerId);
+          return;
+        }
+        const hit = hitSeg(raw);
+        if (selected.length) ids = [...selected];
+        else {
+          ids = hit ? [hit.id] : [];
+          if (hit) onSelected(ids);
+        }
+        if (!ids.length) return;
+      }
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setMoveSession({ ids, base: segs.map((segment) => ({ ...segment })), editBase, editVertexIds, origin: raw, pointer: raw, clientX: e.clientX, clientY: e.clientY, axis: "free", mode: "relative", dirX: 1, dirY: 1, lastClientX: e.clientX, lastClientY: e.clientY });
+      setMoveBox({ x: Math.min(rect.width - 58, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)), value: "", error: "" });
+      drag.current = null;
+      return;
+    }
+
+    /* هنگام Drag رأس در Edit Path، دکمه وسط یا راست فقط یک Pan موقت آغاز
+       می‌کند و خود ژست جابه‌جایی رأس در drag.current حفظ می‌شود. */
+    const activeDragMode = drag.current?.mode;
+    const canPanDuringDrag = activeDragMode === "handle" || activeDragMode === "move" ||
+      activeDragMode === "evert" || activeDragMode === "eline" || activeDragMode === "eoff" || activeDragMode === "eoffh";
+    if (canPanDuringDrag && (e.button === 1 || e.button === 2)) {
+      e.preventDefault();
+      editVertexPan.current = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, cam0: camRef.current };
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      return;
+    }
 
     /* دکمهٔ وسط همیشه پن است (هر ابزاری) */
     if (e.button === 1) {
@@ -1887,6 +3072,46 @@ export default function ProfileEditor({
       return;
     }
 
+    /* در ابزارهای رسم نیز کشیدن یک نقطهٔ موجود، همان نقطه/دسته را جابه‌جا می‌کند.
+       کلیک ساده همچنان در pointerup به‌عنوان ورودی ابزار رسم پردازش می‌شود. */
+    const drawingHandle = !editOpen ? hitHandle(raw) : null;
+    if (drawingHandle) {
+      const cluster = drawingHandle.part === "a" || drawingHandle.part === "b"
+        ? clusterOf(drawingHandle.segId, drawingHandle.part)
+        : [drawingHandle];
+      drag.current = { mode: "handle", ref: drawingHandle, cluster, moved: false };
+      /* انتخاب نقطه مستقل از انتخاب Segment است. بدون کلید کمکی فقط خود نقطه
+         فعال می‌شود؛ نقاط هم‌مکان صرفاً اتصال هندسی خود را حفظ می‌کنند. */
+      if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        /* اگر نقطه/دسته متعلق به Polyline انتخاب‌شده است، Drag آن نباید انتخاب
+           کل Polyline را پاک کند؛ انتخاب فقط برای هندسهٔ خارج از گروه عوض می‌شود. */
+        if(!selected.includes(drawingHandle.segId))onSelected([]);
+        /* هنگام گرفتن دستهٔ Bézier متعلق به رأس انتخاب‌شده، انتخاب رأس را حفظ
+           می‌کنیم تا خود نقطه و دستهٔ مقابل در تمام مدت Drag قابل مشاهده بمانند. */
+        const owner=segs.find(segment=>segment.id===drawingHandle.segId);
+        const anchor=drawingHandle.part==="c1"?owner?.a:drawingHandle.part==="c2"?owner?.b:null;
+        const anchorSelected=!!anchor&&selPoints.some(point=>{
+          if(point.part!=="a"&&point.part!=="b")return false;
+          const segment=segs.find(item=>item.id===point.segId);
+          return !!segment&&dist(segment[point.part],anchor)<1e-8;
+        });
+        const clickedPoint=owner?.[drawingHandle.part];
+        const drawingPointSelected=!!clickedPoint&&selPoints.some(point=>{
+          const segment=segs.find(item=>item.id===point.segId),selectedPoint=segment?.[point.part];
+          if(!selectedPoint)return false;
+          /* دو سر هم‌مکان یک رأس Polyline یک نقطهٔ هندسی‌اند؛ دسته و Via فقط
+             با شناسهٔ خودشان عضو انتخاب چندنقطه‌ای محسوب می‌شوند. */
+          return (drawingHandle.part==="a"||drawingHandle.part==="b")&&(point.part==="a"||point.part==="b")
+            ? dist(selectedPoint,clickedPoint)<1e-8
+            : point.segId===drawingHandle.segId&&point.part===drawingHandle.part;
+        });
+        /* اگر نقطهٔ زیر نشانگر از قبل عضو انتخاب چندنقطه‌ای است، انتخاب را دست
+           نمی‌زنیم تا Drag مشترک در همهٔ ابزارهای رسم فعال بماند. */
+        if(!drawingPointSelected&&(!anchorSelected||!(drawingHandle.part==="c1"||drawingHandle.part==="c2")))setSelPoints([drawingHandle]);
+      }
+      return;
+    }
+
     if (tool !== "select") {
       /* حالت ترسیم — کلیک بدون حرکت نقطه ثبت می‌کند، کشیدن نما را جابه‌جا می‌کند */
       drag.current = { mode: "draw", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false };
@@ -1894,7 +3119,7 @@ export default function ProfileEditor({
     }
 
     /* پن صریح (دکمهٔ دست یا Space) بر باکس انتخاب اولویت دارد */
-    if (panMode || spaceRef.current) {
+    if (panMode) {
       drag.current = { mode: "pan", sx: e.clientX, sy: e.clientY, cam0: camRef.current, moved: false, btn: 0 };
       return;
     }
@@ -1912,30 +3137,40 @@ export default function ProfileEditor({
       setSplitSelected(false);
     }
 
-    const h = editOpen ? null : hitHandle(raw);
-    if (h) {
-      /* نقاط انتهاییِ هم‌مکان به‌صورت یک خوشه با هم جابه‌جا می‌شوند؛ انتخاب نقطه در pointerup */
-      const cluster = h.part === "a" || h.part === "b" ? clusterOf(h.segId, h.part) : [h];
-      drag.current = { mode: "handle", ref: h, cluster, moved: false };
-      return;
-    }
-
     /* --- حالت ویرایش مسیر — رأسِ انتخابی، سرِ افست، منحنی افست، بدنهٔ خط --- */
     if (editOpen) {
       const ploc = toLocal(e.clientX, e.clientY);
-      const nearVerts = hitBufVerts(ploc.x, ploc.y);
+      let nearVerts = hitBufVerts(ploc.x, ploc.y);
       const nearLines = hitBufLines(ploc.x, ploc.y);
-      const endpointCandidate = nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
+      /* اگر خط هایلایت‌شده زیر/روی خطوط دیگر باشد، Drag نقطه فقط رأس‌های همان
+         خط را می‌بیند و رأس هم‌مکان خطوط دیگر وارد انتخاب نمی‌شود. */
+      const preferredLineIds=activeLine==null?selL:[activeLine,...selL.filter(id=>id!==activeLine)];
+      const selectedHitLine=nearLines.find(id=>preferredLineIds.includes(id))??preferredLineIds.find(id=>{const line=lineById.get(id);return !!line&&nearVerts.some(v=>v===line.va||v===line.vb);});
+      if(selectedHitLine!=null){const line=lineById.get(selectedHitLine);if(line)nearVerts=nearVerts.filter(id=>id===line.va||id===line.vb);}
+      const endpointCandidate = hitPathEndpoint(ploc.x, ploc.y) ?? nearVerts.find((id) => id === pathStartVid || id === pathEndVid);
 
+      /* خود آیکن‌های S/E نیز Hit Area مستقل دارند؛ بنابراین مخصوصاً در مسیر بسته
+         که آیکن از رأس فاصله دارد، Drag مستقیماً از روی آیکن آغاز می‌شود. */
       /* نشان‌های ابتدا/انتها بر Segment زیرین اولویت دارند تا با یک کلیک ساده
          انتخاب شوند و همان لحظه امکان drag آن‌ها وجود داشته باشد. */
       if (endpointCandidate != null) {
-        if (e.shiftKey) setSelV(selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate]);
-        else setSelV([endpointCandidate]);
+        const chosen = selectedHitLine!=null ? [endpointCandidate] : e.shiftKey
+          ? (selV.includes(endpointCandidate) ? selV.filter((id) => id !== endpointCandidate) : [...selV, endpointCandidate])
+          : [endpointCandidate];
+        setSelV(chosen);
         focusEditVertexInGCode(endpointCandidate);
         setHitPicker(null);
         setPickerHover(null);
-        drag.current = { mode: "evert", vid: endpointCandidate, start: raw, base: { ...vz(endpointCandidate) }, sx: ploc.x, sy: ploc.y, moved: false };
+        if (splitEditVertexConnected(endpointCandidate)) { drag.current = null; return; }
+        drag.current = {
+          mode: "evert",
+          vids: chosen,
+          start: raw,
+          base: new Map(chosen.map((id) => [id, { ...vz(id) }])),
+          sx: ploc.x,
+          sy: ploc.y,
+          moved: false,
+        };
         return;
       }
 
@@ -1981,10 +3216,20 @@ export default function ProfileEditor({
       setPickerHover(null);
       const bv = hitBufVx(ploc.x, ploc.y);
       if (bv != null) {
-        if (e.shiftKey) setSelV(selV.includes(bv) ? selV.filter((x) => x !== bv) : [...selV, bv]);
-        else if (!selV.includes(bv)) setSelV([bv]);
+        const chosen = selectedHitLine!=null ? [bv] : e.shiftKey
+          ? (selV.includes(bv) ? selV.filter((id) => id !== bv) : [...selV, bv])
+          : [bv];
+        setSelV(chosen);
         focusEditVertexInGCode(bv);
-        drag.current = { mode: "evert", vid: bv, start: raw, base: { ...vz(bv) }, sx: ploc.x, sy: ploc.y, moved: false };
+        drag.current = {
+          mode: "evert",
+          vids: chosen,
+          start: raw,
+          base: new Map(chosen.map((id) => [id, { ...vz(id) }])),
+          sx: ploc.x,
+          sy: ploc.y,
+          moved: false,
+        };
         return;
       }
       const oh = hitOffHandle(ploc.x, ploc.y);
@@ -2021,18 +3266,14 @@ export default function ProfileEditor({
         selectEditLines(ids, bl, true);
         setSelV([]);
         const selectedLines = ids.map((id) => lineById.get(id)).filter((line): line is ELine => !!line);
-        const holder2Drag = selectedLines.length > 0 && selectedLines.every((line) => line.holder === 2);
-        const vset = new Set<number>();
-        if (holder2Drag) {
-          /* آفست H2 یک تبدیل سراسری است؛ مبنا باید کل Polyline باشد تا با
-             انتخاب تنها یک Segment، بقیهٔ داخل‌تراشی عقب نماند. */
-          for (const v of verts) vset.add(v.id);
-        } else {
-          for (const l of selectedLines) { vset.add(l.va); vset.add(l.vb); }
+        if (editSplitVertexId != null && selectedLines.some((line) => line.va === editSplitVertexId || line.vb === editSplitVertexId)) {
+          drag.current = null;
+          return;
         }
+        const vset = new Set<number>();
+        for (const l of selectedLines) { vset.add(l.va); vset.add(l.vb); }
         const base = new Map<number, EVert>();
         for (const vid of vset) base.set(vid, { ...vz(vid) });
-        const holderBase = edit?.holder2 ?? params.holder2;
         drag.current = {
           mode: "eline",
           ids,
@@ -2041,25 +3282,26 @@ export default function ProfileEditor({
           sx: e.clientX,
           sy: e.clientY,
           moved: false,
-          ...(holder2Drag
-            ? { holder2: { base: { ...holderBase }, next: { ...holderBase }, latestVerts: verts } }
-            : {}),
         };
         return;
       }
     }
     const s = editOpen ? null : hitSeg(raw);
     if (s) {
-      /* المانِ متصل (از یک یا هر دو سر به المان خارج از گروه) قفل است و درگ نمی‌شود */
-      const allowed = selected.includes(s.id) ? [...selected] : [s.id];
-      if (allowed.some((id) => segLocked(id, allowed))) {
-        if (e.shiftKey) onSelected(selected.includes(s.id) ? selected.filter((x) => x !== s.id) : [...selected, s.id]);
-        else if (e.ctrlKey || e.metaKey) onSelected(selected.filter((x) => x !== s.id));
-        else if (!selected.includes(s.id)) onSelected([s.id]);
+      const objectIds = sketchObjectIds(s.id);
+      /* صرفِ کلیک دوم یک ضلع را انتخاب می‌کند، اما Drag روی Polyline کاملاً
+         انتخاب‌شده همچنان باید کل Polyline را حرکت دهد. ضلع فقط پس از آنکه با
+         یک کلیک مستقل انتخاب شد، به‌تنهایی Drag می‌شود. */
+      const allowed = selected.includes(s.id) ? [...selected] : objectIds;
+      const movingSinglePolylineEdge=s.polylineId!=null&&allowed.length===1&&allowed[0]===s.id;
+      if (!movingSinglePolylineEdge&&allowed.some((id) => segLocked(id, allowed))) {
+        if (e.shiftKey) onSelected(selected.includes(s.id) ? selected.filter((x) => !objectIds.includes(x)) : [...selected, ...objectIds.filter((id) => !selected.includes(id))]);
+        else if (e.ctrlKey || e.metaKey) onSelected(selected.filter((x) => !objectIds.includes(x)));
+        else if (!selected.includes(s.id)) onSelected(objectIds);
         return;
       }
       /* تصمیم نهایی کلیک در pointerup گرفته می‌شود تا درگ گروهی ممکن باشد */
-      drag.current = { mode: "move", ids: [...selected], clicked: s.id, last: raw, sx: e.clientX, sy: e.clientY, moved: false };
+      drag.current = { mode: "move", ids: allowed, clicked: s.id, last: raw, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     /* فضای خالی: شروع باکس انتخابگر (پاک‌سازی در pointerup اگر کلیک بود) */
@@ -2071,7 +3313,257 @@ export default function ProfileEditor({
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    const activeMode = drag.current?.mode;
+    const canPanDuringDrag = activeMode === "handle" || activeMode === "move" ||
+      activeMode === "evert" || activeMode === "eline" || activeMode === "eoff" || activeMode === "eoffh";
+    const auxiliaryButtonHeld = (e.buttons & 2) !== 0 || (e.buttons & 4) !== 0;
+    let temporaryPan = editVertexPan.current;
+    /* بعضی مرورگرها هنگام نگه‌داشتن دکمه چپ، PointerDown دکمه دوم را ارسال
+       نمی‌کنند؛ buttons در PointerMove منبع قطعی است و Pan را همان‌جا آغاز می‌کند. */
+    if (canPanDuringDrag && auxiliaryButtonHeld && !temporaryPan && camRef.current) {
+      temporaryPan = { pointerId: e.pointerId, sx: e.clientX, sy: e.clientY, cam0: camRef.current };
+      editVertexPan.current = temporaryPan;
+    }
+    if (temporaryPan && temporaryPan.pointerId === e.pointerId && auxiliaryButtonHeld) {
+      setCam({
+        s: temporaryPan.cam0.s,
+        ox: temporaryPan.cam0.ox + e.clientX - temporaryPan.sx,
+        oy: temporaryPan.cam0.oy + e.clientY - temporaryPan.sy,
+      });
+      return;
+    }
+    if (temporaryPan && !auxiliaryButtonHeld) {
+      editVertexPan.current = null;
+      return; // یک فریم برای تثبیت دوربین؛ از جهش نقطه پس از Pan جلوگیری می‌کند
+    }
     const raw = toWorld(e.clientX, e.clientY);
+    if(imageDrag.current){
+      const d=imageDrag.current;if(d.base.locked)return;if(!imageGestureBase.current){imageHistoryFocus.current=true;imageGestureBase.current=cloneImages(referenceImages);imagePast.current.push(cloneImages(referenceImages));if(imagePast.current.length>100)imagePast.current.shift();imageFuture.current=[];setImageHistoryVersion(v=>v+1);}const delta=quantStep(raw,d.start),worldDx=delta.z,worldDy=delta.r,angleRad=(d.base.rotation??0)*Math.PI/180,dx=worldDx*Math.cos(angleRad)-worldDy*Math.sin(angleRad),dy=worldDx*Math.sin(angleRad)+worldDy*Math.cos(angleRad);let next={...d.base};
+      if(d.mode==="rotate"){const center={z:d.base.z+d.base.width/2,r:d.base.r-d.base.height/2},angle=Math.atan2(raw.r-center.r,raw.z-center.z);next.rotation=(d.base.rotation??0)+((d.startAngle??angle)-angle)*180/Math.PI;const c=camRef.current;if(c){const cx=c.ox+center.z*c.s,cy=c.oy-center.r*c.s,transform=`rotate(${next.rotation} ${cx} ${cy})`;selectedImageVisualRef.current?.setAttribute("transform",transform);selectedImageControlsRef.current?.setAttribute("transform",transform);}const step=Math.round(next.rotation/5)*5;if(lastRotationCursorStep.current!==step){lastRotationCursorStep.current=step;const cursor=rotationCursor((d.cursorBaseAngle??0)+step);if(svgRef.current)svgRef.current.style.cursor=cursor;if(dragCursorOverlayRef.current)dragCursorOverlayRef.current.style.cursor=cursor;}}
+      else if(d.mode==="move")next={...next,z:d.base.z+worldDx,r:d.base.r+worldDy};
+      else {const bottom=d.base.r-d.base.height,oldCenterZ=d.base.z+d.base.width/2,oldCenterR=d.base.r-d.base.height/2;
+        if(d.mode.includes("e"))next.width=Math.max(.5,d.base.width+dx);
+        if(d.mode.includes("w")){next.z=d.base.z+dx;next.width=Math.max(.5,d.base.width-dx);}
+        if(d.mode.includes("n")){next.r=d.base.r+dy;next.height=Math.max(.5,d.base.height+dy);}
+        if(d.mode.includes("s"))next.height=Math.max(.5,d.base.height-dy);
+        const ratio=d.base.width/d.base.height;
+        if(d.mode.length===2&&(d.base.aspectLocked!==false||shiftRef.current)){next.height=next.width/ratio;if(d.mode.includes("n"))next.r=bottom+next.height;else next.r=d.base.r;}
+        else if(d.base.aspectLocked!==false||shiftRef.current){if(d.mode==="e"||d.mode==="w")next.height=next.width/ratio;else next.width=next.height*ratio;}
+        /* مرکز کادر در راستای محورهای محلیِ چرخیده جابه‌جا می‌شود تا ضلع مقابل
+           ثابت بماند؛ بنابراین Resize پس از Rotation به محورهای جهانی منحرف نمی‌شود. */
+        const dw=next.width-d.base.width,dh=next.height-d.base.height,localCenterX=d.mode.includes("e")?dw/2:d.mode.includes("w")?-dw/2:0,localCenterUp=d.mode.includes("n")?dh/2:d.mode.includes("s")?-dh/2:0,newCenterZ=oldCenterZ+localCenterX*Math.cos(angleRad)+localCenterUp*Math.sin(angleRad),newCenterR=oldCenterR-localCenterX*Math.sin(angleRad)+localCenterUp*Math.cos(angleRad);next.z=newCenterZ-next.width/2;next.r=newCenterR+next.height/2;
+      }
+      imageTransformPreviewRef.current=next;if(d.mode==="rotate")return;if(imagePreviewFrame.current==null)imagePreviewFrame.current=requestAnimationFrame(()=>{imagePreviewFrame.current=null;setImageTransformPreview(imageTransformPreviewRef.current);});return;
+    }
+    /* Pan راست/وسط باید پیش از منطق Move پردازش شود. */
+    const cameraGesture = drag.current;
+    if (cameraGesture?.mode === "pan") {
+      if (Math.hypot(e.clientX - cameraGesture.sx, e.clientY - cameraGesture.sy) > 3) {
+        cameraGesture.moved = true;
+        if(editOpen)editPanOccurredRef.current=true;
+      }
+      setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
+      return;
+    }
+    if (cameraGesture?.mode === "rwait") {
+      if (Math.hypot(e.clientX - cameraGesture.sx, e.clientY - cameraGesture.sy) > 4) {
+        cameraGesture.moved = true;
+        if(editOpen)editPanOccurredRef.current=true;
+        drag.current = { mode: "pan", sx: cameraGesture.sx, sy: cameraGesture.sy, cam0: cameraGesture.cam0, moved: true, btn: 2 };
+        setCam({ s: cameraGesture.cam0.s, ox: cameraGesture.cam0.ox + (e.clientX - cameraGesture.sx), oy: cameraGesture.cam0.oy + (e.clientY - cameraGesture.sy) });
+      }
+      return;
+    }
+    if (tool === "rotate" && rotateSession) {
+      let angle=(Math.atan2(raw.r-rotateSession.center.r,raw.z-rotateSession.center.z)-rotateSession.startAngle)*180/Math.PI;
+      angle=((angle+180)%360+360)%360-180;
+      const entered=rotateBox?.value.match(/^-?(?:\d+(?:\.\d*)?|\.\d+)$/)?Math.abs(Number(rotateBox.value)):null;
+      if(e.shiftKey) angle=Math.round(angle/90)*90;
+      else if(rotateSession.mode==="step"){const step=entered&&entered>0?entered:rotateSession.step;angle=Math.round(angle/step)*step;}
+      onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,angle):s),false);
+      setRotateSession({...rotateSession,pointer:raw,angle});
+      const rect=wrapRef.current!.getBoundingClientRect();
+      setRotateBox(box=>box?{...box,x:Math.min(rect.width-72,Math.max(4,e.clientX-rect.left+12)),y:Math.min(rect.height-48,Math.max(4,e.clientY-rect.top-48))}:box);
+      return;
+    }
+    if (tool === "boxscale" && boxPivotDrag.current) {
+      setBoxScalePivot(raw);
+      return;
+    }
+    if (tool === "boxscale" && boxRotateDrag.current) {
+      const d=boxRotateDrag.current;
+      let angle=(Math.atan2(raw.r-d.pivot.r,raw.z-d.pivot.z)-d.startAngle)*180/Math.PI;
+      angle=((angle+180)%360+360)%360-180;
+      if(e.shiftKey) angle=Math.round(angle/90)*90;
+      d.angle=angle;
+      setBoxRotateSession({base:d.base,ids:d.ids,pivot:d.pivot,angle});
+      onSegs(d.base.map(s=>d.ids.includes(s.id)?rotateSegment(s,d.pivot,angle):s),false);
+      setBoxRotateBox(box=>box?{...box,value:box.value,x:Math.max(4,e.clientX-wrapRef.current!.getBoundingClientRect().left+12),y:Math.max(4,e.clientY-wrapRef.current!.getBoundingClientRect().top-48)}:box);
+      return;
+    }
+    if (tool === "boxscale" && boxScaleDrag.current) {
+      const d = boxScaleDrag.current, b = d.bounds;
+      const w = Math.max(1e-9, b.maxZ - b.minZ), h = Math.max(1e-9, b.maxR - b.minR);
+      const east = d.handle.includes("e"), west = d.handle.includes("w"), north = d.handle.includes("n"), south = d.handle.includes("s");
+      const centered = e.ctrlKey || e.metaKey;
+      const anchor = { z: centered ? (b.minZ + b.maxZ) / 2 : east ? b.minZ : west ? b.maxZ : (b.minZ + b.maxZ) / 2, r: centered ? (b.minR + b.maxR) / 2 : north ? b.minR : south ? b.maxR : (b.minR + b.maxR) / 2 };
+      let sx = east ? (raw.z - anchor.z) / (centered ? w / 2 : w)
+        : west ? (anchor.z - raw.z) / (centered ? w / 2 : w) : 1;
+      let sy = north ? (raw.r - anchor.r) / (centered ? h / 2 : h)
+        : south ? (anchor.r - raw.r) / (centered ? h / 2 : h) : 1;
+      if (boxScaleLocked || shiftDown) {
+        const horizontal = east || west, vertical = north || south;
+        let f = horizontal ? sx : sy;
+        if (horizontal && vertical) {
+          /* در گوشهٔ قفل‌شده، ضریب از تصویر حرکت موس روی قطر اصلی محاسبه
+             می‌شود؛ بنابراین تغییر اندازه دقیقاً در جهت کشش ادامه پیدا می‌کند. */
+          const target = { z: east ? b.maxZ : b.minZ, r: north ? b.maxR : b.minR };
+          const vx = target.z - anchor.z, vy = target.r - anchor.r;
+          const length2 = vx * vx + vy * vy;
+          if (length2 > 1e-12) f = ((raw.z - anchor.z) * vx + (raw.r - anchor.r) * vy) / length2;
+        }
+        sx = sy = f;
+      }
+      sx = Math.max(.001, sx); sy = Math.max(.001, sy);
+      onSegs(d.base.map((segment) => d.ids.includes(segment.id) ? scaleSegmentXY(segment, anchor, sx, sy) : segment), false);
+      return;
+    }
+    if (tool === "scale" && scaleSession && !scaleSession.reference && !editOpen) {
+      setScaleSession({ ...scaleSession, pointer: raw });
+      return;
+    }
+    if (tool === "scale" && scaleSession?.reference && scaleSession.referenceLength && !editOpen) {
+      const targetLength = scaleBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/)
+        ? Number(scaleBox.value)
+        : dist(scaleSession.origin, raw);
+      const factor = targetLength / scaleSession.referenceLength;
+      if (Number.isFinite(factor) && factor > 0) {
+        onSegs(scaleSession.base.map((segment) => scaleSession.ids.includes(segment.id) ? scaleSegment(segment, scaleSession.origin, factor) : segment), false);
+      }
+      setScaleSession({ ...scaleSession, pointer: raw });
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setScaleBox((box) => box ? { ...box, x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 48, Math.max(4, e.clientY - rect.top - 48)) } : box);
+      return;
+    }
+    if (tool === "mirror" && mirrorSession?.p1 && !mirrorSession.p2 && !editOpen) {
+      const dz = raw.z - mirrorSession.p1.z, dr = raw.r - mirrorSession.p1.r;
+      const cursor = e.shiftKey
+        ? (Math.abs(dz) >= Math.abs(dr) ? { z: raw.z, r: mirrorSession.p1.r } : { z: mirrorSession.p1.z, r: raw.r })
+        : raw;
+      if (dist(mirrorSession.p1, cursor) > 1e-8) {
+        const mirrored = makeMirroredSegments(mirrorSession.source, mirrorSession.p1, cursor);
+        /* در Preview هندسهٔ اصلی همیشه باقی می‌ماند؛ در حالت بدون Copy فقط
+           کم‌رنگ می‌شود و حذف واقعی هنگام انتخاب نقطهٔ دوم انجام می‌شود. */
+        onSegs([...mirrorSession.base, ...mirrored], false);
+        setMirrorSession({ ...mirrorSession, cursor, mirrored });
+      } else {
+        onSegs(mirrorSession.base, false);
+        setMirrorSession({ ...mirrorSession, cursor, mirrored: undefined });
+      }
+      return;
+    }
+    if (tool === "copy" && copySession && !editOpen) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setCopyBox((box) => box ? { ...box, x: Math.min(rect.width - 72, Math.max(4, e.clientX - rect.left + 12)), y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)) } : box);
+      /* Enter فاصله و جهت را تثبیت می‌کند؛ حرکت بعدی ماوس نباید راهنما را جابه‌جا کند. */
+      if (copySession.distanceConfirmed) return;
+      const rawDelta = quantStep(raw, copySession.origin);
+      /* در حالت قفل محوری، محور غالب با حرکت نشانگر عوض می‌شود؛ قفل متعلق به
+         هر دو محور است، نه فقط محوری که لحظهٔ فشردن Shift غالب بوده است. */
+      const axis: MoveAxis = copySession.axis === "free"
+        ? "free"
+        : (Math.abs(rawDelta.z) >= Math.abs(rawDelta.r) ? "x" : "y");
+      const numericDistance = copyBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(copyBox.value) : null;
+      let delta = axis === "x" ? { z: rawDelta.z, r: 0 } : axis === "y" ? { z: 0, r: rawDelta.r } : rawDelta;
+      if (numericDistance != null) {
+        if (axis === "x") delta = { z: Math.sign(rawDelta.z || 1) * numericDistance, r: 0 };
+        else if (axis === "y") delta = { z: 0, r: Math.sign(rawDelta.r || 1) * numericDistance };
+        else {
+          const length = Math.hypot(rawDelta.z, rawDelta.r);
+          delta = length > 1e-9
+            ? { z: numericDistance * rawDelta.z / length, r: numericDistance * rawDelta.r / length }
+            : { z: numericDistance, r: 0 };
+        }
+      }
+      const pointer = { z: copySession.origin.z + delta.z, r: copySession.origin.r + delta.r };
+      const movedCopies = copySession.copies.map((segment) => moveSeg(segment, delta.z, delta.r));
+      onSegs([...copySession.base, ...movedCopies], false);
+      setCopySession({ ...copySession, pointer, axis });
+      return;
+    }
+    if (tool === "fillet" && e.button === 0 && !editOpen) {
+      const hit = hitSeg(raw);
+      if (!hit || hit.kind !== "line") {
+        if (filletPicks.length === 0) setFilletBox(null);
+        return;
+      }
+      if (filletPicks.length === 0 || filletPicks[0].id === hit.id) {
+        setFilletPicks([{ id: hit.id, click: raw }]);
+        onSelected([hit.id]);
+        setFilletBox(null);
+      } else {
+        const next = [filletPicks[0], { id: hit.id, click: raw }];
+        setFilletPicks(next);
+        onSelected(next.map((pick) => pick.id));
+        const rect = wrapRef.current!.getBoundingClientRect();
+        setFilletBox({ x: Math.min(rect.width - 128, Math.max(40, e.clientX - rect.left + 14)), y: Math.min(rect.height - 58, Math.max(8, e.clientY - rect.top - 44)), value: "5", error: "" });
+      }
+      drag.current = null;
+      return;
+    }
+    if (tool === "move" && moveSession) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setMoveBox((box) => box ? {
+        ...box,
+        x: Math.min(rect.width - 58, Math.max(4, e.clientX - rect.left + 12)),
+        y: Math.min(rect.height - 42, Math.max(4, e.clientY - rect.top - 48)),
+      } : box);
+      const dx = e.clientX - moveSession.clientX, dy = e.clientY - moveSession.clientY;
+      /* در یک dead-zone بسیار کوچک دور نقطه شروع، جهت قبلی حفظ و جابه‌جایی صفر
+         می‌شود؛ بنابراین عبور نویزی از مبدأ حرکت را به جهت مخالف پرتاب نمی‌کند. */
+      const nearOrigin = Math.hypot(dx, dy) < 5;
+      const stepX = e.clientX - moveSession.lastClientX;
+      const stepY = e.clientY - moveSession.lastClientY;
+      /* انتخاب جهت Shift از جهت واقعیِ حرکت اخیر موس می‌آید، نه فاصلهٔ کلی آن
+         از آبجکت/نقطه شروع؛ پس با دورشدن نشانگر، کشش به جهت مخالف ایجاد نمی‌شود. */
+      let axis: MoveAxis = "free";
+      if (e.shiftKey) {
+        const sx = Math.abs(stepX), sy = Math.abs(stepY);
+        if (moveSession.axis === "free") axis = Math.abs(dx) >= Math.abs(dy) ? "x" : "y";
+        else if (moveSession.axis === "x") {
+          /* فقط یک حرکت عمودیِ واضح محور را عوض می‌کند؛ نویز مورب/ریز نادیده گرفته می‌شود. */
+          axis = sy > 2.5 && sy > sx * 1.7 ? "y" : "x";
+        } else {
+          axis = sx > 2.5 && sx > sy * 1.7 ? "x" : "y";
+        }
+      }
+      const dirX: 1 | -1 = dx > 5 ? 1 : dx < -5 ? -1 : moveSession.dirX;
+      const dirY: 1 | -1 = dy < -5 ? 1 : dy > 5 ? -1 : moveSession.dirY;
+      setMoveSession({ ...moveSession, pointer: raw, axis, dirX, dirY, lastClientX: e.clientX, lastClientY: e.clientY });
+      if (!moveBox?.value.trim()) {
+        /* حرکت آزاد Move به گام شبکه می‌چسبد؛ Alt موقتاً Snap را دور می‌زند. */
+        const snapped = e.altKey
+          ? { z: raw.z - moveSession.origin.z, r: raw.r - moveSession.origin.r }
+          : quantStep(raw, moveSession.origin);
+        const dz = nearOrigin ? 0 : axis === "y" ? 0 : snapped.z;
+        const dr = nearOrigin ? 0 : axis === "x" ? 0 : snapped.r;
+        if (moveSession.editBase && moveSession.editVertexIds && edit) {
+          const moving = new Set(moveSession.editVertexIds);
+          onEditBuf({ ...edit, verts: moveSession.editBase.map((v) => moving.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dr } : v) }, false);
+        } else if (moveSession.pointRefs) {
+          const moving = new Set(moveSession.pointRefs.map((point) => `${point.segId}:${point.part}`));
+          onSegs(moveSession.base.map((segment) => {
+            const next = { ...segment };
+            for (const part of ["a", "b", "c1", "c2", "via"] as SketchPointPart[]) {
+              const point = segment[part];
+              if (point && moving.has(`${segment.id}:${part}`)) next[part] = { z: point.z + dz, r: point.r + dr };
+            }
+            return next;
+          }), false);
+        } else onSegs(movePolylineSelection(moveSession.base,moveSession.ids,dz,dr), false);
+      }
+      return;
+    }
     if (readoutRef.current) readoutRef.current.textContent = editOpen ? `محور طولی ${raw.z.toFixed(2)}   محور شعاعی ${raw.r.toFixed(2)}` : `X ${raw.z.toFixed(1)}   Y⌀ ${(raw.r * 2).toFixed(1)}`;
 
     const d = drag.current;
@@ -2133,36 +3625,20 @@ export default function ProfileEditor({
       /* رأس‌های مشترک = یک‌جا جابه‌جا می‌شوند → همسایه‌ها بی‌درز دنباله می‌آیند؛
          جابه‌جایی از مبنایِ لحظهٔ کلیک و با گامِ شبکه (فقط «میزان» حرکت) */
       const { z: qz, r: qr } = quantStep(raw, d.start);
-      if (d.holder2 && edit) {
-        /* نگاشت نمایش: حرکت راست = Xoff بیشتر؛ حرکت بالا (v بیشتر) = Yoff کمتر،
-           چون Ym = Yw/2 − Yoff. آفست و هندسه از یک دلتا ساخته می‌شوند. */
-        const round2 = (v: number) => Math.round(v * 100) / 100;
-        const next: Holder2State = {
-          xOff: Math.max(MIN_HOLDER2_OFFSET, round2(d.holder2.base.xOff + qz)),
-          yOff: Math.max(MIN_HOLDER2_OFFSET, round2(d.holder2.base.yOff - qr)),
-        };
-        const dz = next.xOff - d.holder2.base.xOff;
-        const dv = d.holder2.base.yOff - next.yOff;
-        const baseVerts = Array.from(d.base.values());
-        const nv = translateHolder2Edit(baseVerts, lines, dz, dv);
-        d.holder2.next = next;
-        d.holder2.latestVerts = nv;
-        /* پیش‌نویس Params را عوض نمی‌کند؛ ControlsPanel مقدار را از EditBuf
-           می‌خواند و اعداد X/Y در همین فریم به‌صورت زنده عوض می‌شوند. */
-        onEditBuf({ ...edit, verts: nv, lines, holder2: next }, false);
-      } else {
-        const nv = verts.map((v) => {
+const nv = verts.map((v) => {
           const b0 = d.base.get(v.id);
           return b0 ? { ...v, z: b0.z + qz, x: b0.x + 2 * qr } : v;
         });
         setBufGeom(nv, lines, false);
-      }
       return;
     }
     if (d.mode === "evert") {
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
       const { z: qz, r: qr } = quantStep(raw, d.start);
-      const nv = verts.map((v) => (v.id === d.vid ? { ...v, z: d.base.z + qz, x: d.base.x + 2 * qr } : v));
+      const nv = verts.map((v) => {
+        const origin = d.base.get(v.id);
+        return origin ? { ...v, z: origin.z + qz, x: origin.x + 2 * qr } : v;
+      });
       setBufGeom(nv, lines, false);
       return;
     }
@@ -2216,16 +3692,16 @@ export default function ProfileEditor({
         setMarqueeHits(marqueeHitIds(rectW, mode));
         setMarqueePointHits(marqueeHitPoints(rectW));
         setMarqueeSplitHit(marqueeHitsSplit(rectW));
+        const paintPreview=paintHitsInRect(rectW,mode);
+        setPaintMarqueeHits(paintPreview.ids);setPaintMarqueePoints(paintPreview.points);
       }
       return;
     }
 
     if (d.mode === "draw") {
-      /* تا وقتی کاربر واقعاً نکشیده، فقط پیش‌نمایش به‌روز می‌شود */
-      if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4) {
-        d.moved = true;
-        setCam({ s: d.cam0.s, ox: d.cam0.ox + (e.clientX - d.sx), oy: d.cam0.oy + (e.clientY - d.sy) });
-      } else if (tool === "split") {
+      /* نگه‌داشتن دکمه چپ در ابزارهای ترسیم فقط Preview را حرکت می‌دهد؛ Pan
+         منحصراً با دکمه راست یا وسط انجام می‌شود. */
+      if (tool === "split") {
         setCursor(nearestOnSketch(raw));
         setSnapHit(null);
       } else {
@@ -2238,19 +3714,28 @@ export default function ProfileEditor({
 
     if (d.mode === "handle") {
       d.moved = true;
+      if ([...separated].some((key) => Number(key.split(":")[0]) === d.ref.segId)) setSeparated(new Set());
       /* اگر نقطهٔ درگ‌شده جزو چند نقطهٔ مستقلِ انتخاب‌شده است، همه با هم جابه‌جا می‌شوند */
-      const inMulti =
-        selPoints.length > 1 &&
-        selPoints.some((sp) => sp.segId === d.ref.segId && sp.part === d.ref.part);
+      const inMulti = selPoints.length > 1 && d.cluster.some((member) =>
+        selPoints.some((point) => point.segId === member.segId && point.part === member.part)
+      );
       const skipIds = inMulti
         ? [...new Set(selPoints.map((sp) => sp.segId))]
         : d.cluster.map((c) => c.segId);
-      const { p, hit } = applySnap(raw, skipIds);
-      setSnapHit(hit);
+      const snapped = applySnap(raw, skipIds);
+      let p=snapped.p;
+      setSnapHit(snapped.hit);
 
       const refSeg = segs.find((s) => s.id === d.ref.segId);
       const refPt = refSeg ? refSeg[d.ref.part] : null;
       if (!refPt) return;
+      /* Shift روی دستهٔ Bézier فقط طول همان دسته را روی محور فعلی‌اش تغییر
+         می‌دهد؛ جهت ثابت می‌ماند و اتصال الاکلنگی نیز برای Dragهای بعدی حفظ می‌شود. */
+      if(e.shiftKey&&refSeg&&(d.ref.part==="c1"||d.ref.part==="c2")){
+        const anchor=d.ref.part==="c1"?refSeg.a:refSeg.b;
+        const az=refPt.z-anchor.z,ar=refPt.r-anchor.r,length=Math.hypot(az,ar);
+        if(length>1e-9){const uz=az/length,ur=ar/length,nextLength=Math.max(0,(raw.z-anchor.z)*uz+(raw.r-anchor.r)*ur);p={z:anchor.z+uz*nextLength,r:anchor.r+ur*nextLength};setSnapHit(null);}
+      }
 
       /* برای کنترل‌پوینت‌ها مقصد clamp نمی‌شود. کل جابه‌جایی (تکی یا چندانتخابی)
          فقط تا جایی اعمال می‌شود که هندسهٔ واقعی همهٔ منحنی‌های درگیر داخل خام بماند. */
@@ -2266,6 +3751,13 @@ export default function ProfileEditor({
       } else {
         for (const h of d.cluster) toMove.set(`${h.segId}:${h.part}`, h);
       }
+      /* دستهٔ وابسته به هر رأس باید همراه خود رأس ترجمه شود؛ در غیر این صورت
+         با جابه‌جایی نقطه، فرم منحنی و فاصلهٔ دسته از رأس ناخواسته تغییر می‌کرد. */
+      for(const h of [...toMove.values()]){
+        const segment=segs.find(s=>s.id===h.segId);
+        if(h.part==="a"&&segment?.c1)toMove.set(`${h.segId}:c1`,{segId:h.segId,part:"c1"});
+        if(h.part==="b"&&segment?.c2)toMove.set(`${h.segId}:c2`,{segId:h.segId,part:"c2"});
+      }
 
       const bySeg = new Map<number, SketchPointPart[]>();
       for (const h of toMove.values()) {
@@ -2275,36 +3767,74 @@ export default function ProfileEditor({
       }
       const dz = p.z - refPt.z;
       const dr = p.r - refPt.r;
-      const moveOne = (s: SketchSeg, scale: number): SketchSeg => {
-        const parts = bySeg.get(s.id);
-        if (!parts) return s;
+      const moveSubset = (source: SketchSeg[], ddz: number, ddr: number): SketchSeg[] => source.map((s) => {
+        const parts = bySeg.get(s.id)!;
         let out = s;
         for (const part of parts) {
           const cur = s[part];
-          if (cur) out = withSegPoint(out, part, { z: cur.z + dz * scale, r: cur.r + dr * scale });
+          if (cur) out = withSegPoint(out, part, { z: cur.z + ddz, r: cur.r + ddr });
         }
         return out;
-      };
-      /* در جست‌وجوی مرز فقط چند المان واقعاً درگیر ارزیابی می‌شوند؛ آرایهٔ کامل
-         اسکچ تنها یک‌بار و بعد از تعیین ضریب نهایی ساخته می‌شود. */
+      });
+      /* فقط منحنی‌های واقعاً درگیر بررسی می‌شوند. قبلاً در هر مرحله جست‌وجوی
+         دودویی کل اسکچ map/filter می‌شد و Drag دسته‌های Bézier را سنگین می‌کرد. */
       const moving = segs.filter((s) => bySeg.has(s.id));
-      const isValidAt = (scale: number) => moving.every((s) => segInsideStock(moveOne(s, scale), L, R));
-
-      let scale = 1;
-      if (!isValidAt(1)) {
-        /* وضعیت فعلی معتبر است؛ فضای مجاز نقاط کنترل بزیه نسبت به یک خط حرکت
-           محدب است، پس جست‌وجوی دودویی دقیقاً به مرز منحنی می‌رسد. */
-        if (!isValidAt(0)) return;
-        let lo = 0;
-        let hi = 1;
-        for (let i = 0; i < 24; i++) {
+      const valid = (candidate: SketchSeg[]) => candidate.every((s) => segInsideStock(s, L, R));
+      const allowedScale = (source: SketchSeg[], ddz: number, ddr: number): number => {
+        if (Math.abs(ddz) + Math.abs(ddr) < 1e-12) return 1;
+        if (valid(moveSubset(source, ddz, ddr))) return 1;
+        if (!valid(source)) return 0;
+        let lo = 0, hi = 1;
+        /* ۱۲ مرحله دقتی بهتر از ۰٫۰۲۵٪ می‌دهد و برای حرکت زنده کافی است. */
+        for (let i = 0; i < 12; i++) {
           const mid = (lo + hi) / 2;
-          if (isValidAt(mid)) lo = mid;
+          if (valid(moveSubset(source, ddz * mid, ddr * mid))) lo = mid;
           else hi = mid;
         }
-        scale = lo;
+        return lo;
+      };
+      const zScale = allowedScale(moving, dz, 0);
+      const afterZMoving = moveSubset(moving, dz * zScale, 0);
+      const rScale = allowedScale(afterZMoving, 0, dr);
+      const finalMoving = moveSubset(afterZMoving, 0, dr * rScale);
+      const movedById = new Map(finalMoving.map((segment) => [segment.id, segment]));
+      let merged=segs.map((segment) => movedById.get(segment.id) ?? segment);
+      /* دسته‌های دو سوی رأس نرم Polyline مانند الاکلنگ‌اند: دستهٔ مقابل
+         دقیقاً هم‌راستا، هم‌اندازه و در سمت مخالف رأس قرار می‌گیرد. */
+      if(d.ref.part==="c1"||d.ref.part==="c2"){
+        const movedRef=merged.find(s=>s.id===d.ref.segId);
+        if(movedRef?.polylineId!=null){
+          const anchor=d.ref.part==="c1"?movedRef.a:movedRef.b,handle=movedRef[d.ref.part];
+          const refIndependent=d.ref.part==="c1"?movedRef.independentA:movedRef.independentB;
+          if((e.ctrlKey||e.metaKey)&&handle){
+            /* Ctrl در نخستین Drag اتصال الاکلنگی این رأس را دائماً می‌شکند؛
+               پس از رهاکردن Ctrl نیز هر دو دسته مستقل باقی می‌مانند. */
+            merged=merged.map(s=>{
+              if(s.polylineId!==movedRef.polylineId)return s;
+              if(dist(s.a,anchor)<1e-8)return {...s,independentA:true};
+              if(dist(s.b,anchor)<1e-8)return {...s,independentB:true};
+              return s;
+            });
+          }else if(e.shiftKey&&handle){
+            /* تغییر موقت طول فقط روی دستهٔ فعال؛ وضعیت پیوند شکسته نمی‌شود. */
+          }else if(handle&&!refIndependent){
+            const other=merged.find(s=>s.id!==movedRef.id&&s.polylineId===movedRef.polylineId&&s.kind==="cubic"&&
+              ((dist(s.a,anchor)<1e-8&&!s.independentA)||(dist(s.b,anchor)<1e-8&&!s.independentB)));
+            if(other){
+              const part=dist(other.a,anchor)<1e-8?"c1":"c2",otherHandle=other[part];
+              const oldActive=refSeg?.[d.ref.part],oldActiveLength=oldActive?dist(anchor,oldActive):0;
+              const otherLength=otherHandle?dist(anchor,otherHandle):oldActiveLength;
+              const newLength=dist(anchor,handle),ratio=oldActiveLength>1e-9?otherLength/oldActiveLength:1;
+              const uz=newLength>1e-9?(handle.z-anchor.z)/newLength:0,ur=newLength>1e-9?(handle.r-anchor.r)/newLength:0;
+              /* طول‌های ایجادشده با Shift نسبت خود را حفظ می‌کنند؛ Drag عادی
+                 فقط محور الاکلنگ را می‌چرخاند و هر دو بازو را متناسب Scale می‌کند. */
+              const mirror={z:anchor.z-uz*newLength*ratio,r:anchor.r-ur*newLength*ratio};
+              merged=merged.map(s=>s.id===other.id?{...s,[part]:mirror}:s);
+            }
+          }
+        }
       }
-      onSegs(segs.map((s) => moveOne(s, scale)), false);
+      onSegs(merged, false);
       return;
     }
 
@@ -2313,6 +3843,7 @@ export default function ProfileEditor({
       if (!d.moved) {
         /* شروع درگ: انتخابِ در حال حرکت مشخص می‌شود */
         d.moved = true;
+        if ([...separated].some((key) => d.ids.includes(Number(key.split(":")[0])))) setSeparated(new Set());
         if (e.shiftKey) {
           if (!d.ids.includes(d.clicked)) d.ids = [...d.ids, d.clicked];
         } else if (e.ctrlKey || e.metaKey) {
@@ -2341,19 +3872,85 @@ export default function ProfileEditor({
          بیرون خام بمانند، درحالی‌که انتقال کل خط از مرز عبور نمی‌کند. */
       const dz = Math.min(L - maxZ, Math.max(-minZ, requestedDz));
       const dr = Math.min(R - maxR, Math.max(-minR, requestedDr));
-      onSegs(segs.map((s) => (d.ids.includes(s.id) ? moveSeg(s, dz, dr) : s)), false);
+      onSegs(movePolylineSelection(segs,d.ids,dz,dr), false);
     }
+  };
+
+  const cutSegmentAtSplit = () => {
+    if (!split.enabled || !segs.length) return;
+    let target: SketchSeg | null = null;
+    let targetT = 0;
+    let bestD = Infinity;
+    for (const segment of segs) {
+      const hit = nearestOnSeg(segment, { z: split.z, r: split.r });
+      if (hit.distance < bestD) { bestD = hit.distance; target = segment; targetT = hit.t; }
+    }
+    if (!target || targetT <= 1e-4 || targetT >= 1 - 1e-4) {
+      setSplitCtxMenu(null);
+      return;
+    }
+    const s = target, t = targetT;
+    const mix = (a: SPoint, b: SPoint, k: number): SPoint => ({ z: a.z + (b.z - a.z) * k, r: a.r + (b.r - a.r) * k });
+    const at = evalSeg(s, t);
+    let first: SketchSeg;
+    let second: SketchSeg;
+    if (s.kind === "quad" && s.c1) {
+      const ac = mix(s.a, s.c1, t), cb = mix(s.c1, s.b, t);
+      first = { id: s.id, kind: "quad", a: { ...s.a }, b: at, c1: ac };
+      second = { id: newSegId(), kind: "quad", a: at, b: { ...s.b }, c1: cb };
+    } else if (s.kind === "cubic" && s.c1 && s.c2) {
+      const p01 = mix(s.a, s.c1, t), p12 = mix(s.c1, s.c2, t), p23 = mix(s.c2, s.b, t);
+      const p012 = mix(p01, p12, t), p123 = mix(p12, p23, t);
+      first = { id: s.id, kind: "cubic", a: { ...s.a }, b: at, c1: p01, c2: p012 };
+      second = { id: newSegId(), kind: "cubic", a: at, b: { ...s.b }, c1: p123, c2: p23 };
+    } else if (s.kind === "arc") {
+      first = { id: s.id, kind: "arc", a: { ...s.a }, b: at, via: evalSeg(s, t / 2) };
+      second = { id: newSegId(), kind: "arc", a: at, b: { ...s.b }, via: evalSeg(s, (t + 1) / 2) };
+    } else {
+      first = { id: s.id, kind: "line", a: { ...s.a }, b: at };
+      second = { id: newSegId(), kind: "line", a: at, b: { ...s.b } };
+    }
+    let nextSegments = segs.flatMap((segment) => segment.id === s.id ? [first, second] : [segment]);
+    if (s.polylineId != null) {
+      const members = segs.filter((segment) => segment.polylineId === s.polylineId);
+      const index = members.findIndex((segment) => segment.id === s.id);
+      const leftIds = new Set([...members.slice(0, index).map((segment) => segment.id), first.id]);
+      const rightIds = new Set([second.id, ...members.slice(index + 1).map((segment) => segment.id)]);
+      const leftGroup = leftIds.size > 1 ? first.id : undefined;
+      const rightGroup = rightIds.size > 1 ? second.id : undefined;
+      nextSegments = nextSegments.map((segment) => {
+        if (leftIds.has(segment.id)) return { ...segment, polylineId: leftGroup };
+        if (rightIds.has(segment.id)) return { ...segment, polylineId: rightGroup };
+        return segment;
+      });
+    }
+    onSegs(nextSegments, true);
+    onSelected([first.id]);
+    onSplit({ ...split, z: at.z, r: at.r });
+    setSplitCtxMenu(null);
   };
 
   /* بازکردن منوی اتصال/جداسازی نقطه در موقعیت صفحه */
   const openJoinMenu = (clientX: number, clientY: number) => {
-    if (tool !== "select") return;
+    if (tool !== "select" && tool !== "split") return;
+    const local = toLocal(clientX, clientY);
+    if (hitSplitMarker(local.x, local.y)) {
+      const rect = wrapRef.current!.getBoundingClientRect();
+      setCtxMenu(null);
+      setSplitCtxMenu({ x: clientX - rect.left, y: clientY - rect.top });
+      return;
+    }
+    setSplitCtxMenu(null);
     const raw = toWorld(clientX, clientY);
     const h = hitHandle(raw);
     if (h && (h.part === "a" || h.part === "b")) {
       const rect = wrapRef.current!.getBoundingClientRect();
       const cluster = clusterOf(h.segId, h.part);
-      if (!selected.includes(h.segId)) onSelected([h.segId]);
+      if(!selected.includes(h.segId))onSelected([]);
+      const clickedPoint=segs.find(s=>s.id===h.segId)?.[h.part];
+      const alreadyChosen=!!clickedPoint&&selPoints.some(point=>{if(point.part!=="a"&&point.part!=="b")return false;const segment=segs.find(s=>s.id===point.segId);return !!segment&&dist(segment[point.part],clickedPoint)<1e-8;});
+      if(!alreadyChosen)setSelPoints([h]);
+      setSegmentCtxMenu(null);
       setCtxMenu({
         x: clientX - rect.left,
         y: clientY - rect.top,
@@ -2362,13 +3959,104 @@ export default function ProfileEditor({
         separated: separated.has(handleKey(h.segId, h.part)),
         clusterSize: cluster.length,
       });
+      return;
     }
+    setCtxMenu(null);
+    const segment=hitSeg(raw);
+    if(segment?.polylineId!=null){
+      const rect=wrapRef.current!.getBoundingClientRect();
+      if(!selected.includes(segment.id))onSelected([segment.id]);
+      setSegmentCtxMenu({x:clientX-rect.left,y:clientY-rect.top,segId:segment.id});
+    }else setSegmentCtxMenu(null);
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (tool === "polyline" && e.detail === 2) { setDraft([]); drag.current = null; return; }
+    if(imageDrag.current){const preview=imageTransformPreviewRef.current;if(imagePreviewFrame.current!=null){cancelAnimationFrame(imagePreviewFrame.current);imagePreviewFrame.current=null;}if(preview)onReferenceImages(referenceImages.map(img=>img.id===preview.id?preview:img));imageDrag.current=null;imageGestureBase.current=null;imageTransformPreviewRef.current=null;setImageTransformPreview(null);setImageDragCursor(null);lastRotationCursorStep.current=null;if(svgRef.current)svgRef.current.style.cursor="";return;}
+    if (boxPivotDrag.current) { boxPivotDrag.current=false; return; }
+    if (boxRotateDrag.current) { boxRotateDrag.current=null; requestAnimationFrame(()=>{boxRotateInputRef.current?.focus();boxRotateInputRef.current?.select();}); return; }
+    if (boxScaleDrag.current) {
+      const handle = boxScaleDrag.current.handle;
+      boxScaleDrag.current = null;
+      onSegs(segs, true);
+      requestAnimationFrame(() => {
+        const input = handle === "e" || handle === "w" ? boxScaleWidthInputRef.current
+          : handle === "n" || handle === "s" ? boxScaleHeightInputRef.current
+          : boxScaleWidthInputRef.current;
+        input?.focus(); input?.select();
+      });
+      return;
+    }
+    if (editVertexPan.current?.pointerId === e.pointerId && (e.button === 1 || e.button === 2)) {
+      editVertexPan.current = null;
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      /* drag.current عمداً باقی می‌ماند تا Drag نقطه با دکمه چپ ادامه یابد. */
+      return;
+    }
     const d = drag.current;
     drag.current = null;
     setSnapHit(null);
+    if (tool === "fillet") {
+      /* راست‌کلیک ساده در مرحله ورود شعاع دقیقاً معادل Enter است؛ درگ راست
+         همچنان فقط Pan می‌ماند و Fillet را ناخواسته تأیید نمی‌کند. */
+      if(d?.mode==="rwait"&&!d.moved&&filletBox&&filletPicks.length===2)confirmFillet();
+      return;
+    }
+    if (tool === "rotate") { if(d?.mode==="rwait"&&!d.moved){if(rotateSession)onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");}return; }
+    if (tool === "boxscale") {
+      if (d?.mode === "rwait" && !d.moved) { if(boxRotateSession)onSegs(boxRotateSession.base,false);boxRotateSession&&setBoxRotateSession(null);setBoxRotateBox(null);boxScaleDrag.current = null; chooseTool("select"); }
+      return;
+    }
+    if (tool === "scale") {
+      if (d?.mode === "rwait" && !d.moved) {
+        if (scaleSession) onSegs(scaleSession.base, false);
+        setScaleSession(null); setScaleBox(null); chooseTool("select");
+      }
+      return;
+    }
+    if (tool === "mirror") {
+      if (d?.mode === "rwait" && !d.moved) {
+        if (mirrorSession) onSegs(mirrorSession.base, false);
+        setMirrorSession(null);
+        chooseTool("select");
+      }
+      return;
+    }
+    if (tool === "copy") {
+      if (d?.mode === "rwait" && !d.moved) {
+        if (copySession) onSegs(copySession.base, false);
+        setCopySession(null); setCopyBox(null); chooseTool("select");
+      }
+      return;
+    }
+    if (tool === "move") {
+      if (d?.mode === "rwait" && !d.moved) {
+        /* راست‌کلیک ساده دقیقاً مانند Esc: لغو Preview و خروج از Move. */
+        if (moveSession?.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+        else if (moveSession) onSegs(moveSession.base, false);
+        setMoveBox(null);
+        setMoveSession(null);
+        chooseTool("select");
+        setCursor(null);
+      } else if (d?.mode === "pan" && moveSession && camRef.current) {
+        /* بعد از Pan هم‌زمان، مبنای Move با دوربین جدید Rebase می‌شود تا هندسه
+           در اولین حرکت بعدی نشانگر نپرد و نشست جابه‌جایی ادامه پیدا کند. */
+        const pointer = toWorld(e.clientX, e.clientY);
+        const dz = moveSession.pointer.z - moveSession.origin.z;
+        const dr = moveSession.pointer.r - moveSession.origin.r;
+        const scale = camRef.current.s;
+        setMoveSession({
+          ...moveSession,
+          origin: { z: pointer.z - dz, r: pointer.r - dr },
+          pointer,
+          clientX: e.clientX - dz * scale,
+          clientY: e.clientY + dr * scale,
+          lastClientX: e.clientX,
+          lastClientY: e.clientY,
+        });
+      }
+      return;
+    }
 
     /* --- حالت ویرایش مسیر: ثبت ژست (نرمال‌سازی + تاریخچه) --- */
     if (d?.mode === "eline" || d?.mode === "evert") {
@@ -2393,9 +4081,45 @@ export default function ProfileEditor({
     /* کلیک‌راست بدون درگ: در حالت ترسیم لغو پیش‌نویس، در انتخاب منوی اتصال */
     if (d?.mode === "rwait") {
       if (!d.moved) {
-        if (draft.length) cancelDraft();
-        else if (editOpen) openSpeedMenu(e.clientX, e.clientY);
-        else openJoinMenu(e.clientX, e.clientY);
+        if (draft.length && (tool === "line" || (tool === "polyline" || tool === "paint"))) {
+          /* در ابزارهای خطی، راست‌کلیک دقیقاً معادل Enter است. */
+          if (measuredLineEnd) {
+            if ((tool === "polyline" || tool === "paint")) setDraft([...draft, measuredLineEnd]);
+            else {
+              const seg = makeSeg("line", [draft[0], measuredLineEnd]);
+              if (seg) { commit([...segs, seg]); onSelected([seg.id]); }
+              setDraft([]);
+            }
+            setLineLengthText("");
+          } else if (tool === "line" && lineCursor) {
+            const seg = makeSeg("line", [draft[0], lineCursor]);
+            if (seg) { commit([...segs, seg]); onSelected([seg.id]); }
+            setDraft([]);
+          } else if ((tool === "polyline" || tool === "paint")) {
+            if(tool==="paint")addPaintDraft(draft);
+            else {
+              const parts = draft.slice(1).map((point, index) => makeSeg("line", [draft[index], point])).filter((part): part is SketchSeg => !!part);
+              if (parts.length) {
+                const groupId = parts[0].id;
+                const grouped = parts.map((part) => ({ ...part, polylineId: groupId }));
+                commit([...segs, ...grouped]);
+                onSelected(grouped.map((part) => part.id));
+              }
+            }
+            setDraft([]);
+            setLineLengthText("");
+            if(tool==="paint")chooseTool("select");
+          }
+        } else if (draft.length) cancelDraft();
+        else {
+          const ploc=toLocal(e.clientX,e.clientY),world=worldPt(camRef.current!,ploc.x,ploc.y);
+          const empty=editOpen
+            ? hitBufLine(ploc.x,ploc.y)==null&&hitBufVx(ploc.x,ploc.y)==null&&hitOffSeg(ploc.x,ploc.y)==null
+            : !hitSeg(world)&&hitHandle(world)==null&&!hitSplitMarker(ploc.x,ploc.y);
+          if(rightClickToolToggle&&empty){const previous=previousToolRef.current;if(!editOpen||previous==="select"||previous==="move")chooseTool(previous);}
+          else if (editOpen) openSpeedMenu(e.clientX, e.clientY);
+          else openJoinMenu(e.clientX, e.clientY);
+        }
       }
       return;
     }
@@ -2407,6 +4131,7 @@ export default function ProfileEditor({
       setMarqueeHits([]);
       setMarqueePointHits([]);
       setMarqueeSplitHit(false);
+      setPaintMarqueeHits([]);setPaintMarqueePoints([]);
       if (wasClick) {
         /* کلیک روی فضای خالی: بدون اصلاح‌کننده پاک‌کردن انتخاب المان‌ها و نقاط */
         if (!e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -2427,6 +4152,28 @@ export default function ProfileEditor({
         r1: Math.max(w0.r, w1.r),
       };
       const mode: "window" | "crossing" = loc.x >= d.sx ? "window" : "crossing";
+      if(!editOpen){const hits=referenceImages.filter(img=>{const iz0=img.z,iz1=img.z+img.width,ir0=img.r-img.height,ir1=img.r;return mode==="window"?iz0>=rectW.z0&&iz1<=rectW.z1&&ir0>=rectW.r0&&ir1<=rectW.r1:iz1>=rectW.z0&&iz0<=rectW.z1&&ir1>=rectW.r0&&ir0<=rectW.r1;});if(hits.length)setSelectedImageId(hits[hits.length-1].id);else if(!e.shiftKey)setSelectedImageId(null);}
+      /* خطوط و نقاط نقاشی نیز دقیقاً با Window/Crossing باکس Select می‌شوند. */
+      if(!editOpen&&showCanvasPaintTool){
+        const inside=(p:SPoint)=>p.z>=rectW.z0&&p.z<=rectW.z1&&p.r>=rectW.r0&&p.r<=rectW.r1;
+        const orient=(a:SPoint,b:SPoint,c:SPoint)=>(b.z-a.z)*(c.r-a.r)-(b.r-a.r)*(c.z-a.z);
+        const crosses=(a:SPoint,b:SPoint)=>{
+          if(inside(a)||inside(b))return true;
+          const corners:SPoint[]=[{z:rectW.z0,r:rectW.r0},{z:rectW.z1,r:rectW.r0},{z:rectW.z1,r:rectW.r1},{z:rectW.z0,r:rectW.r1}];
+          for(let i=0;i<4;i++){const c=corners[i],q=corners[(i+1)%4];if(orient(a,b,c)*orient(a,b,q)<=0&&orient(c,q,a)*orient(c,q,b)<=0)return true;}
+          return false;
+        };
+        const paintHits=paintEdges.filter(edge=>mode==="window"?(inside(edge.a)&&inside(edge.b)):crosses(edge.a,edge.b)).map(edge=>edge.id);
+        const pointHitsPaint=paintEdges.flatMap(edge=>(["a","b"] as const).filter(part=>inside(edge[part])).map(point=>({id:edge.id,point})));
+        const removePaint=e.ctrlKey||e.metaKey,addPaint=e.shiftKey;
+        if(removePaint)setSelectedPaint(ids=>ids.filter(id=>!paintHits.includes(id)));
+        else if(addPaint)setSelectedPaint(ids=>[...ids,...paintHits.filter(id=>!ids.includes(id))]);
+        else setSelectedPaint(paintHits);
+        const pointKey=(p:{id:number;point:"a"|"b"})=>`${p.id}:${p.point}`;
+        if(removePaint)setSelectedPaintPoints(points=>points.filter(p=>!pointHitsPaint.some(h=>pointKey(h)===pointKey(p))));
+        else if(addPaint)setSelectedPaintPoints(points=>[...points,...pointHitsPaint.filter(h=>!points.some(p=>pointKey(p)===pointKey(h)))]);
+        else setSelectedPaintPoints(pointHitsPaint);
+      }
       /* باکس در حالت ادیت: اول خطوط/رأس‌های برنامه؛ اگر چیزی نگرفت، رفتار همیشگیِ پروفایل */
       if (editOpen) {
         const bh = bufMarqueeHits(rectW, mode);
@@ -2488,45 +4235,86 @@ export default function ProfileEditor({
       if (d.mode === "handle") {
         const ref = d.ref;
         const pkey = (p: { segId: number; part: string }) => `${p.segId}:${p.part}`;
-        const exists = selPoints.some((p) => pkey(p) === pkey(ref));
+        const exists = d.cluster.some((member) => selPoints.some((point) => pkey(point) === pkey(member)));
+        if (d.moved) {
+          /* نشانگر ابزار رسم هنوز مختصات لحظه شروع Drag را نگه می‌دارد. پیش از
+             render ثبت تاریخچه آن را پاک می‌کنیم تا پس از MouseUp حتی یک فریم
+             در محل قدیمی چشمک نزند؛ حرکت بعدی موس دوباره نشانگر را می‌سازد. */
+          setCursor(null);
+          onSegs(segs, true); // ثبت در تاریخچه
+          const owner=segs.find(segment=>segment.id===ref.segId);
+          const anchor=ref.part==="c1"?owner?.a:ref.part==="c2"?owner?.b:null;
+          const keepVertex=!!anchor&&selPoints.some(point=>{
+            if(point.part!=="a"&&point.part!=="b")return false;
+            const segment=segs.find(item=>item.id===point.segId);
+            return !!segment&&dist(segment[point.part],anchor)<1e-8;
+          });
+          if (!e.shiftKey && !exists && !keepVertex) setSelPoints([ref]); // نقطهٔ درگ‌شده انتخاب بماند
+          return;
+        }
+        if (tool === "select") {
+          if (e.shiftKey) setSelPoints(exists ? selPoints.filter((p) => pkey(p) !== pkey(ref)) : [...selPoints, ref]);
+          else if (e.ctrlKey || e.metaKey) setSelPoints(selPoints.filter((p) => pkey(p) !== pkey(ref)));
+          else setSelPoints([ref]);
+          return;
+        }
+        /* کلیک بدون Drag در ابزار رسم باید نقطهٔ مرحلهٔ رسم را ثبت کند. */
+      }
+      if (d.mode === "move") {
         if (d.moved) {
           onSegs(segs, true); // ثبت در تاریخچه
-          if (!e.shiftKey && !exists) setSelPoints([ref]); // نقطهٔ درگ‌شده انتخاب بماند
-        } else if (e.shiftKey) {
-          setSelPoints(exists ? selPoints.filter((p) => pkey(p) !== pkey(ref)) : [...selPoints, ref]);
+          return;
+        }
+        /* کلیک بدون درگ روی المان */
+        const id = d.clicked;
+        const objectIds = sketchObjectIds(id);
+        // اتصال هندسیِ تازه‌شده را به‌صورت پایدار در همان Polyline ثبت می‌کنیم
+        // تا حرکت بعدی فقط یک ضلع را از گروه جدا نکند.
+        if (objectIds.length > 1) {
+          const group = objectIds.map(oid => segs.find(s => s.id === oid)?.polylineId).find(v => v != null) ?? (Math.max(0, ...segs.map(s => s.polylineId ?? 0)) + 1);
+          const needsGroup = objectIds.some(oid => segs.find(s => s.id === oid)?.polylineId !== group);
+          if (needsGroup) onSegs(segs.map(s => objectIds.includes(s.id) ? { ...s, polylineId: group } : s), false);
+        }
+        if (e.shiftKey) {
+          onSelected(selected.includes(id)
+            ? selected.filter((x) => !objectIds.includes(x))
+            : [...selected, ...objectIds.filter((item) => !selected.includes(item))]);
         } else if (e.ctrlKey || e.metaKey) {
-          setSelPoints(selPoints.filter((p) => pkey(p) !== pkey(ref)));
+          onSelected(selected.filter((x) => !objectIds.includes(x)));
         } else {
-          setSelPoints([ref]);
+          const wholePolyline=objectIds.length>1&&objectIds.every(item=>selected.includes(item));
+          onSelected(wholePolyline?[id]:objectIds);
         }
         return;
       }
-      if (d.moved) {
-        onSegs(segs, true); // ثبت در تاریخچه
-        return;
-      }
-      /* کلیک بدون درگ روی المان */
-      const id = d.clicked;
-      if (e.shiftKey) {
-        onSelected(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
-      } else if (e.ctrlKey || e.metaKey) {
-        onSelected(selected.filter((x) => x !== id));
-      } else {
-        onSelected([id]);
-      }
-      return;
     }
 
-    if (tool !== "select" && (!d || ((d.mode === "draw" || d.mode === "pan") && !d.moved))) {
+    if (tool !== "select" && (!d || (((d.mode === "draw" || d.mode === "pan" || d.mode === "handle") && !d.moved)))) {
       /* ابزار Split: قرار دادن نقطه تعیین‌کننده روی پروفیل */
       if (tool === "split") {
         const hit = nearestOnSketch(toWorld(e.clientX, e.clientY));
-        if (hit) onSplit({ enabled: true, z: Math.round(hit.z * 10) / 10, r: Math.round(hit.r * 10) / 10 });
+        if (hit) onSplit({ enabled: true, z: hit.z, r: hit.r, swapped: split.swapped });
         return;
       }
       /* افزودن نقطهٔ جدید به ترسیم در حال انجام */
       const { p } = applySnap(toWorld(e.clientX, e.clientY));
-      const pt = constrainDraftPoint(p);
+      let pt = constrainDraftPoint(p);
+      if ((tool === "line" || (tool === "polyline" || tool === "paint")) && draft.length >= 1 && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)) {
+        const requested = Number(lineLengthText.replace(",", "."));
+        const start = draft[draft.length - 1];
+        const dz = pt.z - start.z;
+        const dr = pt.r - start.r;
+        const length = Math.hypot(dz, dr);
+        if (requested > 0) pt = clampPt({
+          z: start.z + (length > 1e-9 ? dz / length : 1) * requested,
+          r: start.r + (length > 1e-9 ? dr / length : 0) * requested,
+        });
+      }
+      if ((tool === "polyline" || tool === "paint")) {
+        setDraft([...draft, pt]);
+        setLineLengthText("");
+        return;
+      }
       const need = NEED_PTS[tool];
 
       if (tool === "cubic") {
@@ -2568,19 +4356,24 @@ export default function ProfileEditor({
           onSelected([seg.id]);
         }
         setDraft([]);
+        if (tool === "line") setLineLengthText("");
       } else {
         setDraft(pts);
+        if (tool === "line") setLineLengthText("");
       }
     }
   };
 
   const onDoubleClick = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (draft.length) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (tool === "polyline") setDraft([]);
+    if (draft.length && tool !== "polyline") {
       cancelDraft();
       return;
     }
     /* در ویرایش مسیر، دابل‌کلیک روی خط یک Vertex جدید درج می‌کند. */
-    if (tool !== "select" || !camRef.current) return;
+    if (tool !== "select" && tool !== "polyline" || !camRef.current) return;
     const raw = toWorld(e.clientX, e.clientY);
     if (editOpen && edit) {
       const loc = toLocal(e.clientX, e.clientY);
@@ -2595,6 +4388,23 @@ export default function ProfileEditor({
     }
     const s = editOpen ? null : hitSeg(raw);
     if (s) {
+      /* در حالت طراحی، دابل‌کلیک روی هر ضلع خطیِ Polyline همان‌جا Vertex
+         می‌سازد و ضلع را به دو ضلع هم‌عضو تقسیم می‌کند؛ مختصات از محل واقعی
+         کلیک گرفته می‌شود، نه از مرکز خط. */
+      if ((s.polylineId != null || tool === "polyline") && (s.kind === "line" || s.kind === "quad" || s.kind === "cubic" || s.kind === "arc")) {
+        const hit = nearestOnSeg(s, raw), t = hit.t;
+        if (t > 1e-5 && t < 1 - 1e-5) {
+          const at = evalSeg(s, t);
+          const mix = (a: SPoint, b: SPoint, k: number): SPoint => ({ z:a.z+(b.z-a.z)*k, r:a.r+(b.r-a.r)*k });
+          let first: SketchSeg, second: SketchSeg;
+          if (s.kind === "quad" && s.c1) { const ac=mix(s.a,s.c1,t),cb=mix(s.c1,s.b,t); first={...s,id:newSegId(),b:at,c1:ac};second={...s,id:newSegId(),a:at,c1:cb}; }
+          else if (s.kind === "cubic" && s.c1 && s.c2) { const p01=mix(s.a,s.c1,t),p12=mix(s.c1,s.c2,t),p23=mix(s.c2,s.b,t),p012=mix(p01,p12,t),p123=mix(p12,p23,t); first={...s,id:newSegId(),b:at,c1:p01,c2:p012};second={...s,id:newSegId(),a:at,c1:p123,c2:p23}; }
+          else if (s.kind === "arc") { first={...s,id:newSegId(),b:at,via:evalSeg(s,t/2)};second={...s,id:newSegId(),a:at,via:evalSeg(s,(t+1)/2)}; }
+          else { first={...s,id:newSegId(),b:at};second={...s,id:newSegId(),a:at}; }
+          const next = segs.flatMap(seg=>seg.id===s.id?[first,second]:[seg]);
+          commit(next); onSelected([first.id,second.id]); return;
+        }
+      }
       const chain = chainIds(s.id);
       if (e.shiftKey) onSelected([...selected, ...chain.filter((id) => !selected.includes(id))]);
       else onSelected(chain);
@@ -2636,9 +4446,25 @@ export default function ProfileEditor({
         for (let i = 1; i < pts.length; i++) d += ` L ${pts[i][0].toFixed(1)} ${pts[i][1].toFixed(1)}`;
         let arrows = "";
         if (curMotion !== 0) {
-          const step = Math.max(1, Math.ceil((pts.length - 1) / 6));
-          for (let i = step; i < pts.length - 1; i += step) {
-            arrows += arrowHead(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+          if (curKind === "finish" || curKind === "offset" || curKind === "borefin" || curKind === "boreoff") {
+            /* روی پروفایل و آفست بیرونی و داخلی فقط ابتدا و انتهای مسیر
+               علامت‌گذاری می‌شود. برای فلش ابتدا یک پاره‌خط مجازی هم‌جهت
+               می‌سازیم تا نوک فلش دقیقاً
+               روی نقطه شروع باشد؛ فلش انتها از آخرین پاره‌خط واقعی استفاده می‌کند. */
+            const first = pts[0];
+            const n = pts.length;
+            let firstDir = 1;
+            while (firstDir < n - 1 && Math.hypot(pts[firstDir][0] - first[0], pts[firstDir][1] - first[1]) < 7) firstDir++;
+            const second = pts[firstDir];
+            let lastDir = n - 2;
+            while (lastDir > 0 && Math.hypot(pts[n - 1][0] - pts[lastDir][0], pts[n - 1][1] - pts[lastDir][1]) < 7) lastDir--;
+            arrows += arrowHead(2 * first[0] - second[0], 2 * first[1] - second[1], first[0], first[1]);
+            arrows += arrowHead(pts[lastDir][0], pts[lastDir][1], pts[n - 1][0], pts[n - 1][1]);
+          } else {
+            const step = Math.max(1, Math.ceil((pts.length - 1) / 6));
+            for (let i = step; i < pts.length - 1; i += step) {
+              arrows += arrowHead(pts[i - 1][0], pts[i - 1][1], pts[i][0], pts[i][1]);
+            }
           }
         } else if ((curFan > 0 || curFanU !== 0) && pts.length >= 2) {
           /* حرکت سریعِ گسترده‌شده در جی‌کد: پیکان جهت در انتها */
@@ -2679,34 +4505,22 @@ export default function ProfileEditor({
   }, [gen.segs, cam, layerVisibilityKey, toolpathLayersVisible]);
 
   const ghostPath = useMemo(() => {
-    if (!settings.showGhost || !cam || gen.samples.length < 2) return "";
+    if (!settings.showGhost || !cam) return "";
+    /* سایه همیشه از زنجیره کامل طرح ساخته می‌شود، نه شاخه‌های تولیدشده توسط
+       Split؛ بنابراین جابه‌جایی Split هیچ مرز یا سطح جدیدی در سایه نمی‌سازد. */
+    const fullProfile = chainPolyline(orderChain(segs));
+    if (fullProfile.length < 2) return "";
     let d = "";
-    gen.samples.forEach((s, i) => {
-      const [x, y] = screenPt(cam, s.z, s.r);
+    fullProfile.forEach((point, i) => {
+      const [x, y] = screenPt(cam, point.z, point.r);
       d += `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)} `;
     });
-    for (let i = gen.samples.length - 1; i >= 0; i--) {
-      const [x, y] = screenPt(cam, gen.samples[i].z, -gen.samples[i].r);
+    for (let i = fullProfile.length - 1; i >= 0; i--) {
+      const [x, y] = screenPt(cam, fullProfile[i].z, -fullProfile[i].r);
       d += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
     }
     return d + "Z";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen.samples, cam, settings.showGhost]);
-
-  const innerGhost = useMemo(() => {
-    if (!settings.showGhost || !cam || gen.innerSamples.length < 2) return "";
-    let d = "";
-    gen.innerSamples.forEach((s, i) => {
-      const [x, y] = screenPt(cam, s.z, s.r);
-      d += `${i === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)} `;
-    });
-    for (let i = gen.innerSamples.length - 1; i >= 0; i--) {
-      const [x, y] = screenPt(cam, gen.innerSamples[i].z, -gen.innerSamples[i].r);
-      d += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
-    }
-    return d + "Z";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gen.innerSamples, cam, settings.showGhost]);
+  }, [segs, cam, settings.showGhost]);
 
   /* ---------- مسیر SVG المان‌های اسکچ ---------- */
   const segPath = (s: SketchSeg, c: Cam, mirror = false): string => {
@@ -2753,19 +4567,23 @@ export default function ProfileEditor({
      Gaussian blur. این کار تعداد nodeها و هزینهٔ GPU را هنگام pan ثابت نگه می‌دارد. */
   let selectedLinesPath = "";
   let activeLinePath = "";
-  let activeLineSpeedColor = "";
-  const selectedSpeedPaths = new Map<string, string>();
+  let activeLineStrokeWidth = 1.5;
+  const selectedSpeedPaths = new Map<string, { color: string; width: number; d: string }>();
+  const selectedPathsByWidth = new Map<number, string>();
   if (editOpen && toolpathLayersVisible && selectedLineIds.size) {
     for (const line of lines) {
       if (!selectedLineIds.has(line.id)) continue;
       const d = `${lineD(line)} `;
       if (line.id === activeLine) {
         activeLinePath += d;
-        activeLineSpeedColor = speedStroke(line.motion, line.feed);
+        activeLineStrokeWidth = line.motion === 0 ? 1.1 : line.kind === "finish" ? 1.8 : 1.5;
       } else {
         selectedLinesPath += d;
-        const color = speedStroke(line.motion, line.feed);
-        selectedSpeedPaths.set(color, `${selectedSpeedPaths.get(color) ?? ""}${d}`);
+        const width = line.motion === 0 ? 1.1 : line.kind === "finish" ? 1.8 : 1.5;
+        selectedPathsByWidth.set(width, `${selectedPathsByWidth.get(width) ?? ""}${d}`);
+        const color = speedStroke(line.motion, line.feed), key = `${color}:${width}`;
+        const grouped = selectedSpeedPaths.get(key);
+        selectedSpeedPaths.set(key, { color, width, d: `${grouped?.d ?? ""}${d}` });
       }
     }
   }
@@ -2813,7 +4631,7 @@ export default function ProfileEditor({
   const gridR = editOpen
     ? makeGridTicks((cam.oy - size.h) / cam.s, cam.oy / cam.s, gridStep, editGridDivisions)
     : makeGridTicks(-R, R, gridStep, editGridDivisions);
-  const gridVisible = !editOpen || settings.editGridVisible;
+  const gridVisible = settings.editGridVisible;
 
   const iso = isolatedOpId != null;
   const isoOp = iso ? ops.find((o) => o.id === isolatedOpId) ?? null : null;
@@ -2835,13 +4653,37 @@ export default function ProfileEditor({
 
   /* المان‌هایی که دسته‌های کنترل و نقاطشان نمایش داده می‌شود: یا المان انتخاب شده
      یا حداقل یک نقطه‌اش مستقل انتخاب شده است */
-  const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id));
+  const selectedEndpointCoords=selPoints.flatMap(point=>{
+    if(point.part!=="a"&&point.part!=="b")return [];
+    const segment=segs.find(s=>s.id===point.segId);
+    return segment?[segment[point.part]]:[];
+  });
+  const handleSegs = segs.filter((s) => selected.includes(s.id) || selPointSegIds.includes(s.id) || selectedEndpointCoords.some(point=>dist(s.a,point)<1e-8||dist(s.b,point)<1e-8));
 
   /* پیش‌نمایش ترسیم */
+  const straightDrawing = (tool === "line" && draft.length === 1) || ((tool === "polyline" || tool === "paint") && draft.length >= 1);
+  const lineCursor = straightDrawing && cursor ? constrainDraftPoint(cursor) : cursor;
+  const typedLineLength = lineLengthText !== "" && /^\d+(?:[.,]\d*)?$/.test(lineLengthText)
+    ? Number(lineLengthText.replace(",", "."))
+    : null;
+  const measuredLineEnd = straightDrawing && lineCursor && typedLineLength != null && typedLineLength > 0
+    ? (() => {
+        const start = draft[draft.length - 1];
+        const dz = lineCursor.z - start.z;
+        const dr = lineCursor.r - start.r;
+        const length = Math.hypot(dz, dr);
+        const uz = length > 1e-9 ? dz / length : 1;
+        const ur = length > 1e-9 ? dr / length : 0;
+        return clampPt({ z: start.z + uz * typedLineLength, r: start.r + ur * typedLineLength });
+      })()
+    : null;
   let previewSeg: SketchSeg | null = null;
   if (tool !== "select" && draft.length > 0 && cursor) {
     const pts = [...draft];
-    if (tool === "cubic" && pts.length === 4) {
+    const previewCursor = measuredLineEnd ?? lineCursor ?? cursor;
+    if ((tool === "polyline" || tool === "paint")) {
+      previewSeg = makeSeg("line", [pts[pts.length - 1], previewCursor]);
+    } else if (tool === "cubic" && pts.length === 4) {
       /* اگر دستهٔ دوم هنوز ثبت نشده (draftSecondSet=false)، نشانگر دستهٔ متصل به  */
       /* پایان (c2) را جابه‌جا می‌کند؛ وگرنه دستهٔ متصل به شروع (c1) را.            */
       if (!draftSecondSet.current) pts[3] = cursor;
@@ -2850,8 +4692,8 @@ export default function ProfileEditor({
     } else if (tool === "cubic" && pts.length === 3) {
       previewSeg = makeSeg("cubic", [...pts, cursor]);
     } else {
-      previewSeg = makeSeg(tool as SketchKind, [...pts, cursor]);
-      if (!previewSeg && pts.length === 1) previewSeg = makeSeg("line", [pts[0], cursor]);
+      previewSeg = makeSeg(tool as SketchKind, [...pts, previewCursor]);
+      if (!previewSeg && pts.length === 1) previewSeg = makeSeg("line", [pts[0], previewCursor]);
     }
   }
   /* ایندکس مرحلهٔ فعلی — برای منحنی کنترلی بر اساس وضعیت دسته‌ها */
@@ -2863,34 +4705,139 @@ export default function ProfileEditor({
   } else {
     stepIdx = draft.length;
   }
-  const stepText = tool !== "select" ? STEP_HINT[tool][Math.min(stepIdx, STEP_HINT[tool].length - 1)] : "";
+  const stepText = tool !== "select" && tool !== "move" ? STEP_HINT[tool][Math.min(stepIdx, STEP_HINT[tool].length - 1)] : "";
 
   /* اندازهٔ زندهٔ خط در حال ترسیم */
   let liveInfo = "";
-  if (tool !== "select" && draft.length >= 1 && cursor) {
-    const a = draft[0];
-    const b = draft.length === 1 ? cursor : draft[1];
+  if (tool !== "select" && tool !== "move" && draft.length >= 1 && cursor) {
+    const a = (tool === "polyline" || tool === "paint") ? draft[draft.length - 1] : draft[0];
+    const b = (tool === "polyline" || tool === "paint") || draft.length === 1 ? (lineCursor ?? cursor) : draft[1];
     liveInfo = `طول ${dist(a, b).toFixed(1)}  •  زاویه ${lineAngle(a, b).toFixed(1)}°`;
   }
+
+  const concise = (value: number) => {
+    const rounded = Math.round(value * 1000) / 1000;
+    return Object.is(rounded, -0) ? "0" : String(rounded);
+  };
+  const boxScaleBounds = (() => {
+    if (tool !== "boxscale" || !selected.length) return null;
+    const bounds = segs.filter((s) => selected.includes(s.id)).map(segBounds);
+    if (!bounds.length) return null;
+    return { minZ: Math.min(...bounds.map((b) => b.minZ)), maxZ: Math.max(...bounds.map((b) => b.maxZ)), minR: Math.min(...bounds.map((b) => b.minR)), maxR: Math.max(...bounds.map((b) => b.maxR)) };
+  })();
+  const copyReadout = copySession
+    ? `${concise(copySession.pointer.z - copySession.origin.z)}, ${concise(copySession.pointer.r - copySession.origin.r)}`
+    : "0, 0";
+  /* متن مرکزی پنجرهٔ مشترک «آپشن ابزار»؛ همهٔ گزینه‌های آیندهٔ هر ابزار
+     نیز باید در همین ظرف اضافه شوند، نه در پنل‌های شناور جداگانه. */
+  const toolOptionText = tool === "move" ? "جابجایی هندسه"
+    : tool === "rotate" ? (rotateSession ? "تعیین زاویه چرخش" : "انتخاب هندسه / مرکز چرخش")
+    : tool === "boxscale" ? "مقیاس باکس"
+    : tool === "copy" ? (copySession ? "تعیین محل کپی" : "انتخاب هندسه")
+    : tool === "mirror" ? (!mirrorSession?.p1 ? "نقطه شروع محور" : "نقطه پایان محور")
+    : tool === "scale" ? (!scaleSession ? "انتخاب هندسه" : !scaleSession.reference ? "نقطه دوم مرجع" : "تعیین اندازه")
+    : stepText;
+  const closeToolOptions = () => {
+    if (rotateSession) onSegs(rotateSession.base,false);
+    if (boxRotateSession) onSegs(boxRotateSession.base,false);
+    setBoxRotateSession(null); setBoxRotateBox(null); setBoxScalePivot(null);
+    if (moveSession) {
+      if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+      else onSegs(moveSession.base, false);
+    }
+    if (copySession) onSegs(copySession.base, false);
+    if (mirrorSession) onSegs(mirrorSession.base, false);
+    if (scaleSession) onSegs(scaleSession.base, false);
+    setRotateSession(null); setRotateBox(null);
+    setMoveSession(null); setMoveBox(null);
+    setCopySession(null); setCopyBox(null);
+    setMirrorSession(null);
+    setScaleSession(null); setScaleBox(null);
+    setFilletPicks([]); setFilletBox(null);
+    drag.current = null;
+    cancelDraft();
+    chooseTool("select");
+  };
+  let moveReadout = "0, 0";
+  if (moveSession) {
+    const editBase = moveSession.editBase?.find((vertex) => moveSession.editVertexIds?.includes(vertex.id));
+    const editCurrent = editBase ? edit?.verts.find((vertex) => vertex.id === editBase.id) : null;
+    const base = moveSession.base.find((segment) => moveSession.ids.includes(segment.id));
+    const current = base ? segs.find((segment) => segment.id === base.id) : null;
+    const bz = editBase?.z ?? base?.a.z, br = editBase ? editBase.x / 2 : base?.a.r;
+    const cz = editCurrent?.z ?? current?.a.z, cr = editCurrent ? editCurrent.x / 2 : current?.a.r;
+    if (bz != null && br != null && cz != null && cr != null) {
+      moveReadout = moveSession.mode === "absolute"
+        ? `${concise(cz)}, ${concise(cr)} · ABS`
+        : `${concise(cz - bz)}, ${concise(cr - br)}`;
+    }
+  }
+
+  const filletRadius = filletBox ? arithmeticValue(filletBox.value) : null;
+  const filletLines = filletPicks.length === 2
+    ? filletPicks.map((pick) => segs.find((segment) => segment.id === pick.id))
+    : [];
+  const filletCalc = filletLines.length === 2 && filletLines[0] && filletLines[1] && filletRadius != null
+    ? buildLineFillet(filletLines[0], filletLines[1], filletPicks[0].click, filletPicks[1].click, filletRadius, L, R)
+    : null;
+
+  const confirmFillet = () => {
+    if (!filletBox || !filletCalc?.result || filletRadius == null) {
+      if (filletBox) setFilletBox({ ...filletBox, error: filletCalc?.error ?? "شعاع نامعتبر" });
+      return;
+    }
+    const result = filletCalc.result;
+    const pair = [result.first.id, result.second.id].sort((a, b) => a - b) as [number, number];
+    const sourceLines = [
+      segs.find((segment) => segment.id === pair[0]),
+      segs.find((segment) => segment.id === pair[1]),
+    ].filter((segment): segment is SketchSeg => !!segment);
+    /* اگر هر دو خط عضو یک Polyline باشند، قوس Fillet نیز عضو همان Polyline است؛
+       در نتیجه انتخاب/Move/Delete گروهی، قوس و خطوط کوتاه‌شده را یک مجموعه می‌بیند. */
+    const sharedPolylineId = sourceLines.length === 2 && sourceLines[0].polylineId != null && sourceLines[0].polylineId === sourceLines[1].polylineId
+      ? sourceLines[0].polylineId
+      : undefined;
+    const arc: SketchSeg = { ...result.arc, id: newSegId(), filletOf: pair, polylineId: sharedPolylineId };
+    const touches = (candidate: SketchSeg, line: SketchSeg) =>
+      [candidate.a, candidate.b].some((point) => [line.a, line.b].some((end) => dist(point, end) < 1e-5));
+    /* روی یک جفت خط فقط یک Fillet معتبر می‌ماند. علاوه بر metadata، اتصال
+       هندسی نیز بررسی می‌شود تا Filletهای ساخته‌شده با نسخه‌های قدیمی جایگزین شوند. */
+    const withoutPrevious = segs.filter((segment) => {
+      if (segment.kind !== "arc" || segment.id === result.first.id || segment.id === result.second.id) return true;
+      const tagged = segment.filletOf && [...segment.filletOf].sort((a, b) => a - b).every((id, i) => id === pair[i]);
+      const geometricallyAttached = sourceLines.length === 2 && touches(segment, sourceLines[0]) && touches(segment, sourceLines[1]);
+      return !tagged && !geometricallyAttached;
+    });
+    commit(withoutPrevious.map((segment) => segment.id === result.first.id ? result.first : segment.id === result.second.id ? result.second : segment).concat(arc));
+    onSelected([arc.id]);
+    setFilletPicks([]); setFilletBox(null);
+  };
 
   return (
     <div
       ref={wrapRef}
+      onDragOver={e=>{if(e.dataTransfer.types.includes("Files"))e.preventDefault();}}
+      onDrop={e=>{if(e.dataTransfer.files.length){e.preventDefault();const rect=wrapRef.current?.getBoundingClientRect(),c=camRef.current,drop=rect&&c?worldPt(c,e.clientX-rect.left,e.clientY-rect.top):undefined;void importReferenceFiles([...e.dataTransfer.files],drop);}}}
       className={cn(
         "relative h-full w-full overflow-hidden rounded-lg border border-edge",
         editOpen ? "bg-[#08111f]" : "bg-[#120e09]"
       )}
     >
+      <input ref={imageInputRef} type="file" accept="image/*,.webp,.avif,.svg,.tif,.tiff" multiple hidden onChange={e=>{void importReferenceFiles([...(e.target.files??[])]);e.currentTarget.value="";}}/>
       <svg
         ref={svgRef}
         width={size.w}
         height={size.h}
+        style={{...(imageDragCursor?{cursor:imageDragCursor}:{}),"--point-scale":pointScale} as CSSProperties}
         className={cn(
-          "block touch-none select-none",
-          panMode || spaceDown
+          "canvas-point-scale block touch-none select-none",
+          disableSelectionGlow && "disable-selection-glow",
+          panMode
             ? "cursor-grab"
-            : tool !== "select"
-              ? "cursor-crosshair"
+            : tool === "move"
+              ? "cursor-move"
+              : tool !== "select"
+                ? "cursor-crosshair"
               : marquee
                 ? "cursor-crosshair"
                 : hoverPathEndpoint != null
@@ -2901,6 +4848,11 @@ export default function ProfileEditor({
                     : "cursor-move"
                   : "cursor-default"
         )}
+        onPointerDownCapture={e=>{
+          if(paintMenu)setPaintMenu(null);
+          if(!(e.target as Element).closest("[data-paint-hit]")&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){setSelectedPaint([]);setSelectedPaintPoints([]);}
+          if(!(e.target as Element).closest("[data-ref-image]")&&!e.shiftKey)setSelectedImageId(null);
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -2918,6 +4870,7 @@ export default function ProfileEditor({
         }}
       >
         <defs>
+          <marker id="paintPreviewArrow" markerWidth="17" markerHeight="17" refX="15" refY="8.5" orient="auto" markerUnits="userSpaceOnUse"><path d="M1 1L16 8.5L1 16Z" fill="#ef4444" /></marker>
           {/* userSpaceOnUse مانع صفرشدن محدوده فیلتر برای خطوط کاملاً افقی/عمودی می‌شود. */}
           <filter id="curveGlow" filterUnits="userSpaceOnUse" x="-10000" y="-10000" width="20000" height="20000">
             <feGaussianBlur stdDeviation="3" result="b" />
@@ -2930,7 +4883,24 @@ export default function ProfileEditor({
             <rect width="7" height="7" fill="rgba(227,169,78,0.05)" />
             <line x1="0" y1="0" x2="0" y2="7" stroke="rgba(227,169,78,0.10)" strokeWidth="1.4" />
           </pattern>
+          {referenceImages.map(img=><filter key={img.id} id={`ref-level-${img.id}`}><feComponentTransfer><feFuncR type="gamma" amplitude="1" exponent={1/img.gamma} offset="0"/><feFuncG type="gamma" amplitude="1" exponent={1/img.gamma} offset="0"/><feFuncB type="gamma" amplitude="1" exponent={1/img.gamma} offset="0"/></feComponentTransfer><feComponentTransfer><feFuncR type="linear" slope={255/Math.max(1,img.white-img.black)} intercept={-img.black/Math.max(1,img.white-img.black)}/><feFuncG type="linear" slope={255/Math.max(1,img.white-img.black)} intercept={-img.black/Math.max(1,img.white-img.black)}/><feFuncB type="linear" slope={255/Math.max(1,img.white-img.black)} intercept={-img.black/Math.max(1,img.white-img.black)}/></feComponentTransfer>{img.grayscale&&<feColorMatrix type="saturate" values="0"/>}</filter>)}
         </defs>
+
+        {/* عکس‌های مرجع پایین‌تر از گرید و تمام خطوط قرار می‌گیرند. */}
+        {displayImages.map(img=>{
+          const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s;
+          return <g key={img.id} ref={img.id===selectedImageId?selectedImageVisualRef:undefined} transform={`rotate(${img.rotation??0} ${x+w/2} ${y+h/2})`}>
+            <image data-ref-image="true" href={img.src} x={x} y={y} width={w} height={h} preserveAspectRatio={img.aspectLocked!==false?"xMidYMid meet":"none"} opacity={img.opacity} filter={`url(#ref-level-${img.id})`} onPointerDown={e=>{
+              if(e.button!==0||!(tool==="select"||tool==="move"||tool==="boxscale"))return;
+              const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top);
+              /* اجازه بده رویداد به SVG برسد تا خط/رأس روی عکس انتخاب شود. */
+              const [profileX,profileY]=screenPt(cam,start.z,start.r);
+              if(hitSeg(start)||hitHandle(start)||(editOpen&&hitBufVx(profileX,profileY)!=null))return;
+              e.stopPropagation();setSelectedImageId(img.id);if(!img.locked){imageDrag.current={id:img.id,start,base:{...img},mode:"move"};e.currentTarget.setPointerCapture?.(e.pointerId);}
+            }}/>
+
+          </g>;
+        })}
 
         {/* گرید: در حالت ادیت تمام فضای ماشین را می‌پوشاند؛ در طراحی فقط محدوده قطعه */}
         {gridVisible && (
@@ -3008,11 +4978,27 @@ export default function ProfileEditor({
             <path d={ghostPath} fill="rgba(227,169,78,0.12)" stroke="rgba(227,169,78,0.4)" strokeWidth={1} />
           </g>
         )}
-        {!editOpen && settings.showGhost && innerGhost && (
-          <g style={{ opacity: (iso ? 0.15 : 1) * layerOpacity, ...fadeStyle }}>
-            <path d={innerGhost} fill="rgba(76,201,240,0.10)" stroke="rgba(76,201,240,0.55)" strokeWidth={1} strokeDasharray="5 4" />
-          </g>
-        )}
+        {/* محدوده آبی داخل‌تراشی: انتهای Offset نزدیک Split → +X → محور (−Y)
+            → −X روی محور → دنبال‌کردن Offset تا همان نقطه. */}
+        {!editOpen && settings.showInnerArea && split.enabled && (()=>{
+          const divided=splitChainAt(chainPolyline(orderChain(segs)),{z:split.z,r:split.r});
+          const inner=split.swapped?divided.outer:divided.inner;
+          if(inner.length<2)return null;
+          const sampledInner=sampleOrderedProfile(inner.map((q,i)=>({id:i+1,z:q.z,r:q.r,smooth:false})),params.blankD/2);
+          const rawOffset=continuousPathOffset(sampledInner,Math.max(0,params.innerOffsetDist),true).reverse().map(q=>({z:q.z,r:Math.max(0,q.r)}));
+          if(rawOffset.length<2)return null;
+          /* مسیر بسته‌شدن از محور باید ابتدا به سر کم‌شعاع Offset برسد. */
+          const offset=rawOffset[0].r<=rawOffset[rawOffset.length-1].r?rawOffset:[...rawOffset].reverse();
+          const axisEnd=offset[0],splitSideEnd=offset[offset.length-1],rightZ=Math.max(params.blankL,splitSideEnd.z);
+          /* خط +X از انتهای خود Offset در سمت Split آغاز می‌شود؛ به این ترتیب
+             فاصله آفست در ضلع دهانه نیز حفظ و هیچ خطی به پروفایل اصلی وصل نمی‌شود. */
+          const [sx,sy]=P(splitSideEnd.z,splitSideEnd.r),[rx,ry]=P(rightZ,splitSideEnd.r),[r0x,r0y]=P(rightZ,0),[a0x,a0y]=P(axisEnd.z,0);
+          const offsetPath=offset.map(point=>{const[x,y]=P(point.z,point.r);return `L${x},${y}`;}).join(" ");
+          const d=`M${sx},${sy} L${rx},${ry} L${r0x},${r0y} L${a0x},${a0y} ${offsetPath} Z`;
+          return <g pointerEvents="none" style={{opacity:(iso?.18:.34)*layerOpacity,...fadeStyle}}>
+            <path d={d} fill="#69d7ff" fillOpacity={.24} stroke="#8de4ff" strokeOpacity={.42} strokeWidth={1}/>
+          </g>;
+        })()}
 
         {/* مسیر ابزار */}
         <g>
@@ -3026,7 +5012,7 @@ export default function ProfileEditor({
             const baseOpacity = isRapid ? 0.28 : run.kind === "offset" || run.kind === "boreoff" ? 0.9 : 0.8;
             return (
               <g key={i} style={{ opacity: (dim ? 0.06 : 1) * layerOpacity, ...fadeStyle }}>
-                <path d={run.d} fill="none" stroke={color} strokeOpacity={matchIso ? 1 : baseOpacity} strokeWidth={(isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4) + (matchIso ? 0.7 : 0)} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" filter={matchIso ? "url(#curveGlow)" : undefined} />
+                <path d={run.d} fill="none" stroke={color} strokeOpacity={baseOpacity} strokeWidth={isRapid ? 1 : run.kind === "finish" ? 1.8 : 1.4} strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined} strokeLinejoin="round" strokeLinecap="round" />
                 {run.arrows && !dim && <path d={run.arrows} fill={color} fillOpacity={0.95} />}
               </g>
             );
@@ -3047,12 +5033,11 @@ export default function ProfileEditor({
                   d={run.d}
                   fill="none"
                   stroke={showPathBySpeed ? speedStroke(run.motion, run.feed) : SEG_COLOR[run.kind]}
-                  strokeOpacity={(pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : matchIso ? 1 : isRapid ? 0.4 : 0.9) * layerOpacity}
-                  strokeWidth={(isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5) + (matchIso ? 0.7 : 0)}
+                  strokeOpacity={(pickerHover ? (dim ? 0.025 : 0.1) : dim ? 0.06 : isRapid ? 0.4 : 0.9) * layerOpacity}
+                  strokeWidth={isRapid ? 1.1 : run.kind === "finish" ? 1.8 : 1.5}
                   strokeDasharray={isRapid ? "4 4" : run.kind === "offset" || run.kind === "boreoff" ? "7 4" : undefined}
                   strokeLinejoin="round"
                   strokeLinecap="round"
-                  filter={matchIso ? "url(#curveGlow)" : undefined}
                 />
               );
             })}
@@ -3170,19 +5155,16 @@ export default function ProfileEditor({
                 از Gaussian blur پرهزینه برای تک‌تک Segmentها استفاده نمی‌شود. */}
             {selectedLinesPath && (
               <>
-                <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.02 : 0.2} strokeWidth={7} strokeLinecap="round" pointerEvents="none" />
-                {showPathBySpeed ? [...selectedSpeedPaths].map(([color, d]) => (
-                  <path key={color} d={d} fill="none" stroke={color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3.2} strokeLinecap="round" pointerEvents="none" />
-                )) : (
-                  <path d={selectedLinesPath} fill="none" stroke="#45b394" strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={3} strokeLinecap="round" pointerEvents="none" />
-                )}
+                {showPathBySpeed ? [...selectedSpeedPaths].map(([key, group]) => (
+                  <path key={key} d={group.d} fill="none" stroke={group.color} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : group.width} strokeLinecap="round" filter={disableSelectionGlow?undefined:"url(#curveGlow)"} pointerEvents="none" />
+                )) : [...selectedPathsByWidth].map(([width, d]) => (
+                  <path key={width} d={d} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={iso ? 1.1 : width} strokeLinecap="round" filter={disableSelectionGlow?undefined:"url(#curveGlow)"} pointerEvents="none" />
+                ))}
               </>
             )}
+            {/* خط Active فقط با رنگ آبی روشن مشخص می‌شود؛ بدون Glow یا تغییر ضخامت. */}
             {activeLinePath && (
-              <>
-                <path d={activeLinePath} fill="none" stroke="#ffd27a" strokeOpacity={pickerHover ? 0.02 : showPathBySpeed ? 0.55 : 0.24} strokeWidth={9} strokeLinecap="round" pointerEvents="none" />
-                <path d={activeLinePath} fill="none" stroke={showPathBySpeed ? activeLineSpeedColor : "#ffd27a"} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={4.2} strokeLinecap="round" pointerEvents="none" />
-              </>
+              <path d={activeLinePath} fill="none" stroke={guideLineColor} strokeOpacity={pickerHover ? 0.08 : 1} strokeWidth={activeLineStrokeWidth} strokeLinecap="round" pointerEvents="none" />
             )}
             {/* پیش‌نمایش موقت انتخاب بازه‌ای؛ تا پیش از Shift+کلیک وارد تاریخچه نمی‌شود. */}
             {rangePreviewPath && (
@@ -3199,8 +5181,8 @@ export default function ProfileEditor({
               const shared = (vertexLineCount.get(vid) ?? 0) > 1;
               return (
                 <g key={`bv${vid}`} opacity={pickerHover ? 0.1 : 1}>
-                  <circle cx={x} cy={y} r={8} fill={on ? "#ffd27a" : "#45b394"} fillOpacity={0.12} pointerEvents="none" />
-                  <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={on ? "#ffd27a" : shared ? "#0f2a22" : "#120e09"} stroke={on ? "#120e09" : "#45b394"} strokeWidth={2.4} />
+                  <circle className="pt-hover" cx={x} cy={y} r={5.5} fill={shared ? "#0f2a22" : "#120e09"} stroke="#45b394" strokeWidth={2.4} />
+                  {on && <circle cx={x} cy={y} r={2.1} fill="#45b394" pointerEvents="none" />}
                 </g>
               );
             })}
@@ -3209,24 +5191,42 @@ export default function ProfileEditor({
 
         {/* المان‌های اسکچ */}
         <g style={{ opacity: editOpen ? 0.12 : iso ? 0.3 : 1, ...fadeStyle }}>
-          {/* آینهٔ پایین محور */}
-          {segs.map((s) => (
-            <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke={segSide.get(s.id) === "inner" ? "#4cc9f0" : "#e3a94e"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
-          ))}
+          {/* رنگ شاخه‌ها مستقیماً از زنجیرهٔ تقسیم‌شده رسم می‌شود. بنابراین اگر
+              Split وسط یک Arc/Bezier باشد، رنگ داخلی دقیقاً تا خود Split می‌رسد
+              و کل منحنی جدید به اشتباه در یک سمت طبقه‌بندی نمی‌شود. */}
+          {split.enabled && (() => {
+            const divided = splitChainAt(chainPolyline(orderChain(segs)), { z: split.z, r: split.r });
+            const pathOf = (points: SPoint[], mirror = false) => points.map((point, i) => {
+              const [x, y] = P(point.z, mirror ? -point.r : point.r);
+              return `${i ? "L" : "M"}${x},${y}`;
+            }).join(" ");
+            return <>
+              <path d={pathOf(divided.outer, true)} fill="none" stroke={split.swapped ? "#4cc9f0" : "#e3a94e"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+              <path d={pathOf(divided.inner, true)} fill="none" stroke={split.swapped ? "#e3a94e" : "#4cc9f0"} strokeOpacity={0.28} strokeWidth={1.6} strokeLinecap="round" />
+              <path d={pathOf(divided.outer)} fill="none" stroke={split.swapped ? "#4cc9f0" : profileColor} strokeWidth={2.4} strokeLinecap="round" />
+              <path d={pathOf(divided.inner)} fill="none" stroke={split.swapped ? profileColor : "#4cc9f0"} strokeWidth={2.4} strokeLinecap="round" />
+            </>;
+          })()}
+          {/* بدون Split، رنگ معمول هر المان استفاده می‌شود. */}
+          {!split.enabled && segs.map((s) => {
+            const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
+            return <path key={`m${s.id}`} d={segPath(s, cam, true)} fill="none" stroke={profileColor} strokeOpacity={mirrorDimmed ? 0.07 : 0.28} strokeWidth={1.6} strokeLinecap="round" />;
+          })}
           {segs.map((s) => {
             const sel = selected.includes(s.id);
-            const hov = hoverId === s.id;
-            const hasSelPt = selPointSegIds.includes(s.id);
-            const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : "#f3c26b";
+            const hov = selPoints.length === 0 && hoverId === s.id;
+            const mirrorDimmed = !!mirrorSession && !mirrorSession.keepCopy && mirrorSession.ids.includes(s.id);
+            const base = segSide.get(s.id) === "inner" ? "#4cc9f0" : profileColor;
             return (
               <path
                 key={s.id}
                 d={segPath(s, cam)}
                 fill="none"
-                stroke={sel ? "#45b394" : hasSelPt ? "#ffd27a" : hov ? "#fff3dc" : base}
-                strokeWidth={sel ? 3.2 : hasSelPt ? 3.4 : hov ? 3 : 2.4}
+                stroke={sel ? selectedColor : hov ? "#fff3dc" : split.enabled ? "transparent" : base}
+                strokeWidth={iso ? 2.4 : sel ? 3.2 : hov ? 3 : 2.4}
+                strokeOpacity={mirrorDimmed ? 0.2 : 1}
                 strokeLinecap="round"
-                filter={sel || hasSelPt ? "url(#curveGlow)" : undefined}
+                filter={!mirrorDimmed && !iso && sel ? "url(#curveGlow)" : undefined}
               />
             );
           })}
@@ -3245,51 +5245,42 @@ export default function ProfileEditor({
             />
           )}
 
-          {/* نشانگر نقاط مستقلِ انتخاب‌شده — رنگ خود نقطه تغییر می‌کند */}
-          {selPoints.map((ps, i) => {
-            const s = segs.find((x) => x.id === ps.segId);
-            const pt = s ? s[ps.part] : null;
-            if (!s || !pt) return null;
-            const [x, y] = P(pt.z, pt.r);
-            const isCtrl = ps.part === "c1" || ps.part === "c2";
-            return (
-              <g key={`selpt-${i}`} filter="url(#curveGlow)">
-                <circle
-                  className="pt-hover"
-                  cx={x}
-                  cy={y}
-                  r={isCtrl ? 6 : 6.5}
-                  fill="#ffd27a"
-                  stroke="#120e09"
-                  strokeWidth={1.8}
-                />
-              </g>
-            );
-          })}
-
           {/* دسته‌ها و نقاط المان‌های انتخاب‌شده یا دارای نقطهٔ مستقلِ انتخاب‌شده */}
-          {handleSegs.map((s) => {
+          {(mirrorSession ? [] : handleSegs).map((s) => {
             const [ax, ay] = P(s.a.z, s.a.r);
             const [bx, by] = P(s.b.z, s.b.r);
+            const pointIsActive = (part: HandleRef["part"]) =>
+              selPoints.some((point) => point.segId === s.id && point.part === part) ||
+              (drag.current?.mode === "handle" && drag.current.ref.segId === s.id && drag.current.ref.part === part);
+            const endpointIsActive=(part:"a"|"b")=>selectedEndpointCoords.some(point=>dist(s[part],point)<1e-8);
+            const whole=selected.includes(s.id),showA=whole||endpointIsActive("a"),showB=whole||endpointIsActive("b");
+            const showC1=whole||pointIsActive("c1")||endpointIsActive("a"),showC2=whole||pointIsActive("c2")||endpointIsActive("b");
+            const showVia=whole||pointIsActive("via");
             return (
               <g key={`h${s.id}`}>
-                {s.c1 && (
+                {s.c1 && dist(s.c1,s.a)>1e-8 && showC1 && (
                   <>
                     <line x1={ax} y1={ay} x2={P(s.c1.z, s.c1.r)[0]} y2={P(s.c1.z, s.c1.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
                   </>
                 )}
-                {s.c2 && (
+                {s.c2 && dist(s.c2,s.b)>1e-8 && showC2 && (
                   <>
                     <line x1={bx} y1={by} x2={P(s.c2.z, s.c2.r)[0]} y2={P(s.c2.z, s.c2.r)[1]} stroke="#6ab0d8" strokeWidth={1} strokeDasharray="3 3" />
                     <circle className="pt-hover" cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={5} fill="#1b2a33" stroke="#6ab0d8" strokeWidth={2} />
                   </>
                 )}
-                {s.via && (
+                {s.via && showVia && (
                   <circle className="pt-hover" cx={P(s.via.z, s.via.r)[0]} cy={P(s.via.z, s.via.r)[1]} r={5} fill="#2b1f33" stroke="#b48ee0" strokeWidth={2} />
                 )}
-                <circle className="pt-hover" cx={ax} cy={ay} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
-                <circle className="pt-hover" cx={bx} cy={by} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />
+                {showA&&<circle className="pt-hover" cx={ax} cy={ay} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />}
+                {showB&&<circle className="pt-hover" cx={bx} cy={by} r={5.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2.4} />}
+                {/* نقطه فعال داخل Handle و روی همه لایه‌های پایه رسم می‌شود. */}
+                {s.c1 && pointIsActive("c1") && <circle cx={P(s.c1.z, s.c1.r)[0]} cy={P(s.c1.z, s.c1.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
+                {s.c2 && pointIsActive("c2") && <circle cx={P(s.c2.z, s.c2.r)[0]} cy={P(s.c2.z, s.c2.r)[1]} r={2.1} fill="#6ab0d8" pointerEvents="none" />}
+                {s.via && pointIsActive("via") && <circle cx={P(s.via.z, s.via.r)[0]} cy={P(s.via.z, s.via.r)[1]} r={2.1} fill="#b48ee0" pointerEvents="none" />}
+                {pointIsActive("a") && <circle cx={ax} cy={ay} r={2.1} fill="#45b394" pointerEvents="none" />}
+                {pointIsActive("b") && <circle cx={bx} cy={by} r={2.1} fill="#45b394" pointerEvents="none" />}
               </g>
             );
           })}
@@ -3299,7 +5290,19 @@ export default function ProfileEditor({
         {/* پیش‌نمایش ترسیم */}
         {previewSeg && (
           <g>
-            <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeDasharray="6 4" strokeLinecap="round" opacity={0.95} />
+            {tool==="paint"&&draft.length>1
+              ? draft.slice(1).map((point,index)=><line key={index} x1={P(draft[index].z,draft[index].r)[0]} y1={P(draft[index].z,draft[index].r)[1]} x2={P(point.z,point.r)[0]} y2={P(point.z,point.r)[1]} stroke="#ef4444" strokeWidth={profileLineWidth} markerEnd="url(#paintPreviewArrow)" pointerEvents="none" />)
+              : tool==="polyline"&&draft.length>1&&<path d={draft.map((point,index)=>`${index?"L":"M"}${P(point.z,point.r)[0]},${P(point.z,point.r)[1]}`).join(" ")} fill="none" stroke="#45b394" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none" />
+            }
+            {tool==="paint" ? (
+              <path d={segPath(previewSeg,cam)} fill="none" stroke="#ef4444" strokeWidth={profileLineWidth} markerEnd="url(#paintPreviewArrow)" pointerEvents="none" />
+            ) : straightDrawing && measuredLineEnd && lineCursor ? (
+              <>
+                <path d={segPath(previewSeg, cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeLinecap="round" opacity={0.95} />
+                <circle cx={P(measuredLineEnd.z, measuredLineEnd.r)[0]} cy={P(measuredLineEnd.z, measuredLineEnd.r)[1]} r={4.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2} pointerEvents="none" />
+                <line x1={P(measuredLineEnd.z, measuredLineEnd.r)[0]} y1={P(measuredLineEnd.z, measuredLineEnd.r)[1]} x2={P(lineCursor.z,lineCursor.r)[0]} y2={P(lineCursor.z,lineCursor.r)[1]} stroke="#6ab0d8" strokeWidth={1.5} strokeDasharray="5 4" strokeLinecap="round" pointerEvents="none" />
+              </>
+            ) : <path d={segPath(previewSeg,cam)} fill="none" stroke="#45b394" strokeWidth={2.2} strokeDasharray="6 4" strokeLinecap="round" opacity={0.95} />}
             {previewSeg.kind === "cubic" && previewSeg.c1 && previewSeg.c2 ? (
               <>
                 {/* خطوط اتصال دسته‌ها به نقاط انتهایی */}
@@ -3312,19 +5315,22 @@ export default function ProfileEditor({
                 <circle cx={P(previewSeg.c1.z, previewSeg.c1.r)[0]} cy={P(previewSeg.c1.z, previewSeg.c1.r)[1]} r={draftSecondSet.current ? 6 : 4} fill="#1b2a33" stroke={draftSecondSet.current ? "#f3c26b" : "#6ab0d8"} strokeWidth={2} />
                 <circle cx={P(previewSeg.c2.z, previewSeg.c2.r)[0]} cy={P(previewSeg.c2.z, previewSeg.c2.r)[1]} r={!draftSecondSet.current ? 6 : 4} fill="#1b2a33" stroke={!draftSecondSet.current ? "#f3c26b" : "#6ab0d8"} strokeWidth={2} />
               </>
-            ) : (
+            ) : tool!=="paint" ? (
               draft.map((p, i) => (
                 <circle key={i} cx={P(p.z, p.r)[0]} cy={P(p.z, p.r)[1]} r={4.5} fill="#0f2a22" stroke="#45b394" strokeWidth={2} />
               ))
-            )}
+            ) : null}
           </g>
         )}
-        {tool !== "select" && cursor && (
+        {/* نشانگر سبز ابزار رسم هنگام Drag نقطه/دسته پنهان می‌شود؛ در غیر این
+            صورت در موقعیت شروع Drag باقی می‌ماند و با خود هندسه اشتباه می‌شود. */}
+        {tool !== "paint" && tool !== "select" && tool !== "move" && tool !== "rotate" && tool !== "copy" && tool !== "mirror" && tool !== "scale" && tool !== "boxscale" && cursor && drag.current?.mode !== "handle" &&
+          !(straightDrawing && measuredLineEnd) && (
           <circle cx={P(cursor.z, cursor.r)[0]} cy={P(cursor.z, cursor.r)[1]} r={4} fill="none" stroke="#45b394" strokeWidth={1.6} />
         )}
 
         {/* نشانگر اسنپ */}
-        {snapHit && (
+        {tool!=="paint" && snapHit && !(tool === "boxscale" && snapHit.type === "grid") && !(straightDrawing && measuredLineEnd) && (
           <g>
             <rect
               x={P(snapHit.p.z, snapHit.p.r)[0] - 6}
@@ -3368,40 +5374,53 @@ export default function ProfileEditor({
           })}
         </g>
 
+        {/* نقطه Split شاخه داخلی در مختصات واقعی Offset هلدر دوم */}
+        {editInnerSplitPoint && (() => {
+          const [x, y] = P(editInnerSplitPoint.z, editInnerSplitPoint.r);
+          return <g pointerEvents="none">
+            <rect
+              x={x - 4}
+              y={y - 4}
+              width={8}
+              height={8}
+              transform={`rotate(45 ${x} ${y})`}
+              fill="#168cff"
+              stroke="#120e09"
+              strokeWidth={1.2}
+            />
+            <circle cx={x} cy={y} r={1.25} fill="#ffffff" />
+          </g>;
+        })()}
+
         {/* نقطه Split */}
         {split.enabled && (
           <g>
             {(() => {
               const [x, y] = P(split.z, split.r);
-              const ym = P(split.z, -split.r)[1];
               return (
-                <g>
-                  {[y, ym].map((yy, k) => (
-                    <g key={k} style={{ cursor: "pointer" }}>
-                      {(splitSelected || splitHovered || marqueeSplitHit) && (
-                        <circle
-                          cx={x}
-                          cy={yy}
-                          r={splitSelected ? 8 : 7}
-                          fill={marqueeSplitHit ? "#4aa3ff" : "#f72585"}
-                          fillOpacity={splitSelected ? 0.2 : 0.12}
-                          stroke={splitSelected ? "#fff3dc" : marqueeSplitHit ? "#8fc5ff" : "#ff84bc"}
-                          strokeWidth={splitSelected ? 1.6 : 1}
-                        />
-                      )}
-                      <rect
-                        x={x - 4}
-                        y={yy - 4}
-                        width={8}
-                        height={8}
-                        transform={`rotate(45 ${x} ${yy})`}
-                        fill={splitSelected ? "#ffd27a" : splitHovered ? "#ff5ba6" : "#f72585"}
-                        stroke="#120e09"
-                        strokeWidth={1.2}
-                      />
-                      <circle cx={x} cy={yy} r={1.25} fill="#ffffff" />
-                    </g>
-                  ))}
+                <g style={{ cursor: "pointer" }}>
+                  {(splitSelected || splitHovered || marqueeSplitHit) && (
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={splitSelected ? 8 : 7}
+                      fill={marqueeSplitHit ? "#4aa3ff" : "#f72585"}
+                      fillOpacity={splitSelected ? 0.2 : 0.12}
+                      stroke={splitSelected ? "#fff3dc" : marqueeSplitHit ? "#8fc5ff" : "#ff84bc"}
+                      strokeWidth={splitSelected ? 1.6 : 1}
+                    />
+                  )}
+                  <rect
+                    x={x - 4}
+                    y={y - 4}
+                    width={8}
+                    height={8}
+                    transform={`rotate(45 ${x} ${y})`}
+                    fill={splitSelected ? "#ffd27a" : splitHovered ? "#ff5ba6" : "#f72585"}
+                    stroke="#120e09"
+                    strokeWidth={1.2}
+                  />
+                  <circle cx={x} cy={y} r={1.25} fill="#ffffff" />
                 </g>
               );
             })()}
@@ -3466,7 +5485,212 @@ export default function ProfileEditor({
           </g>
         )}
 
+        {/* پیش‌نمایش Fillet: خطوط Trim‌شده و Arc مماس پیش از Enter */}
+        {tool === "fillet" && filletCalc?.result && (
+          <g pointerEvents="none" filter="url(#curveGlow)">
+            <path d={segPath(filletCalc.result.first, cam)} fill="none" stroke="#ffd166" strokeWidth={3} strokeDasharray="7 3" />
+            <path d={segPath(filletCalc.result.second, cam)} fill="none" stroke="#ffd166" strokeWidth={3} strokeDasharray="7 3" />
+            <path d={segPath(filletCalc.result.arc, cam)} fill="none" stroke="#28dfc2" strokeWidth={3.5} />
+          </g>
+        )}
+
+        {rotateSession && <g pointerEvents="none">
+          {rotateGhost && rotateSession.base.filter(s=>rotateSession.ids.includes(s.id)).map(s=><path key={`rotate-ghost-${s.id}`} d={segPath(s,cam)} fill="none" stroke="#28dfc2" strokeWidth={2} opacity={.25}/>)}
+          <line x1={P(rotateSession.center.z,rotateSession.center.r)[0]} y1={P(rotateSession.center.z,rotateSession.center.r)[1]} x2={P(rotateSession.pointer.z,rotateSession.pointer.r)[0]} y2={P(rotateSession.pointer.z,rotateSession.pointer.r)[1]} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4"/>
+          <circle cx={P(rotateSession.center.z,rotateSession.center.r)[0]} cy={P(rotateSession.center.z,rotateSession.center.r)[1]} r={4} fill="#071018" stroke="#28dfc2" strokeWidth={1.5}/>
+        </g>}
+
+        {tool === "boxscale" && boxScaleGhost && boxRotateSession && (
+          <g pointerEvents="none" opacity={0.25}>{boxRotateSession.base.filter(s=>boxRotateSession.ids.includes(s.id)).map(s=><path key={`box-rotate-ghost-${s.id}`} d={segPath(s,cam)} fill="none" stroke="#28dfc2" strokeWidth={2}/>)}</g>
+        )}
+
+        {tool === "boxscale" && boxScaleGhost && boxScaleDrag.current && (
+          <g pointerEvents="none" opacity={0.25}>
+            {boxScaleDrag.current.base.filter((s) => boxScaleDrag.current!.ids.includes(s.id)).map((s) => (
+              <path key={`box-scale-drag-ghost-${s.id}`} d={segPath(s, cam)} fill="none" stroke="#28dfc2" strokeWidth={2} />
+            ))}
+            {(() => {
+              const gb=boxScaleDrag.current!.bounds;
+              const [gx0,gyTop]=P(gb.minZ,gb.maxR), [gx1,gyBottom]=P(gb.maxZ,gb.minR);
+              return <rect x={gx0} y={gyTop} width={gx1-gx0} height={gyBottom-gyTop} fill="none" stroke="#28dfc2" strokeWidth={1.1} strokeDasharray="5 4" />;
+            })()}
+          </g>
+        )}
+
+        {tool === "boxscale" && boxScaleGhost && boxScaleNumericBase.current && (boxScaleWidthText != null || boxScaleHeightText != null) && (
+          <g pointerEvents="none" opacity={0.25}>
+            {boxScaleNumericBase.current.segs.filter((s) => selected.includes(s.id)).map((s) => (
+              <path key={`box-scale-ghost-${s.id}`} d={segPath(s, cam)} fill="none" stroke="#28dfc2" strokeWidth={2} />
+            ))}
+            {(() => {
+              const gb=boxScaleNumericBase.current!.bounds;
+              const [gx0,gyTop]=P(gb.minZ,gb.maxR), [gx1,gyBottom]=P(gb.maxZ,gb.minR);
+              return <rect x={gx0} y={gyTop} width={gx1-gx0} height={gyBottom-gyTop} fill="none" stroke="#28dfc2" strokeWidth={1.1} strokeDasharray="5 4" />;
+            })()}
+          </g>
+        )}
+
+
+
+      {boxScaleBounds && (() => {
+          const b = boxScaleBounds; const [x0,yTop]=P(b.minZ,b.maxR), [x1,yBottom]=P(b.maxZ,b.minR);
+          const handles = [{h:"nw",x:x0,y:yTop},{h:"n",x:(x0+x1)/2,y:yTop},{h:"ne",x:x1,y:yTop},{h:"e",x:x1,y:(yTop+yBottom)/2},{h:"se",x:x1,y:yBottom},{h:"s",x:(x0+x1)/2,y:yBottom},{h:"sw",x:x0,y:yBottom},{h:"w",x:x0,y:(yTop+yBottom)/2}];
+          return <g pointerEvents="all">
+            <rect x={x0} y={yTop} width={x1-x0} height={yBottom-yTop} fill="none" stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" />
+            {handles.map(({h,x,y})=><rect key={h} x={x-4} y={y-4} width={8} height={8} rx={1} fill="#071018" stroke="#28dfc2" strokeWidth={1.5} style={{cursor:`${h}-resize`}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation(); svgRef.current?.setPointerCapture?.(e.pointerId); boxScaleLastHandle.current=h; boxScaleDrag.current={handle:h,base:segs.map(s=>({...s})),ids:[...selected],bounds:{...b}};}} />)}
+            {[{x:x0-7,y:yTop-7},{x:x1+7,y:yTop-7},{x:x1+7,y:yBottom+7},{x:x0-7,y:yBottom+7}].map((p,i)=><circle key={`rh-${i}`} cx={p.x} cy={p.y} r={5} fill="transparent" stroke="none" style={{cursor:BOX_ROTATE_CURSORS[i]}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation();svgRef.current?.setPointerCapture?.(e.pointerId);const pivot=boxScalePivot??{z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2};const w=toWorld(e.clientX,e.clientY);const session={base:segs.map(s=>({...s})),ids:[...selected],pivot,angle:0};boxRotateDrag.current={...session,startAngle:Math.atan2(w.r-pivot.r,w.z-pivot.z)};setBoxRotateSession(session);const rect=wrapRef.current!.getBoundingClientRect();setBoxRotateBox({x:e.clientX-rect.left+12,y:e.clientY-rect.top-48,value:"",error:""});}}/>)}
+            {(()=>{const pivot=boxScalePivot??{z:(b.minZ+b.maxZ)/2,r:(b.minR+b.maxR)/2};const [px,py]=P(pivot.z,pivot.r);return <g style={{cursor:"move"}} onPointerDown={(e)=>{if(e.button!==0)return;e.stopPropagation();svgRef.current?.setPointerCapture?.(e.pointerId);boxPivotDrag.current=true;}}><circle cx={px} cy={py} r={9} fill="transparent"/><path d={`M${px-6} ${py}H${px+6}M${px} ${py-6}V${py+6}`} stroke="#28dfc2" strokeWidth={1.8}/></g>;})()}
+          </g>;
+        })()}
+
+        {/* خط مرجع و طول زنده Scale */}
+        {scaleSession?.pointer && (() => {
+          const origin = scaleSession.origin;
+          const pointer = scaleSession.pointer!;
+          const dz = pointer.z - origin.z, dr = pointer.r - origin.r;
+          const fullLength = Math.hypot(dz, dr);
+          const entered = scaleBox?.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(scaleBox.value) : null;
+          const coloredLength = entered != null && entered > 0 ? entered : fullLength;
+          const coloredEnd = fullLength > 1e-9
+            ? { z: origin.z + dz / fullLength * coloredLength, r: origin.r + dr / fullLength * coloredLength }
+            : pointer;
+          const [x1, y1] = P(origin.z, origin.r);
+          const [xc, yc] = P(coloredEnd.z, coloredEnd.r);
+          const [x2, y2] = P(pointer.z, pointer.r);
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={xc} y2={yc} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              {entered != null && entered > 0 && fullLength > entered && (
+                <line x1={xc} y1={yc} x2={x2} y2={y2} stroke="#28dfc2" strokeWidth={1.2} strokeDasharray="5 4" opacity={0.25} />
+              )}
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke="#28dfc2" strokeWidth={1.3} />
+            </g>
+          );
+        })()}
+
+        {/* محور زنده و نهایی Mirror */}
+        {mirrorSession?.p1 && mirrorSession.cursor && (() => {
+          const [x1, y1] = P(mirrorSession.p1!.z, mirrorSession.p1!.r);
+          const [x2, y2] = P(mirrorSession.cursor!.z, mirrorSession.cursor!.r);
+          const horizontal = Math.abs(mirrorSession.cursor!.r - mirrorSession.p1!.r) < 1e-9;
+          const vertical = Math.abs(mirrorSession.cursor!.z - mirrorSession.p1!.z) < 1e-9;
+          const guideColor = horizontal ? "#754052" : vertical ? "#3b7373" : "#28dfc2";
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
+              <circle cx={x2} cy={y2} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
+            </g>
+          );
+        })()}
+
+        {/* راهنمای Copy، دقیقاً با الگوی خط‌چین Move */}
+        {copySession && (() => {
+          const [x1, y1] = P(copySession.origin.z, copySession.origin.r);
+          const [x2, y2] = P(copySession.pointer.z, copySession.pointer.r);
+          const guideColor = copySession.axis === "x" ? "#754052" : copySession.axis === "y" ? "#3b7373" : "#28dfc2";
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
+            </g>
+          );
+        })()}
+
+        {/* راهنمای شعاع Move: از مرکز دایرهٔ فرضی تا موقعیت زنده نشانگر */}
+        {moveSession && (() => {
+          const [x1, y1] = P(moveSession.origin.z, moveSession.origin.r);
+          let guidePoint = moveSession.pointer;
+          /* هنگام Shift خود راهنما نیز دقیقاً روی جهت قفل‌شده می‌نشیند. */
+          if (moveSession.axis === "x") guidePoint = { z: guidePoint.z, r: moveSession.origin.r };
+          else if (moveSession.axis === "y") guidePoint = { z: moveSession.origin.z, r: guidePoint.r };
+          const guideParts = moveBox?.value.split(",") ?? [];
+          const guideAmount = guideParts.length === 1 ? arithmeticValue(guideParts[0]) : null;
+          if (guideAmount != null) {
+            const dz = guidePoint.z - moveSession.origin.z;
+            const dr = guidePoint.r - moveSession.origin.r;
+            const distance = Math.hypot(dz, dr);
+            const maxLength = Math.abs(guideAmount);
+            if (distance > maxLength && distance > 1e-9) {
+              guidePoint = {
+                z: moveSession.origin.z + dz / distance * maxLength,
+                r: moveSession.origin.r + dr / distance * maxLength,
+              };
+            }
+          }
+          const [x2, y2] = P(guidePoint.z, guidePoint.r);
+          const guideColor = moveSession.axis === "x"
+            ? "#754052"
+            : moveSession.axis === "y"
+              ? "#3b7373"
+              : moveSession.mode === "absolute" ? "#a99cff" : "#28dfc2";
+          return (
+            <g pointerEvents="none">
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={guideColor} strokeWidth={1.2} strokeDasharray="5 4" opacity={0.95} />
+              <circle cx={x1} cy={y1} r={3} fill="#071018" stroke={guideColor} strokeWidth={1.3} />
+            </g>
+          );
+        })()}
+
+        {/* بالاترین لایه بوم: خطوط نمایشی جهت‌دار، انتخاب و Handle نقاط. */}
+        {imageScaleSession&&(()=>{const [x1,y1]=P(imageScaleSession.p1.z,imageScaleSession.p1.r),p2=imageScaleSession.p2??cursor;if(!p2)return <circle cx={x1} cy={y1} r="4" fill="#071018" stroke="#28dfc2" strokeWidth="2"/>;const [x2,y2]=P(p2.z,p2.r);return <g pointerEvents="none"><line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#28dfc2" strokeWidth="1.5" strokeDasharray="5 3"/><circle cx={x1} cy={y1} r="4" fill="#071018" stroke="#28dfc2" strokeWidth="2"/><circle cx={x2} cy={y2} r="4" fill="#071018" stroke="#28dfc2" strokeWidth="2"/></g>;})()}
+        {selectedImageId!=null&&(()=>{const img=displayImages.find(v=>v.id===selectedImageId);if(!img)return null;const x=cam.ox+img.z*cam.s,y=cam.oy-img.r*cam.s,w=img.width*cam.s,h=img.height*cam.s;return <g ref={selectedImageControlsRef} transform={`rotate(${img.rotation??0} ${x+w/2} ${y+h/2})`}><rect data-ref-image="true" x={x} y={y} width={w} height={h} fill="none" stroke={img.locked?"#ef4444":"#28dfc2"} strokeWidth="1.2" strokeDasharray="5 4"/>{(["nw","ne","sw","se","n","s","e","w"] as const).map(mode=>{const hx=mode.includes("w")?x:mode.includes("e")?x+w:x+w/2,hy=mode.includes("n")?y:mode.includes("s")?y+h:y+h/2;return <rect data-ref-image="true" key={mode} x={hx-4} y={hy-4} width="8" height="8" rx="1" fill="#071018" stroke="#28dfc2" strokeWidth="1.5" style={{cursor:img.locked?"not-allowed":resizeCursor(mode,img.rotation??0)}} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;svgRef.current?.setPointerCapture?.(e.pointerId);const rect=svgRef.current!.getBoundingClientRect();imageDrag.current={id:img.id,start:worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),base:{...img},mode};setImageDragCursor(resizeCursor(mode,img.rotation??0));}}/>;})}{[{x:x-7,y:y-7},{x:x+w+7,y:y-7},{x:x+w+7,y:y+h+7},{x:x-7,y:y+h+7}].map((p,i)=><circle data-ref-image="true" key={`rotate-${i}`} cx={p.x} cy={p.y} r="5" fill="transparent" style={{cursor:rotationCursor([180,270,0,90][i]+(img.rotation??0))}} onPointerDown={e=>{e.stopPropagation();if(img.locked)return;svgRef.current?.setPointerCapture?.(e.pointerId);const rect=svgRef.current!.getBoundingClientRect(),start=worldPt(cam,e.clientX-rect.left,e.clientY-rect.top),center={z:img.z+img.width/2,r:img.r-img.height/2};imageDrag.current={id:img.id,start,base:{...img},mode:"rotate",startAngle:Math.atan2(start.r-center.r,start.z-center.z),cursorBaseAngle:[180,270,0,90][i]};setImageDragCursor(rotationCursor([180,270,0,90][i]+Math.round((img.rotation??0)/5)*5));}}/>)}</g>;})()}
+
+        {showCanvasPaintTool&&paintEdges.map(edge=>{
+          const ax=cam.ox+edge.a.z*cam.s,ay=cam.oy-edge.a.r*cam.s,bx=cam.ox+edge.b.z*cam.s,by=cam.oy-edge.b.r*cam.s;
+          const angle=Math.atan2(by-ay,bx-ax),rawTextAngle=angle*180/Math.PI;
+          /* وقتی فلش به راست است زاویه خام حفظ می‌شود؛ فقط خطوط رو به چپ ۱۸۰
+             درجه برمی‌گردند تا نوشته هرگز وارونه/معکوس خوانده نشود. */
+          const textAngle=bx>=ax?rawTextAngle:(rawTextAngle>0?rawTextAngle-180:rawTextAngle+180);
+          const size=edge.arrowSize,active=selectedPaint.includes(edge.id),highlighted=active||paintMarqueeHits.includes(edge.id),pointActive=selectedPaintPoints.some(p=>p.id===edge.id)||paintMarqueePoints.some(p=>p.id===edge.id);
+          const points=`${bx},${by} ${bx-Math.cos(angle-.55)*size},${by-Math.sin(angle-.55)*size} ${bx-Math.cos(angle+.55)*size},${by-Math.sin(angle+.55)*size}`;
+          const canManipulate=tool==="select"||tool==="move"||tool==="paint";
+          const begin=(e:ReactPointerEvent<SVGElement>,point?:"a"|"b")=>{
+            if(e.button!==0||!canManipulate)return;e.preventDefault();e.stopPropagation();setPaintMenu(null);
+            const clickedPointSelected=!!point&&selectedPaintPoints.some(item=>item.id===edge.id&&item.point===point);
+            const points=point?(clickedPointSelected?selectedPaintPoints:[{id:edge.id,point}]):[];
+            const ids=point?[...new Set(points.map(item=>item.id))]:(e.shiftKey?(active?selectedPaint:selectedPaint.concat(edge.id)):(active?selectedPaint:[edge.id]));
+            setSelectedPaint(ids);setSelectedPaintPoints(points);onSelected([]);
+            const rect=svgRef.current!.getBoundingClientRect();
+            paintDrag.current={ids,point,pointId:point?edge.id:undefined,points:point?points:undefined,start:{z:(e.clientX-rect.left-cam.ox)/cam.s,r:(cam.oy-(e.clientY-rect.top))/cam.s},base:paintEdges.map(x=>({...x,a:{...x.a},b:{...x.b}}))};
+          };
+          return <g key={edge.id}>
+            {highlighted&&<line x1={ax} y1={ay} x2={bx} y2={by} stroke="#fff" strokeOpacity={.9} strokeWidth={profileLineWidth+5} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />}
+            <line x1={ax} y1={ay} x2={bx} y2={by} stroke={edge.color} strokeWidth={profileLineWidth} strokeDasharray={edge.dashed?"8 5":undefined} pointerEvents="none" />
+            {!edge.hideArrow&&<polygon points={points} fill={edge.color} stroke={highlighted?"#fff":"none"} strokeWidth={highlighted?1.5:0} pointerEvents="none" />}
+            {edge.text&&<text x={(ax+bx)/2} y={(ay+by)/2-7} textAnchor="middle" fill={edge.color} fontSize={edge.textSize??17} fontWeight={700} paintOrder="stroke" stroke="#08111f" strokeWidth={Math.max(2.5,(edge.textSize??17)/4)} pointerEvents="none" transform={edge.alignText!==false?`rotate(${textAngle} ${(ax+bx)/2} ${(ay+by)/2})`:undefined}>{edge.text}</text>}
+            <line data-paint-hit="true" x1={ax} y1={ay} x2={bx} y2={by} stroke="transparent" strokeWidth={14} className={canManipulate?"cursor-move":""} onPointerDown={e=>begin(e)} onClick={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();if(!active)setSelectedPaint([edge.id]);setSelectedPaintPoints([]);setPaintMenu({id:edge.id,x:e.clientX,y:e.clientY});}} />
+            {(active||pointActive)&&<><circle data-paint-hit="true" cx={ax} cy={ay} r={5} fill={(selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="a")||paintMarqueePoints.some(p=>p.id===edge.id&&p.point==="a"))?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"a")} /><circle data-paint-hit="true" cx={bx} cy={by} r={5} fill={(selectedPaintPoints.some(p=>p.id===edge.id&&p.point==="b")||paintMarqueePoints.some(p=>p.id===edge.id&&p.point==="b"))?"#e3a94e":"#08111f"} stroke="#fff" strokeWidth={2} className="cursor-move" onPointerDown={e=>begin(e,"b")} /></>}
+          </g>;
+        })}
+
+        {imageDragCursor&&<rect ref={dragCursorOverlayRef} x="0" y="0" width={size.w} height={size.h} fill="transparent" style={{cursor:imageDragCursor}} onPointerMove={e=>{e.stopPropagation();onPointerMove(e as unknown as React.PointerEvent<SVGSVGElement>);}} onPointerUp={e=>{e.stopPropagation();onPointerUp(e as unknown as React.PointerEvent<SVGSVGElement>);}}/>}
       </svg>
+      {imageScaleSession?.p2&&(()=>{const current=Math.hypot(imageScaleSession.p2!.z-imageScaleSession.p1.z,imageScaleSession.p2!.r-imageScaleSession.p1.r);return <div className="absolute top-14 left-1/2 z-40 w-44 -translate-x-1/2 rounded-lg border border-teal/50 bg-panel/95 p-2 shadow-xl" dir="rtl"><div className="text-[9px] text-mute">طول مرجع فعلی: {current.toFixed(2)} mm</div><input ref={imageScaleInputRef} type="number" min="0.01" step="0.01" value={imageScaleValue} onChange={e=>setImageScaleValue(e.target.value)} onKeyDown={e=>{if(e.key==="Escape"){setImageScaleSession(null);setImageScaleValue("");chooseTool("select");}if(e.key!=="Enter")return;const target=Number(imageScaleValue);if(!(target>0)||current<1e-9)return;const factor=target/current,b=imageScaleSession.base,c={z:b.z+b.width/2,r:b.r-b.height/2},p=imageScaleSession.p1,nc={z:p.z+(c.z-p.z)*factor,r:p.r+(c.r-p.r)*factor},width=b.width*factor,height=b.height*factor,next={...b,width,height,z:nc.z-width/2,r:nc.r+height/2};commitImages(referenceImages.map(img=>img.id===b.id?next:img));setImageScaleSession(null);setImageScaleValue("");chooseTool("select");}} placeholder="طول جدید" className="field-input mt-1" autoFocus/></div>;})()}
+      {selectedImageId!=null&&(()=>{const img=referenceImages.find(x=>x.id===selectedImageId);if(!img)return null;const patch=(p:Partial<ReferenceImage>)=>onReferenceImages(referenceImages.map(x=>x.id===img.id?{...x,...p}:x)),patchHistory=(p:Partial<ReferenceImage>)=>commitImages(referenceImages.map(x=>x.id===img.id?{...x,...p}:x));return <div dir="rtl" className="absolute right-3 bottom-20 z-10 h-[360px] w-64 overflow-y-auto rounded-lg border border-edge2 bg-panel/95 p-3 text-[10px] text-ink shadow-2xl"><div className="flex items-center justify-between gap-2"><b className="truncate">{img.name}</b><div className="flex shrink-0 gap-1"><button onClick={()=>patch({locked:!img.locked})} className={cn("rounded border px-2 py-1",img.locked?"border-danger text-danger":"border-edge text-mute")}>{img.locked?"بازکردن قفل":"قفل"}</button><button onClick={()=>{commitImages(referenceImages.filter(x=>x.id!==img.id));setSelectedImageId(null);}} className="rounded border border-danger/50 px-2 py-1 text-danger">حذف</button></div></div><div className="mt-3 grid grid-cols-3 gap-1.5"><label>عرض<input type="number" min="0.5" step="0.1" value={Number(img.width.toFixed(2))} onContextMenu={e=>{e.preventDefault();patchHistory({width:100});}} onChange={e=>{const width=Math.max(.5,Number(e.target.value));patchHistory(img.aspectLocked!==false?{width,height:width*img.height/img.width}:{width});}} className="field-input mt-1 px-1"/></label><label>ارتفاع<input type="number" min="0.5" step="0.1" value={Number(img.height.toFixed(2))} onContextMenu={e=>{e.preventDefault();patchHistory({height:100/(img.originalRatio??(img.width/img.height))});}} onChange={e=>{const height=Math.max(.5,Number(e.target.value));patchHistory(img.aspectLocked!==false?{height,width:height*img.width/img.height}:{height});}} className="field-input mt-1 px-1"/></label><label>چرخش<input type="number" step="0.01" value={(img.rotation??0).toFixed(2)} onContextMenu={e=>{e.preventDefault();patchHistory({rotation:0});}} onChange={e=>patchHistory({rotation:Number(e.target.value)||0})} className="field-input mt-1 px-1"/></label></div><div className="mt-2 grid grid-cols-2 gap-2"><button onClick={()=>{if(img.aspectLocked===false){const ratio=img.originalRatio??(img.width/img.height);patch({aspectLocked:true,preLockWidth:img.width,preLockHeight:img.height,height:img.width/ratio});}else patch({aspectLocked:false,width:img.preLockWidth??img.width,height:img.preLockHeight??img.height});}} className={cn("rounded border px-2 py-1.5 text-[9px]",img.aspectLocked!==false?"border-teal bg-teal/10 text-teal":"border-edge text-mute")}>قفل تناسب</button><button onClick={()=>patch({grayscale:!img.grayscale})} className={cn("rounded border px-2 py-1.5 text-[9px]",img.grayscale?"border-teal text-teal":"border-edge text-mute")}>سیاه و سفید</button></div><div className="mt-3 grid gap-2">{[["black","نقطه سیاه",0,254,1],["gamma","میدتون",.1,3,.05],["white","نقطه سفید",1,255,1],["opacity","شفافیت",0,1,.01]].map(([key,label,min,max,step])=><label key={String(key)}><span className="flex justify-between"><span>{label}</span><b className="font-mono text-teal">{Number(img[key as keyof ReferenceImage]).toFixed(key==="gamma"||key==="opacity"?2:0)}</b></span><input type="range" min={Number(min)} max={Number(max)} step={Number(step)} value={Number(img[key as keyof ReferenceImage])} onChange={e=>{const value=Number(e.target.value);if(key==="black")patch({black:Math.min(value,img.white-1)});else if(key==="white")patch({white:Math.max(value,img.black+1)});else patch({[key]:value});}} className="w-full accent-[#45b394]"/></label>)}</div></div>;})()}
+
+      {paintMenu&&(()=>{const edge=paintEdges.find(e=>e.id===paintMenu.id);if(!edge)return null;const ids=selectedPaint.includes(edge.id)?selectedPaint:[edge.id];const patch=(p:Partial<PaintEdge>)=>commitPaint(all=>all.map(x=>ids.includes(x.id)?{...x,...p}:x));const colors=["#ef4444","#f97316","#eab308","#22c55e","#14b8a6","#06b6d4","#3b82f6","#8b5cf6","#ec4899"];const menuLeft=Math.max(8,Math.min(paintMenu.x,window.innerWidth-184)),menuTop=Math.max(8,Math.min(paintMenu.y,window.innerHeight-380));return <div className="fixed z-[90] w-60 origin-top-left scale-[0.72] rounded-lg border border-edge2 bg-panel p-3 shadow-2xl" style={{left:menuLeft,top:menuTop}} onPointerDown={e=>e.stopPropagation()} onContextMenu={e=>{e.preventDefault();e.stopPropagation();setPaintMenu(null);}}>
+        <div className="mb-2 flex items-center justify-between text-[13.75px] font-bold text-ink"><span>تنظیم {ids.length>1?`${ids.length} ضلع`:"ضلع نمایشی"}</span><button onClick={()=>setPaintMenu(null)} className="text-mute hover:text-ink">×</button></div>
+        <label className="block text-[11.875px] text-mute">نوشته روی ضلع<input autoFocus value={edge.text} onChange={e=>patch({text:e.target.value})} className="field-input mt-1" /></label>
+        <label className="mt-3 block text-[11.875px] text-mute">اندازه نوشته: <b className="text-ink">{edge.textSize??17}px</b><input type="range" min={6} max={36} step={1} value={edge.textSize??17} onChange={e=>patch({textSize:Number(e.target.value)})} className="mt-2 w-full accent-[#45b394]" /></label>
+        <div className="mt-3 grid grid-cols-2 gap-2"><label className="flex items-center gap-1.5 rounded border border-edge px-2 py-2 text-[11.875px] text-ink"><input type="checkbox" checked={edge.alignText!==false} onChange={e=>patch({alignText:e.target.checked})} className="accent-[#45b394]"/><span>نوشته هم‌جهت</span></label><label className="flex items-center gap-1.5 rounded border border-edge px-2 py-2 text-[11.875px] text-ink"><input type="checkbox" checked={!!edge.hideArrow} onChange={e=>patch({hideArrow:e.target.checked})} className="accent-[#45b394]"/><span>بدون فلش</span></label></div>
+        <div className="mt-3 text-[11.875px] text-mute">رنگ ضلع<div dir="ltr" className="mt-2 grid grid-cols-5 gap-2">{colors.map(color=><button key={color} onClick={()=>patch({color})} className="h-7 w-7 rounded-full border-2 shadow" style={{background:color,borderColor:ids.every(id=>paintEdges.find(x=>x.id===id)?.color===color)?"white":"transparent"}} />)}<label className="relative h-7 w-7 cursor-pointer overflow-hidden rounded-full border-2 border-white/50" style={{background:"conic-gradient(red,#ff0,lime,cyan,blue,#f0f,red)"}} title="رنگ دلخواه"><input type="color" value={edge.color} onChange={e=>patch({color:e.target.value})} className="absolute inset-0 h-full w-full cursor-pointer opacity-0" /></label></div></div>
+        <div className="mt-3 grid grid-cols-2 overflow-hidden rounded border border-edge"><button onClick={()=>patch({dashed:false})} className={cn("py-2 text-[12.5px] font-bold",!edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط صاف</button><button onClick={()=>patch({dashed:true})} className={cn("border-r border-edge py-2 text-[12.5px] font-bold",edge.dashed?"bg-teal/20 text-teal":"text-mute")}>خط‌چین</button></div>
+        <label className="mt-3 block text-[11.875px] text-mute">اندازه فلش: <b className="text-ink">{edge.arrowSize}px</b><input type="range" min={4} max={24} step={1} value={edge.arrowSize} onChange={e=>patch({arrowSize:Number(e.target.value)})} className="mt-2 w-full accent-[#45b394]" /></label>
+        <button onClick={()=>{commitPaint(all=>all.filter(x=>!ids.includes(x.id)));setSelectedPaint([]);setPaintMenu(null);}} className="mt-3 w-full rounded border border-red-500/40 py-1.5 text-[12.5px] font-bold text-red-400 hover:bg-red-500/10">حذف خطوط انتخاب‌شده</button>
+      </div>})()}
+
+      {boxRotateBox && boxRotateSession && <div className="absolute z-50" style={{left:boxRotateBox.x,top:boxRotateBox.y,width:`${Math.max(72,28+boxRotateBox.value.length*8)}px`}} dir="ltr">
+        <input ref={boxRotateInputRef} value={boxRotateBox.value} placeholder="Angle" className="h-[30px] w-full rounded-[5px] border border-[#00a9c7] bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none" onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setBoxRotateBox({...boxRotateBox,value,error:""});const n=Number(value);if(boxScaleLive&&value&&Number.isFinite(n)){onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),false);setBoxRotateSession({...boxRotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Escape"){onSegs(boxRotateSession.base,false);setBoxRotateSession(null);setBoxRotateBox(null);return;}if(e.key!=="Enter"&&e.code!=="Space")return;e.preventDefault();const n=boxRotateBox.value?Number(boxRotateBox.value):boxRotateSession.angle;if(!Number.isFinite(n))return;onSegs(boxRotateSession.base.map(s=>boxRotateSession.ids.includes(s.id)?rotateSegment(s,boxRotateSession.pivot,n):s),true);setBoxRotateSession(null);setBoxRotateBox(null);}}/>
+        <div className="mt-1 text-center font-mono text-[10px] font-bold text-[#26e6c7]">{concise(boxRotateSession.angle)}°</div>
+      </div>}
+
+      {rotateBox && rotateSession && <div className="absolute z-50" style={{left:rotateBox.x,top:rotateBox.y,width:`${Math.max(72,28+rotateBox.value.length*8)}px`}} dir="ltr">
+        <input ref={rotateInputRef} value={rotateBox.value} placeholder={rotateSession.mode==="angle"?"Angle":"Step"} className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 text-center font-mono text-xs text-[#d9f7f5] outline-none",rotateBox.error?"border-danger":"border-[#00a9c7]")} onChange={e=>{const value=latinDigits(e.target.value).replace(/[^0-9.\-]/g,"");setRotateBox({...rotateBox,value,error:""});const n=Number(value);if(rotateLive&&rotateSession.mode==="angle"&&value&&Number.isFinite(n)){onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,n):s),false);setRotateSession({...rotateSession,angle:n});}}} onKeyDown={e=>{e.stopPropagation();if(e.key==="Tab"){e.preventDefault();setRotateSession({...rotateSession,mode:rotateSession.mode==="angle"?"step":"angle"});return;}if(e.key==="Escape"){onSegs(rotateSession.base,false);setRotateSession(null);setRotateBox(null);chooseTool("select");return;}if(e.key!=="Enter")return;let angle=rotateSession.angle;if(rotateSession.mode==="angle"&&rotateBox.value){const n=Number(rotateBox.value);if(!Number.isFinite(n)){setRotateBox({...rotateBox,error:"نامعتبر"});return;}angle=n;}onSegs(rotateSession.base.map(s=>rotateSession.ids.includes(s.id)?rotateSegment(s,rotateSession.center,angle):s),true);setRotateSession(null);setRotateBox(null);chooseTool("select");}}/>
+        <div className="mt-1 whitespace-nowrap text-center font-mono text-[10px] font-bold text-[#26e6c7]">{concise(rotateSession.angle)}° · {rotateSession.mode==="angle"?"زاویه":"پله"}</div>
+      </div>}
+
+
 
       {/* ---------- منوی راست‌کلیک سرعت Segmentهای انتخاب‌شده ---------- */}
       {speedMenu && editOpen && selL.length > 0 && (
@@ -3525,15 +5749,54 @@ export default function ProfileEditor({
         </div>
       )}
 
+      {/* ---------- منوی راست‌کلیک نقطه Split ---------- */}
+      {splitCtxMenu && (
+        <div
+          className="anim-in absolute z-30 w-44 overflow-hidden rounded-md border border-edge bg-panel/97 shadow-xl shadow-black/50 backdrop-blur-sm"
+          style={{ left: Math.min(splitCtxMenu.x, size.w - 180), top: Math.min(splitCtxMenu.y, size.h - 82) }}
+        >
+          <button
+            onClick={() => {
+              onSplit({ ...split, swapped: !split.swapped });
+              setSplitCtxMenu(null);
+            }}
+            className="flex w-full items-center gap-2 px-2 py-1.5 text-right text-[11px] font-semibold text-ink transition-colors hover:bg-panel3"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" aria-hidden="true">
+              <path d="M4 8.5C6.1 4.9 10.2 3.4 14 4.7l1.7.7" stroke="#f3c26b" strokeWidth="2.2" strokeLinecap="round" />
+              <path d="m14.2 2.8 3.4 3.2-4.4 1" stroke="#f3c26b" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M20 15.5c-2.1 3.6-6.2 5.1-10 3.8l-1.7-.7" stroke="#4cc9f0" strokeWidth="2.2" strokeLinecap="round" />
+              <path d="m9.8 21.2-3.4-3.2 4.4-1" stroke="#4cc9f0" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span>جابه‌جایی داخل و خارج</span>
+          </button>
+          <button
+            onClick={cutSegmentAtSplit}
+            className="flex w-full items-center gap-2 border-t border-edge px-2 py-1.5 text-right text-[11px] font-semibold text-ink transition-colors hover:bg-panel3"
+          >
+            <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" aria-hidden="true">
+              <circle cx="7" cy="7" r="2.6" stroke="#4cc9f0" strokeWidth="1.8" />
+              <circle cx="7" cy="17" r="2.6" stroke="#f3c26b" strokeWidth="1.8" />
+              <path d="m9.2 8.4 10 7.4M9.2 15.6l10-7.4" stroke="#b9c7cf" strokeWidth="1.8" strokeLinecap="round" />
+            </svg>
+            <span>تقسیم المان در Split</span>
+          </button>
+        </div>
+      )}
+
+      {segmentCtxMenu&&(()=>{const segment=segs.find(s=>s.id===segmentCtxMenu.segId);if(!segment)return null;return <div className="anim-in absolute z-30 w-48 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm" style={{left:Math.min(segmentCtxMenu.x,size.w-200),top:Math.min(segmentCtxMenu.y,size.h-120)}}><div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">تبدیل ضلع Polyline</div><button disabled={segment.kind==="line"} onClick={()=>convertPolylineEdge(segment.id,"line")} className="block w-full px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به خط ساده</button><button disabled={segment.kind==="arc"} onClick={()=>convertPolylineEdge(segment.id,"arc")} className="block w-full border-t border-edge px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به کمان (Arc)</button><button disabled={segment.kind==="cubic"} onClick={()=>convertPolylineEdge(segment.id,"cubic")} className="block w-full border-t border-edge px-3 py-2 text-right text-[12px] font-semibold text-ink hover:bg-teal/12 disabled:opacity-40">تبدیل به منحنی کنترلی</button><p className="border-t border-edge px-3 py-1.5 text-[9px] leading-4 text-dim">ضلع تبدیل‌شده همچنان عضو همان Polyline باقی می‌ماند.</p></div>})()}
+
       {/* ---------- منوی راست‌کلیک: اتصال / جداسازی نقطه ---------- */}
       {ctxMenu && (
         <div
           className="anim-in absolute z-20 w-44 overflow-hidden rounded-lg border border-edge2 bg-panel/97 shadow-2xl shadow-black/60 backdrop-blur-sm"
-          style={{ left: Math.min(ctxMenu.x, size.w - 180), top: Math.min(ctxMenu.y, size.h - 120) }}
+          style={{ left: Math.min(ctxMenu.x, size.w - 180), top: Math.min(ctxMenu.y, size.h - 170) }}
         >
           <div className="border-b border-edge px-3 py-1.5 text-[10px] font-bold text-mute">
             {ctxMenu.separated ? "نقطه جداشده" : ctxMenu.clusterSize > 1 ? `متصل به ${ctxMenu.clusterSize} نقطه` : "نقطهٔ تنها"}
           </div>
+          {segs.find(s=>s.id===ctxMenu.segId)?.polylineId!=null&&<button onClick={()=>convertSelectedPolylineVertices({segId:ctxMenu.segId,part:ctxMenu.part})} className="flex w-full items-center gap-2 border-b border-edge px-3 py-2 text-right text-[12px] font-semibold text-teal transition-colors hover:bg-teal/12">تبدیل نقطه به منحنی کنترلی</button>}
+          {vertexHasControl(ctxMenu.segId,ctxMenu.part)&&<button onClick={()=>simplifyPolylineVertex({segId:ctxMenu.segId,part:ctxMenu.part})} className="flex w-full items-center gap-2 border-b border-edge px-3 py-2 text-right text-[12px] font-semibold text-copper transition-colors hover:bg-copper/12">تبدیل به نقطه ساده</button>}
           {ctxMenu.separated ? (
             <button
               onClick={() => doJoin(ctxMenu.segId, ctxMenu.part)}
@@ -3563,17 +5826,265 @@ export default function ProfileEditor({
         </div>
       )}
 
+      {filletBox && filletPicks.length === 2 && (
+        <div className="absolute z-50 w-[126px] rounded-md border border-[#28dfc2]/70 bg-[#071018]/95 p-1.5 shadow-2xl" style={{ left: filletBox.x, top: filletBox.y }} dir="ltr">
+          <div className="mb-1 text-[9px] font-bold text-[#28dfc2]">Radius</div>
+          <input
+            ref={filletInputRef}
+            value={filletBox.value}
+            aria-label="Fillet radius"
+            className={cn("h-7 w-full rounded border bg-[#050b10] px-2 font-mono text-xs text-ink outline-none", filletBox.error || filletCalc?.error ? "border-danger" : "border-[#28dfc2]")}
+            onChange={(e) => setFilletBox({ ...filletBox, value: e.target.value, error: "" })}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") { setFilletPicks([]); setFilletBox(null); onSelected([]); return; }
+              if (e.key === "Enter" || e.code === "Space") { e.preventDefault(); confirmFillet(); }
+            }}
+          />
+          {(filletBox.error || filletCalc?.error) && <div className="mt-1 text-[9px] leading-3 text-danger" dir="rtl">{filletBox.error || filletCalc?.error}</div>}
+          {!filletCalc?.error && <div className="mt-1 text-[8px] text-dim" dir="rtl">Enter برای ساخت قوس</div>}
+        </div>
+      )}
+
+      {straightDrawing && lineLengthText && lineCursor && (() => {
+        const [x, y] = P(lineCursor.z, lineCursor.r);
+        const width = Math.max(58, Math.min(150, 34 + lineLengthText.length * 8));
+        return (
+          <div
+            className="pointer-events-none absolute z-50 flex h-[30px] items-center justify-center rounded-[5px] border border-[#00a9c7] bg-[#071018]/95 px-2 py-1 font-mono text-xs text-[#d9f7f5] shadow-[0_8px_24px_rgba(0,0,0,.55)]"
+            style={{ left: x + 12, top: y - 34, width }}
+            dir="ltr"
+          >
+            <span className="text-center">{lineLengthText} mm</span>
+          </div>
+        );
+      })()}
+
+      {boxScaleBounds && (() => {
+        const b=boxScaleBounds, [x0,yTop]=P(b.minZ,b.maxR), [x1,yBottom]=P(b.maxZ,b.minR), width=b.maxZ-b.minZ, height=b.maxR-b.minR;
+        const effectiveLock=boxScaleLocked || shiftDown;
+        const applyDimension=(axis:"x"|"y", value:number, commit:boolean)=>{
+          if (!(value>0)) return;
+          const source=boxScaleNumericBase.current ?? {segs,bounds:b};
+          const sb=source.bounds, sw=sb.maxZ-sb.minZ, sh=sb.maxR-sb.minR;
+          const handle=boxScaleLastHandle.current;
+          const anchor={
+            z: (axis==="x" || effectiveLock) && handle?.includes("e") ? sb.minZ
+              : (axis==="x" || effectiveLock) && handle?.includes("w") ? sb.maxZ
+              : (sb.minZ+sb.maxZ)/2,
+            r: (axis==="y" || effectiveLock) && handle?.includes("n") ? sb.minR
+              : (axis==="y" || effectiveLock) && handle?.includes("s") ? sb.maxR
+              : (sb.minR+sb.maxR)/2,
+          };
+          const f=axis==="x"?value/sw:value/sh;
+          onSegs(source.segs.map(s=>selected.includes(s.id)?scaleSegmentXY(s,anchor,axis==="x"||effectiveLock?f:1,axis==="y"||effectiveLock?f:1):s),commit);
+        };
+        const lockIcon=effectiveLock?<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>:<svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M16 10V7a4 4 0 0 0-7.5-2"/></svg>;
+        return <>
+          <input ref={boxScaleWidthInputRef} value={boxScaleWidthText ?? concise(width)} title="عرض افقی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:(x0+x1)/2-32,top:yTop-27}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleWidthText(v);if(boxScaleLive)applyDimension("x",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("x",Number(e.currentTarget.value),true);setBoxScaleWidthText(null);boxScaleNumericBase.current=null;}}/>
+          <input ref={boxScaleHeightInputRef} value={boxScaleHeightText ?? concise(height)} title="ارتفاع عمودی" className="absolute z-50 w-16 rounded border border-teal/60 bg-[#071018]/95 px-1 py-0.5 text-center font-mono text-[10px] text-teal outline-none" style={{left:x1+9,top:(yTop+yBottom)/2-11}} onFocus={e=>{boxScaleNumericBase.current={segs:segs.map(s=>({...s})),bounds:{...b}};e.currentTarget.select();}} onChange={e=>{const v=e.currentTarget.value;setBoxScaleHeightText(v);if(boxScaleLive)applyDimension("y",Number(v),false);}} onKeyDown={e=>{if(e.key==="Enter")e.currentTarget.blur();}} onBlur={e=>{applyDimension("y",Number(e.currentTarget.value),true);setBoxScaleHeightText(null);boxScaleNumericBase.current=null;}}/>
+          <button title={boxScaleLocked?"باز کردن نسبت":shiftDown?"قفل موقت با Shift":"قفل نسبت"} className="absolute z-50 grid h-6 w-6 place-items-center rounded border border-edge bg-panel/95 text-mute" style={{left:x0-29,top:yTop-29}} onClick={()=>setBoxScaleLocked(v=>!v)}>{lockIcon}</button>
+        </>;
+      })()}
+
+      {scaleBox && scaleSession?.reference && scaleSession.referenceLength && (
+        <div className="absolute z-50" style={{ left: scaleBox.x, top: scaleBox.y, width: `${Math.max(72, 28 + scaleBox.value.length * 8)}px` }} dir="ltr">
+          <input
+            ref={scaleInputRef}
+            value={scaleBox.value}
+            aria-label="Scale length"
+            placeholder="Length"
+            className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 py-1 text-center font-mono text-xs text-[#d9f7f5] outline-none shadow-[0_8px_24px_rgba(0,0,0,.55)]", scaleBox.error ? "border-danger" : "border-[#00a9c7] focus:border-[#20c9df]")}
+            onChange={(event) => {
+              const value = latinDigits(event.target.value).replace(/[^0-9.]/g, "");
+              const amount = value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/) ? Number(value) : null;
+              if (amount != null && amount > 0) {
+                const factor = amount / scaleSession.referenceLength!;
+                onSegs(scaleSession.base.map((segment) => scaleSession.ids.includes(segment.id) ? scaleSegment(segment, scaleSession.origin, factor) : segment), false);
+              }
+              setScaleBox({ ...scaleBox, value, error: "" });
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                onSegs(scaleSession.base, false); setScaleSession(null); setScaleBox(null); chooseTool("select");
+                return;
+              }
+              if (event.key !== "Enter") return;
+              const amount = scaleBox.value ? Number(scaleBox.value) : dist(scaleSession.origin, scaleSession.pointer ?? scaleSession.reference!);
+              if (!Number.isFinite(amount) || amount <= 0) { setScaleBox({ ...scaleBox, error: "مقدار نامعتبر" }); return; }
+              const factor = amount / scaleSession.referenceLength!;
+              const next = scaleSession.base.map((segment) => scaleSession.ids.includes(segment.id) ? scaleSegment(segment, scaleSession.origin, factor) : segment);
+              onSegs(next, true); setScaleSession(null); setScaleBox(null); chooseTool("select");
+            }}
+          />
+          <div className="mt-1 whitespace-nowrap pl-0.5 font-mono text-[10px] font-bold leading-none tracking-wide text-[#26e6c7]">
+            {concise(scaleBox.value && Number(scaleBox.value) > 0 ? Number(scaleBox.value) : dist(scaleSession.origin, scaleSession.pointer ?? scaleSession.reference))}
+          </div>
+          {scaleBox.error && <div className="mt-1 text-center text-[9px] text-danger" dir="rtl">{scaleBox.error}</div>}
+        </div>
+      )}
+
+      {copyBox && copySession && (
+        <div className="absolute z-50" style={{ left: copyBox.x, top: copyBox.y, width: `${Math.max(72, 30 + copyBox.value.length * 8)}px` }} dir="ltr">
+          <input
+            ref={copyInputRef}
+            value={copyBox.value}
+            aria-label="Copy pattern"
+            placeholder="*5  /4"
+            className={cn("h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 py-1 text-center font-mono text-xs text-[#d9f7f5] outline-none shadow-[0_8px_24px_rgba(0,0,0,.55)]", copyBox.error ? "border-danger" : "border-[#00a9c7] focus:border-[#20c9df]")}
+            onChange={(event) => {
+              const value = latinDigits(event.target.value).replace(/[^*/0-9.]/g, "");
+              setCopyBox({ ...copyBox, value, error: "" });
+            }}
+            onKeyDown={(event) => {
+              event.stopPropagation();
+              if (event.key === "Escape") {
+                onSegs(copySession.base, false);
+                setCopySession(null); setCopyBox(null); chooseTool("select");
+                return;
+              }
+              if (event.key !== "Enter") return;
+              const plain = copyBox.value.match(/^(?:\d+(?:\.\d*)?|\.\d+)$/);
+              if (plain) {
+                const amount = Number(copyBox.value);
+                const dz0 = copySession.pointer.z - copySession.origin.z;
+                const dr0 = copySession.pointer.r - copySession.origin.r;
+                const length = Math.hypot(dz0, dr0);
+                const dz = length > 1e-9 ? amount * dz0 / length : amount;
+                const dr = length > 1e-9 ? amount * dr0 / length : 0;
+                const pointer = { z: copySession.origin.z + dz, r: copySession.origin.r + dr };
+                onSegs([...copySession.base, ...copySession.copies.map((segment) => moveSeg(segment, dz, dr))], false);
+                setCopySession({ ...copySession, pointer, distanceConfirmed: true });
+                setCopyBox({ ...copyBox, value: "", error: "" });
+                return;
+              }
+              const match = copyBox.value.match(/^([*/])([1-9]\d*)$/);
+              if (!match) { setCopyBox({ ...copyBox, error: "عدد، *عدد یا /عدد" }); return; }
+              const count = Number(match[2]);
+              if (count > 100) { setCopyBox({ ...copyBox, error: "حداکثر 100" }); return; }
+              const dz = copySession.pointer.z - copySession.origin.z;
+              const dr = copySession.pointer.r - copySession.origin.r;
+              const factors = match[1] === "*"
+                ? Array.from({ length: count }, (_, index) => index + 1)
+                : Array.from({ length: count }, (_, index) => (index + 1) / count);
+              const batch: SketchSeg[] = [];
+              for (const factor of factors) {
+                const groupMap = new Map<number, number>();
+                const made = copySession.copies.map((source) => cloneSeg(source, dz * factor, dr * factor));
+                copySession.copies.forEach((source, index) => {
+                  if (source.polylineId != null && !groupMap.has(source.polylineId)) groupMap.set(source.polylineId, made[index].id);
+                });
+                made.forEach((segment, index) => {
+                  const oldGroup = copySession.copies[index].polylineId;
+                  segment.polylineId = oldGroup == null ? undefined : groupMap.get(oldGroup);
+                });
+                batch.push(...made);
+              }
+              onSegs([...copySession.base, ...batch], true);
+              onSelected(batch.map((segment) => segment.id));
+              setCopySession(null); setCopyBox(null);
+            }}
+          />
+          {copyBox.error && <div className="mt-1 text-center text-[9px] text-danger" dir="rtl">{copyBox.error}</div>}
+          <div className="mt-1 whitespace-nowrap pl-0.5 font-mono text-[10px] font-bold leading-none tracking-wide text-[#26e6c7]">
+            {copyReadout}
+          </div>
+        </div>
+      )}
+
+      {moveBox && moveSession && (
+        <div className="absolute z-50" style={{ left: moveBox.x, top: moveBox.y, width: `${Math.max(42, Math.min(150, 24 + moveBox.value.length * 8))}px` }} dir="ltr">
+          <input ref={moveInputRef} value={moveBox.value} aria-label="Move value" className={cn(
+            "h-[30px] w-full rounded-[5px] border bg-[#071018]/95 px-2 py-1 font-mono text-xs text-[#d9f7f5] outline-none shadow-[0_8px_24px_rgba(0,0,0,.55)] transition-colors",
+            moveSession.mode === "absolute" ? "border-[#9b8cff] focus:border-[#b3a8ff]" : "border-[#00a9c7] focus:border-[#20c9df]",
+            moveBox.error && "!border-danger"
+          )}
+            onChange={(e) => setMoveBox({ ...moveBox, value: e.target.value, error: "" })}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") {
+                if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+                else onSegs(moveSession.base, false);
+                setMoveBox(null);
+                setMoveSession(null);
+                drag.current = null;
+                chooseTool("select");
+                return;
+              }
+              if (e.key === "Tab") { e.preventDefault(); setMoveSession({ ...moveSession, mode: moveSession.mode === "relative" ? "absolute" : "relative" }); return; }
+              if (e.key !== "Enter") return;
+              const parts = moveBox.value.split(",");
+              const values = parts.map(arithmeticValue);
+              if (parts.length > 2 || values.some((v) => v == null)) { setMoveBox({ ...moveBox, error: "Invalid value" }); return; }
+              const dx = moveSession.pointer.z - moveSession.origin.z, dy = moveSession.pointer.r - moveSession.origin.r;
+              let dz = 0, dr = 0;
+              if (values.length === 2) { dz = values[0]!; dr = values[1]!; }
+              else {
+      const amount = values[0]!;
+      if (moveSession.axis === "x") dz = amount * moveSession.dirX;
+      else if (moveSession.axis === "y") dr = amount * moveSession.dirY;
+      else {
+        /* مقدار تکی شعاع حرکت است، نه قفل مختصات: نشانگر جهت را تعیین می‌کند
+           و نقطه/خط آزادانه روی دایره‌ای با همین شعاع حرکت می‌کند. */
+        const length = Math.hypot(dx, dy);
+        if (length > 1e-9) { dz = amount * dx / length; dr = amount * dy / length; }
+        else { dz = amount * moveSession.dirX; dr = 0; }
+      }
+    }
+              if (moveSession.mode === "absolute") {
+      /* Commit باید دقیقاً از همان Anchor پیش‌نمایش، یعنی محل کلیک، استفاده کند. */
+      const anchor = moveSession.origin;
+      if (values.length === 2) { dz -= anchor.z; dr -= anchor.r; }
+      else if (dz) dz = Math.abs(dz) - anchor.z; else dr = Math.abs(dr) - anchor.r;
+    }
+              if (moveSession.editBase && moveSession.editVertexIds && edit) {
+                const moving = new Set(moveSession.editVertexIds);
+                onEditBuf({ ...edit, verts: moveSession.editBase.map((v) => moving.has(v.id) ? { ...v, z: v.z + dz, x: v.x + 2 * dr } : v) }, true);
+              } else {
+                const next = movePolylineSelection(moveSession.base,moveSession.ids,dz,dr);
+                onSegs(next, true);
+              }
+              setLastMove({ dz, dr }); setMoveBox(null); setMoveSession(null);
+            }} />
+          <div className={cn(
+            "mt-1 whitespace-nowrap pl-0.5 font-mono text-[10px] font-bold leading-none tracking-wide",
+            moveSession.mode === "absolute" ? "text-[#b1a4ff]" : "text-[#26e6c7]"
+          )}>{moveReadout}</div>
+        </div>
+      )}
+
       {/* ---------- نوار ابزار ترسیم: ستون عمودی چپ ---------- */}
-      <div className="absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="profile-tool-column absolute top-2.5 bottom-2.5 left-2.5 flex w-[30px] flex-col gap-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          {(editOpen ? TOOLS.filter((t) => t.id === "select") : TOOLS).map((t, i) => (
+          {(editOpen ? TOOLS.filter((t) => t.id === "select" || t.id === "move") : TOOLS.filter(t=>t.id!=="paint"||showCanvasPaintTool)).map((t, i) => (
             <button
               key={t.id}
               onClick={() => {
-                setTool(t.id);
+                /* کلیک دوباره روی Move هر نشست نیمه‌تمام/گیرکرده را پاک می‌کند؛
+                   Preview ثبت‌نشده نیز به مبنای قبل از نشست برمی‌گردد. */
+                if (rotateSession && t.id !== "rotate") { onSegs(rotateSession.base,false); setRotateSession(null); setRotateBox(null); }
+                if (mirrorSession && t.id !== "mirror") {
+                  onSegs(mirrorSession.base, false);
+                  setMirrorSession(null);
+                }
+                if (scaleSession && t.id !== "scale") {
+                  onSegs(scaleSession.base, false);
+                  setScaleSession(null);
+                  setScaleBox(null);
+                }
+                if (t.id === "move" && moveSession) {
+                  if (moveSession.editBase && edit) onEditBuf({ ...edit, verts: moveSession.editBase }, false);
+                  else onSegs(moveSession.base, false);
+                  setMoveBox(null);
+                  setMoveSession(null);
+                  drag.current = null;
+                }
+                if (t.id === "mirror" && tool !== "mirror") setMirrorKeepCopy(true);
+                chooseTool(t.id);
                 cancelDraft();
               }}
-              title={`${t.name} (${t.key}) — ${t.hint}`}
+              title={`${t.name} (${(toolShortcuts[t.id] ?? t.key).toUpperCase()}) — ${t.hint}`}
               className={cn(
                 "grid h-[27px] w-full shrink-0 place-items-center transition-colors",
                 i > 0 && "border-t border-edge",
@@ -3586,19 +6097,19 @@ export default function ProfileEditor({
         </div>
 
         <div className="flex shrink-0 flex-col overflow-hidden rounded-lg border border-edge bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm">
-          <button onClick={onUndo} disabled={!canUndo} title="واگرد (Ctrl+Z)" className={cn("grid h-[27px] w-full place-items-center transition-colors", canUndo ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
+          <button onClick={()=>imageHistoryFocus.current&&imagePast.current.length?undoImage():paintPast.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?undoPaint():onUndo()} disabled={!canUndo&&!paintPast.current.length&&!imagePast.current.length} title="واگرد (Ctrl+Z)" className={cn("grid h-[27px] w-full place-items-center transition-colors",(canUndo||paintPast.current.length||imagePast.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
             <IconUndo className="h-3.5 w-3.5" />
           </button>
-          <button onClick={onRedo} disabled={!canRedo} title="بازانجام (Ctrl+Y)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", canRedo ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
+          <button onClick={()=>imageHistoryFocus.current&&imageFuture.current.length?redoImage():paintFuture.current.length&&((tool==="paint")||selectedPaint.length||selectedPaintPoints.length)?redoPaint():onRedo()} disabled={!canRedo&&!paintFuture.current.length&&!imageFuture.current.length} title="بازانجام (Ctrl+Y)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors",(canRedo||paintFuture.current.length||imageFuture.current.length)?"text-mute hover:bg-panel3 hover:text-ink":"text-dim/40")}>
             <IconRedo className="h-3.5 w-3.5" />
           </button>
           <button onClick={duplicateSelected} disabled={!selected.length} title="کپی المان‌های انتخابی (Ctrl+D)" className={cn("grid h-[27px] w-full border-t border-edge place-items-center transition-colors", selected.length ? "text-mute hover:bg-panel3 hover:text-ink" : "text-dim/40")}>
             <IconCopy className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={splitSelected ? deleteSelectedSplit : deleteSelected}
+            onClick={deleteSelection}
             disabled={!selected.length && !splitSelected}
-            title={splitSelected ? "حذف نقطه Split (Delete)" : "حذف انتخابی (Delete)"}
+            title={selected.length && splitSelected ? "حذف خطوط و نقطه Split (Delete)" : splitSelected ? "حذف نقطه Split (Delete)" : "حذف انتخابی (Delete)"}
             className={cn(
               "grid h-[27px] w-full place-items-center border-t border-edge transition-colors",
               selected.length || splitSelected ? "text-danger/80 hover:bg-danger/15 hover:text-danger" : "text-dim/40"
@@ -3623,7 +6134,7 @@ export default function ProfileEditor({
               "grid h-[27px] w-full place-items-center rounded-lg border bg-panel/92 shadow-lg shadow-black/30 backdrop-blur-sm transition-colors",
               panMode ? "border-teal/60 text-teal" : "border-edge text-mute hover:border-edge2 hover:text-ink"
             )}
-            title="پن (جابه‌جایی نما) — یا Space را نگه دارید، یا با دکمهٔ وسط/راست بکشید"
+            title="پن (جابه‌جایی نما) — با دکمهٔ وسط/راست بکشید"
             onClick={() => setPanMode((v) => !v)}
           >
             <IconHand className="h-3.5 w-3.5" />
@@ -3633,7 +6144,10 @@ export default function ProfileEditor({
 
       {/* ---------- نوار انتخاب ---------- */}
       {tool === "select" && (
-        <div className="anim-in absolute bottom-[44px] left-[46px] z-10 flex max-w-[calc(100%-60px)] flex-col gap-1 rounded-lg border border-edge bg-panel/92 px-2.5 py-1.5 shadow-lg shadow-black/40 backdrop-blur-sm">
+        <div className={cn(
+          "anim-in absolute left-[46px] z-10 flex max-w-[calc(100%-60px)] flex-col gap-1 rounded-lg border border-edge bg-panel/92 px-2.5 py-1.5 shadow-lg shadow-black/40 backdrop-blur-sm transition-[bottom]",
+          one ? "bottom-[285px]" : selPoints.length ? "bottom-[175px]" : "bottom-[44px]"
+        )}>
           <div className="flex items-center justify-center gap-1.5">
             <span
               className={cn(
@@ -3687,13 +6201,47 @@ export default function ProfileEditor({
         </div>
       )}
 
-      {/* راهنمای مرحلهٔ ترسیم */}
+      {/* پنجرهٔ مشترک «آپشن ابزار» — گزینه‌های اختصاصی همهٔ ابزارها اینجا قرار می‌گیرند. */}
       {tool !== "select" && (
-        <div className="anim-in absolute top-2.5 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
-          <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
-          {stepText}
+        <div data-panel="tool-options" className="anim-in absolute top-2.5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full border border-teal/50 bg-panel/95 py-1.5 pr-3 pl-1.5 text-[11.5px] font-bold text-teal shadow-lg shadow-black/40 backdrop-blur-sm">
+          {NEED_PTS[tool] > 0 && (
+            <span className="grid h-5 w-5 place-items-center rounded-full bg-teal/20 font-mono text-[10px]">{stepIdx + 1}</span>
+          )}
+          <span>{toolOptionText || TOOLS.find((item) => item.id === tool)?.name}</span>
+          {tool === "rotate" && (
+            <>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateLive} onChange={e=>{setRotateLive(e.target.checked);requestAnimationFrame(()=>rotateInputRef.current?.focus());}}/>پیش‌نمایش زنده عدد</label>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2"><input type="checkbox" checked={rotateGhost} onChange={e=>{setRotateGhost(e.target.checked);requestAnimationFrame(()=>rotateInputRef.current?.focus());}}/>نمایش شکل اصلی</label>
+            </>
+          )}
+          {tool === "boxscale" && (
+            <>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2">
+                <input type="checkbox" checked={boxScaleLive} onChange={(e) => setBoxScaleLive(e.target.checked)} />
+                پیش‌نمایش زنده عدد
+              </label>
+              <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2">
+                <input type="checkbox" checked={boxScaleGhost} onChange={(e) => setBoxScaleGhost(e.target.checked)} />
+                نمایش اندازه اصلی
+              </label>
+            </>
+          )}
+          {tool === "mirror" && (
+            <label className="flex cursor-pointer items-center gap-1.5 border-r border-edge/70 pr-2">
+              <input
+                type="checkbox"
+                checked={mirrorSession?.keepCopy ?? mirrorKeepCopy}
+                onChange={(event) => {
+                  const keepCopy = event.target.checked;
+                  setMirrorKeepCopy(keepCopy);
+                  if (mirrorSession) setMirrorSession({ ...mirrorSession, keepCopy });
+                }}
+              />
+              کپی
+            </label>
+          )}
           {liveInfo && <span className="font-mono text-[10px] font-normal text-mute">{liveInfo}</span>}
-          <button onClick={() => { setTool("select"); cancelDraft(); }} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="لغو (Esc)">
+          <button onClick={closeToolOptions} className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-white/10" title="بستن آپشن ابزار (Esc)">
             <IconX className="h-3 w-3" />
           </button>
         </div>
@@ -3797,18 +6345,18 @@ export default function ProfileEditor({
             <IconCheck className="h-3 w-3" />
             تأیید
           </button>
-          <button
+          {keepEditDraft && <button
             onClick={onEditDiscard}
             className="flex items-center gap-1 rounded-full border border-red-500/45 bg-red-500/10 px-2.5 py-1 text-[11px] font-bold text-red-300 transition-colors hover:bg-red-500/20 hover:text-red-200"
             title="حذف کامل پیش‌نویس و خروج از ویرایش مسیر؛ با Undo قابل بازیابی است"
           >
             <IconTrash className="h-3 w-3" />
             حذف پیش‌نویس
-          </button>
+          </button>}
           <button
             onClick={onEditCancel}
             className="rounded-full border border-edge bg-panel/70 px-2.5 py-1 text-[11px] font-bold text-mute transition-colors hover:text-ink"
-            title="خروج از ویرایش مسیر؛ پیش‌نویس تغییرات برای ورود بعدی حفظ می‌شود"
+            title={keepEditDraft ? "خروج از ویرایش مسیر؛ پیش‌نویس تغییرات برای ورود بعدی حفظ می‌شود" : "خروج از ویرایش مسیر؛ برای تغییرات تأییدنشده تصمیم‌گیری می‌شود"}
           >
             خروج
           </button>
@@ -3905,12 +6453,20 @@ export default function ProfileEditor({
       })()}
       {selPoints.length > 1 && tool === "select" && (
         <div className="anim-in absolute left-2.5 bottom-11 rounded-lg border border-brass/40 bg-panel/95 px-3 py-2 text-[11px] font-bold text-brass2 backdrop-blur-sm">
-          {selPoints.length} نقطه انتخاب شده — بکشید تا با هم جابه‌جا شوند
+          <div>{selPoints.length} نقطه انتخاب شده — بکشید تا با هم جابه‌جا شوند</div>
+          <div className="mt-2 grid grid-cols-4 gap-1" dir="ltr">
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با بالاترین نقطه (↑)" onClick={() => alignSelectedPoints("top")}>↑</button>
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با پایین‌ترین نقطه (↓)" onClick={() => alignSelectedPoints("bottom")}>↓</button>
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با چپ‌ترین نقطه (←)" onClick={() => alignSelectedPoints("left")}>←</button>
+            <button className="rounded border border-edge px-1.5 py-1 text-sm text-ink hover:border-teal hover:text-teal" title="هم‌تراز با راست‌ترین نقطه (→)" onClick={() => alignSelectedPoints("right")}>→</button>
+          </div>
+          <div className="mt-1 text-center text-[9px] font-normal text-dim">کلیدهای جهت‌نما نیز فعال هستند</div>
         </div>
       )}
 
       {/* گیر و راهنما */}
-      <div className="absolute right-2.5 bottom-2.5 flex items-center gap-2">
+      <div className="absolute right-2.5 bottom-2.5 z-30 flex items-center gap-2">
+        {!editOpen && <EditGridControl settings={settings} onSettings={onSettings} placement="up" />}
         <button
           className={cn("chip-toggle backdrop-blur-sm transition-all", settings.smartSnap ? "border-teal/50 bg-panel/85 text-teal" : "border-edge bg-panel/60 text-dim")}
           title="چسبندگی هوشمند به نقاط انتها، وسط، مرکز و تقاطع"
@@ -3936,7 +6492,7 @@ export default function ProfileEditor({
         </span>
         <span
           className="hidden items-center gap-1.5 rounded-full border border-edge bg-panel/85 px-2.5 py-1 text-[10.5px] text-mute backdrop-blur-sm xl:inline-flex"
-          title="درگ چپ‌به‌راست: فقط المان‌های کاملاً داخل باکس (آبی) • راست‌به‌چپ: المان‌های متقاطع (سبز) • Shift: افزودن • Ctrl: حذف • دابل‌کلیک: انتخاب زنجیره • پن: Space یا دکمهٔ وسط/راست"
+          title="درگ چپ‌به‌راست: فقط المان‌های کاملاً داخل باکس (آبی) • راست‌به‌چپ: المان‌های متقاطع (سبز) • Shift: افزودن • Ctrl: حذف • دابل‌کلیک: انتخاب زنجیره • پن: دکمهٔ وسط/راست • Space: سوییچ دو ابزار آخر"
         >
           <span className="inline-block h-2.5 w-4 rounded-[2px] border border-[#4aa3ff] bg-[#4aa3ff]/25" />
           <span className="inline-block h-2.5 w-4 rounded-[2px] border border-dashed border-[#3faf5d] bg-[#3faf5d]/20" />
@@ -3969,6 +6525,8 @@ function Inspector({
   const len = segLength(seg);
   const ang = lineAngle(seg.a, seg.b);
   const rad = seg.kind === "arc" ? arcRadius(seg) : 0;
+  const arcDivisions = seg.kind === "arc" ? (seg.arcDivisions ?? Math.max(2, segPoints(seg).length - 1)) : 0;
+  const setArcDivisions = (value: number) => onPatch({ arcDivisions: Math.max(2, Math.min(500, Math.round(value))) });
   const constrainPoint = (part: SketchPointPart, p: SPoint) =>
     constrainSegPointToStock(seg, part, p, blankL, blankR);
 
@@ -3999,30 +6557,49 @@ function Inspector({
       )}
 
       {seg.kind === "arc" && (
-        <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-          <NumF
-            label="شعاع"
-            v={rad}
-            onC={(v) => {
-              const nextVia = arcWithRadius(seg, v).via;
-              if (nextVia) onPatch({ via: constrainPoint("via", nextVia) });
-            }}
-          />
-          <div className="flex items-end">
-            <button
-              onClick={() => {
-                const mz = (seg.a.z + seg.b.z) / 2;
-                const mr = (seg.a.r + seg.b.r) / 2;
-                const via = seg.via ?? { z: mz, r: mr };
-                onPatch({ via: constrainPoint("via", { z: 2 * mz - via.z, r: 2 * mr - via.r }) });
+        <>
+          <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+            <NumF
+              label="شعاع"
+              v={rad}
+              onC={(v) => {
+                const nextVia = arcWithRadius(seg, v).via;
+                if (nextVia) onPatch({ via: constrainPoint("via", nextVia) });
               }}
-              className="btn w-full justify-center !py-1.5 text-[10.5px]"
-              title="معکوس‌کردن جهت برآمدگی کمان"
-            >
-              معکوس کمان
-            </button>
+            />
+            <div className="flex items-end">
+              <button
+                onClick={() => {
+                  const mz = (seg.a.z + seg.b.z) / 2;
+                  const mr = (seg.a.r + seg.b.r) / 2;
+                  const via = seg.via ?? { z: mz, r: mr };
+                  onPatch({ via: constrainPoint("via", { z: 2 * mz - via.z, r: 2 * mr - via.r }) });
+                }}
+                className="btn w-full justify-center !py-1.5 text-[10.5px]"
+                title="معکوس‌کردن جهت برآمدگی کمان"
+              >
+                معکوس کمان
+              </button>
+            </div>
           </div>
-        </div>
+          <div className="mt-1.5">
+            <div className="mb-1 text-[9px] font-semibold text-dim">تعداد تقسیمات کمان</div>
+            <div className="flex h-7 overflow-hidden rounded border border-edge bg-panel2" dir="ltr">
+              <button type="button" className="grid w-8 place-items-center border-r border-edge text-sm font-bold text-teal hover:bg-teal/10" onClick={() => setArcDivisions(arcDivisions - 1)} title="کاهش تقسیمات">−</button>
+              <input
+                type="number"
+                min={2}
+                max={500}
+                step={1}
+                value={arcDivisions}
+                onChange={(e) => setArcDivisions(Number(e.target.value))}
+                className="min-w-0 flex-1 bg-transparent text-center font-mono text-[11px] text-ink outline-none"
+                aria-label="تعداد تقسیمات کمان"
+              />
+              <button type="button" className="grid w-8 place-items-center border-l border-edge text-sm font-bold text-teal hover:bg-teal/10" onClick={() => setArcDivisions(arcDivisions + 1)} title="افزایش تقسیمات">+</button>
+            </div>
+          </div>
+        </>
       )}
 
       {(seg.kind === "quad" || seg.kind === "cubic") && seg.c1 && (

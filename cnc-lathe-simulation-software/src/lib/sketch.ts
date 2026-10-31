@@ -20,6 +20,15 @@ export interface SketchSeg {
   c1?: SPoint; // منحنی درجه۲: تنها نقطه کنترل | درجه۳: دستهٔ اول
   c2?: SPoint; // منحنی درجه۳: دستهٔ دوم
   via?: SPoint; // کمان: نقطهٔ روی کمان
+  /** شناسه مشترک بخش‌های یک Polyline؛ بخش‌ها از نظر هندسی Line می‌مانند. */
+  polylineId?: number;
+  /** شناسهٔ دو خط سازنده؛ برای جایگزینی Fillet قبلی روی همان جفت خط */
+  filletOf?: [number, number];
+  /** تعداد پاره‌خط‌های نمایش/تبدیل کمان؛ در نبود آن مقدار خودکار استفاده می‌شود. */
+  arcDivisions?: number;
+  /** دستهٔ این انتها از قرینگی رأس نرم جدا شده و مستقل حرکت می‌کند. */
+  independentA?: boolean;
+  independentB?: boolean;
 }
 
 export const KIND_FA: Record<SketchKind, string> = {
@@ -104,7 +113,10 @@ export function evalSeg(s: SketchSeg, t: number): SPoint {
 /** نقاط گسسته روی المان (برای ترسیم و تخت‌سازی) */
 export function segPoints(s: SketchSeg, n?: number): SPoint[] {
   if (s.kind === "line") return [s.a, s.b];
-  const steps = n ?? Math.max(10, Math.min(90, Math.ceil(segLength(s) / 1.2)));
+  const configured = s.kind === "arc" && Number.isFinite(s.arcDivisions)
+    ? Math.max(2, Math.min(500, Math.round(s.arcDivisions!)))
+    : undefined;
+  const steps = n ?? configured ?? Math.max(10, Math.min(90, Math.ceil(segLength(s) / 1.2)));
   const out: SPoint[] = [];
   for (let i = 0; i <= steps; i++) out.push(evalSeg(s, i / steps));
   return out;
@@ -273,6 +285,8 @@ export function moveSeg(s: SketchSeg, dz: number, dr: number): SketchSeg {
     c1: s.c1 ? movePt(s.c1, dz, dr) : undefined,
     c2: s.c2 ? movePt(s.c2, dz, dr) : undefined,
     via: s.via ? movePt(s.via, dz, dr) : undefined,
+    filletOf: s.filletOf ? [...s.filletOf] : undefined,
+    arcDivisions: s.arcDivisions,
   };
 }
 
@@ -380,7 +394,9 @@ export function flattenSketch(segs: SketchSeg[], blankR: number, blankL: number)
     const pts = s.kind === "line" ? [s.a, s.b] : segPoints(s);
     for (const p of pts) {
       if (!Number.isFinite(p.z) || !Number.isFinite(p.r)) continue;
-      raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0.2, p.r)) });
+      /* نقطهٔ واقعی روی محور باید R=0 بماند؛ کف ۰٫۲mm ابتدای مسیر پرداخت خارج
+         را از پروفایل اصلی جدا می‌کرد و یک زاویهٔ مصنوعی می‌ساخت. */
+      raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)) });
     }
   }
   if (raw.length < 2) return [];
@@ -596,11 +612,21 @@ let branchUid = 95000;
  * keep = "max" برای شاخه خارجی (پوشش بیرونی) و "min" برای شاخه داخلی
  * (مرز حفره — در Zهای مشترک مثل لبه، شعاع کوچک‌تر مرز داخلی است).
  */
+/** شاخهٔ داخلی با ترتیب توپولوژیک اصلی؛ برای Offset و Finish نباید برحسب Z مرتب شود. */
+export function branchPathPoints(branch: SPoint[], blankR: number, blankL: number): PPoint[] {
+  return branch
+    .filter((p) => Number.isFinite(p.z) && Number.isFinite(p.r))
+    /* شاخهٔ داخلی باید نقطهٔ واقعی R=0 را حفظ کند. حداقل‌کردن شعاع روی ۰٫۲mm
+       یک پاره‌خط اضافه بین محور و ابتدای پرداخت داخل می‌ساخت و مسیر قرمز را از
+       پروفایل آبی جدا نشان می‌داد. */
+    .map((p) => ({ id: ++branchUid, z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)), smooth: false }));
+}
+
 export function branchPoints(branch: SPoint[], blankR: number, blankL: number, keep: "max" | "min"): PPoint[] {
   const raw: SPoint[] = [];
   for (const p of branch) {
     if (!Number.isFinite(p.z) || !Number.isFinite(p.r)) continue;
-    raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0.2, p.r)) });
+    raw.push({ z: Math.min(blankL, Math.max(0, p.z)), r: Math.min(blankR, Math.max(0, p.r)) });
   }
   if (raw.length < 2) return [];
   raw.sort((x, y) => x.z - y.z);
@@ -638,6 +664,13 @@ export function normalizeSketch(raw: unknown): SketchSeg[] | null {
       c1: s.c1 ? { z: s.c1.z, r: s.c1.r } : undefined,
       c2: s.c2 ? { z: s.c2.z, r: s.c2.r } : undefined,
       via: s.via ? { z: s.via.z, r: s.via.r } : undefined,
+      polylineId: typeof s.polylineId === "number" && Number.isFinite(s.polylineId) ? s.polylineId : undefined,
+      filletOf: Array.isArray(s.filletOf) && s.filletOf.length === 2 && s.filletOf.every(Number.isFinite)
+        ? [s.filletOf[0], s.filletOf[1]]
+        : undefined,
+      arcDivisions: typeof s.arcDivisions === "number" && Number.isFinite(s.arcDivisions)
+        ? Math.max(2, Math.min(500, Math.round(s.arcDivisions)))
+        : undefined,
     });
   }
   for (const s of out) segUid = Math.max(segUid, s.id);

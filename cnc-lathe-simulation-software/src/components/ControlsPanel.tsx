@@ -1,8 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType } from "../lib/lathe";
-import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, defaultOpInsertIndex, findZones, holder2OffsetFromCoordinates, machineUV, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
+import type { BlankShape, Holder2State, HolderMachinePoint, Op, OpType, Params, PPoint, Preset, Sample, ToolHand, ToolSpec, ToolType, ToolCompensationSpec } from "../lib/lathe";
+import { DEFAULT_TOOL_COMPENSATION } from "../lib/lathe";
+import { ALL_OP_TYPES, BLANK_SHAPES, HAND_INFO, HOLDER2_ROT, INNER_OPS, INSERT_ANGLE, MIN_HOLDER2_OFFSET, NOSE_RADII, OP_INFO, OUTER_OPS, PRESETS, ROUGH_MODES, STRATEGIES, findZones, holder2OffsetFromCoordinates, makeOps, normalOffset, outerFirstOps, outerFirstTypes, rotationalEnvelope, sampleOrderedProfile, sampleProfile, thumbPath, toolProfile } from "../lib/lathe";
 import { cn } from "../utils/cn";
-import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconSplit, IconTool, IconTrash } from "./icons";
+import { IconBowl, IconCheck, IconCurve, IconEye, IconEyeOff, IconLayers, IconPlus, IconSpindle, IconTool, IconTrash } from "./icons";
 
 const COLLAPSIBLE_SECTION_TITLES = [
   "پیش‌تنظیم‌های طرح",
@@ -22,6 +23,8 @@ interface Props {
   onHolder2: (value: Holder2State) => void;
   onParams: (patch: Partial<Params>) => void;
   points: PPoint[];
+  /** مسیر توپولوژیک برای نمایش شکل (نقاط عمودی هم حفظ می‌شوند). */
+  outerDisplayPoints?: PPoint[];
   innerPoints: PPoint[];
   splitInfo: { outerDir: 1 | -1; innerDir: 1 | -1; at: { z: number; r: number } } | null;
   onAutoSplit: () => void;
@@ -29,7 +32,7 @@ interface Props {
   activePreset: string | null;
   onApplyPreset: (p: Preset) => void;
 
-  onStrategy: (name: string) => void;
+  onStrategy: (id: string, name: string, types: OpType[]) => void;
   isolatedOpId: number | null;
   onIsolate: (id: number | null) => void;
   onNotify: (msg: string) => void;
@@ -41,10 +44,8 @@ function ControlsPanel({
   onHolder2,
   onParams,
   points,
+  outerDisplayPoints,
   innerPoints,
-  splitInfo,
-  onAutoSplit,
-
   activePreset,
   onApplyPreset,
   onStrategy,
@@ -54,8 +55,7 @@ function ControlsPanel({
 }: Props) {
   /* امضای استراتژی فعلی برای تشخیص پیش‌تنظیم فعال (با قاعدهٔ پیش‌فرض: بیرونی‌ها اول) */
   const sig = outerFirstOps(params.ops.filter((o) => o.on)).map((o) => o.type).join(",");
-  const bowlStrategy = STRATEGIES.find((st) => st.id === "bowl")!;
-  const bowlActive = sig === outerFirstTypes(bowlStrategy.types).join(",");
+  const [pendingStrategy, setPendingStrategy] = useState<(typeof STRATEGIES)[number] | null>(null);
   const sectionsAreCollapsed = () => {
     const saved = loadCollapsedSections();
     return COLLAPSIBLE_SECTION_TITLES.every((title) => !!saved[title]);
@@ -84,6 +84,12 @@ function ControlsPanel({
 
   /* درگ‌ودراپ برای جابه‌جایی عملیات‌ها (کنار فلش‌ها) */
   const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [compOpId, setCompOpId] = useState<number | null>(null);
+  const compOp = params.ops.find((o) => o.id === compOpId);
+  const setComp = (patch: Partial<ToolCompensationSpec>) => {
+    if (!compOp) return;
+    setOps(params.ops.map((o) => o.id === compOp.id ? { ...o, compensation: { ...DEFAULT_TOOL_COMPENSATION, ...o.compensation, ...patch } } : o));
+  };
   const [dropEdge, setDropEdge] = useState<number | null>(null); // k = درج «قبل» از ردیف k (یا انتها اگر k=length)
   const gripRef = useRef<number | null>(null);
 
@@ -103,7 +109,6 @@ function ControlsPanel({
   const shownHolder2 = holder2Draft ?? params.holder2;
   const holder2IsDraft = !!holder2Draft &&
     (holder2Draft.xOff !== params.holder2.xOff || holder2Draft.yOff !== params.holder2.yOff);
-  const h2example = machineUV(80, 120, 2, holder2IsDraft ? { ...params, holder2: shownHolder2 } : params);
   const moveOp = (i: number, dir: -1 | 1) => {
     const j = i + dir;
     if (j < 0 || j >= params.ops.length) return;
@@ -112,11 +117,18 @@ function ControlsPanel({
     setOps(ops);
   };
   const toggleOp = (id: number) => setOps(params.ops.map((o) => (o.id === id ? { ...o, on: !o.on } : o)));
+  const toggleOpDirection = (id: number) => setOps(params.ops.map((o) => (o.id === id ? { ...o, reverse: !o.reverse } : o)));
   const removeOp = (id: number) => setOps(params.ops.filter((o) => o.id !== id));
   const addOp = (type: OpType) => {
     const op = makeOps([type])[0];
-    const ops = [...params.ops];
-    ops.splice(defaultOpInsertIndex(ops, type), 0, op);
+    /* ترتیب مرجع دقیقاً همان ترتیب منوی «افزودن عملیات» است. با افزودن هر مورد،
+       زنجیره به‌صورت پایدار بر همین اساس مرتب می‌شود تا عملیات تازه فوراً در
+       ردیف اصلی خودش قرار بگیرد؛ نمونه‌های تکراری ترتیب نسبی خود را حفظ می‌کنند. */
+    const rank = new Map(ALL_OP_TYPES.map((item, index) => [item, index]));
+    const ops = [...params.ops, op]
+      .map((item, index) => ({ item, index }))
+      .sort((a, b) => (rank.get(a.item.type) ?? ALL_OP_TYPES.length) - (rank.get(b.item.type) ?? ALL_OP_TYPES.length) || a.index - b.index)
+      .map(({ item }) => item);
     setOps(ops);
   };
   /* درگ‌ودراپ: برداشتن از دسته، رها روی لبهٔ رویی/زیری هر ردیف */
@@ -136,12 +148,22 @@ function ControlsPanel({
   const onTool = (patch: Partial<ToolSpec>) => onParams({ tool: { ...params.tool, ...patch } });
 
   /* نمونه‌های پروفایل و تقسیم خودکار نواحی (نقطهٔ شروع برای مرزسازی دستی) */
-  const { zoneSamples, autoZones } = useMemo(() => {
+  const { autoZones } = useMemo(() => {
     const blankR = params.blankD / 2;
     const samples = sampleProfile(points, blankR);
     const off: Sample[] = normalOffset(samples, params.offsetDist, true).map((s) => ({ z: s.z, r: Math.min(blankR, s.r) }));
     return { zoneSamples: off, autoZones: findZones(off) };
   }, [points, params.blankD, params.offsetDist]);
+  /* برای تصویر تنظیم نواحی باید ترتیب واقعی Segmentها حفظ شود. sampleProfile
+     پوشش خشن را برحسب Z مرتب می‌کند و روی پروفایل‌های برگشتی شکل را می‌شکند. */
+  const innerZoneSamples = useMemo(() => {
+    if (!params.split.enabled || innerPoints.length < 2) return [];
+    return sampleOrderedProfile(innerPoints, params.blankD / 2);
+  }, [innerPoints, params.blankD, params.split.enabled]);
+  const outerDisplaySamples = useMemo(() => {
+    const displayPoints = outerDisplayPoints && outerDisplayPoints.length >= 2 ? outerDisplayPoints : points;
+    return displayPoints.length >= 2 ? sampleOrderedProfile(displayPoints, params.blankD / 2) : [];
+  }, [outerDisplayPoints, points, params.blankD]);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pl-0.5">
@@ -202,20 +224,7 @@ function ControlsPanel({
             return (
               <button
                 key={st.id}
-                onClick={() => {
-                  onParams({
-                    ops: makeOps(st.types),
-                    ...(st.id === "bowl"
-                      ? {
-                          holder2: {
-                            xOff: Math.max(MIN_HOLDER2_OFFSET, params.holder2.xOff),
-                            yOff: Math.max(MIN_HOLDER2_OFFSET, params.holder2.yOff),
-                          },
-                        }
-                      : {}),
-                  });
-                  onStrategy(st.name);
-                }}
+                onClick={() => setPendingStrategy(st)}
                 className={cn(
                   "rounded-md border px-1 py-1.5 text-[10.5px] font-bold transition-all hover:-translate-y-0.5",
                   on ? "border-teal/70 bg-teal/10 text-teal" : "border-edge bg-panel2 text-mute hover:border-edge2 hover:text-ink"
@@ -308,6 +317,17 @@ function ControlsPanel({
                   {isolated ? <IconEyeOff className="h-3.5 w-3.5" /> : <IconEye className="h-3.5 w-3.5" />}
                 </button>
                 <button
+                  type="button"
+                  onClick={() => toggleOpDirection(op.id)}
+                  title={op.reverse ? "بازگرداندن جهت شروع پیش‌فرض" : "معکوس کردن جهت شروع عملیات"}
+                  className={cn("grid h-6 w-6 shrink-0 place-items-center rounded border transition-all",op.reverse?"border-copper/60 bg-copper/15 text-copper":"border-edge text-dim hover:border-edge2 hover:text-ink")}
+                >
+                  <svg viewBox="0 0 450 469" aria-hidden="true" className={cn("h-[18px] w-[18px] transition-transform",op.reverse&&"scale-x-[-1]")}>
+                    <path d="M136 76 H310 C344 76 372 102 372 137 C372 172 347 202 312 202 H142 C108 202 78 229 78 264 C78 299 105 330 141 330 H254" fill="none" stroke="currentColor" strokeWidth="32" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M253 267 L360 330 L253 391 Z" fill="currentColor"/>
+                  </svg>
+                </button>
+                <button
                   onClick={() => toggleHolder(op.id)}
                   title={op.holder === 2 ? "هلدر ۲ — داخل‌تراش — کلیک برای تغییر" : "هلدر ۱ — اصلی — کلیک برای تغییر"}
                   className={cn(
@@ -319,6 +339,7 @@ function ControlsPanel({
                 >
                   H{op.holder}
                 </button>
+                <button type="button" onClick={() => setCompOpId(op.id)} className={cn("rounded border px-1 text-[10px]", op.compensation?.enabled ? "border-teal/60 text-teal" : "border-edge text-dim hover:text-ink")} title="تنظیم جبران شعاع نوک ابزار">R</button>
                 <button onClick={() => toggleOp(op.id)} className="shrink-0" title={op.on ? "غیرفعال کردن" : "فعال کردن"}>
                   <span
                     className={cn(
@@ -384,38 +405,6 @@ function ControlsPanel({
           </select>
         </div>
 
-        <div className="mt-2 space-y-1.5 border-t border-edge pt-2">
-          <div>
-            <span className="mb-1 block text-[10.5px] font-semibold text-mute">سبک خروجی جی‌کد</span>
-            <div className="flex overflow-hidden rounded-md border border-edge">
-              <button
-                onClick={() => onParams({ format: "modal" })}
-                className={cn(
-                  "flex-1 px-1 py-1.5 text-[10.5px] font-bold transition-colors",
-                  params.format === "modal" ? "bg-brass text-[#241a0c]" : "bg-panel2 text-mute hover:text-ink"
-                )}
-              >
-                فشرده Modal
-              </button>
-              <button
-                onClick={() => onParams({ format: "std" })}
-                className={cn(
-                  "flex-1 border-r border-edge px-1 py-1.5 text-[10.5px] font-bold transition-colors",
-                  params.format === "std" ? "bg-brass text-[#241a0c]" : "bg-panel2 text-mute hover:text-ink"
-                )}
-              >
-                استاندارد Fanuc
-              </button>
-            </div>
-          </div>
-          <Toggle label="شماره خط (N) — فقط Fanuc" on={params.lineNumbers} onChange={(v) => onParams({ lineNumbers: v })} />
-          <Toggle label="گسترش G0 در جی‌کد (۳mm)" on={params.spreadG0} onChange={(v) => onParams({ spreadG0: v })} />
-          {params.spreadG0 && (
-            <p className="px-0.5 text-[10.5px] leading-5 text-mute">
-              حرکت‌های سریعِ روی‌هم با گام ۳mm فقط به سمت بیرون باز می‌شوند تا در سیمکو جدا دیده شوند — فیدرها و برش عوض نمی‌شوند.
-            </p>
-          )}
-        </div>
       </Section>
 
       {/* کاسه: نقطه Split + هلدر دوم */}
@@ -427,40 +416,6 @@ function ControlsPanel({
         />
         {params.split.enabled ? (
           <div className="anim-in mt-2 space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Num label="X نقطه Split" unit="mm" value={params.split.z} min={0} max={params.blankL} step={1} onChange={(v) => onParams({ split: { ...params.split, z: v } })} />
-              <Num label="⌀ نقطه Split" unit="mm" value={Math.round(params.split.r * 2 * 100) / 100} min={0} max={params.blankD} step={1} onChange={(v) => onParams({ split: { ...params.split, r: v / 2 } })} />
-            </div>
-            <button onClick={onAutoSplit} className="btn w-full justify-center !py-1.5 text-[11.5px]" title="قرار دادن خودکار نقطه روی لبه (بیشترین X زنجیره)">
-              <IconSplit className="h-3.5 w-3.5" />
-              Split خودکار روی لبه
-            </button>
-            <p className="rounded-md border border-dashed border-edge px-2 py-1 text-[9.5px] leading-4 text-dim">
-              یا با ابزار <span className="font-bold text-[#f72585]">نقطه Split (کلید S)</span> مستقیم روی پروفیل در بوم کلیک کنید.
-            </p>
-
-            {splitInfo ? (
-              <div className="rounded-md border border-edge bg-bg/50 px-2 py-1.5 text-[10px] leading-5">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-brass2">شاخه خارجی</span>
-                  <span className="font-mono text-mute" dir="ltr">{splitInfo.outerDir > 0 ? "+X" : "−X"} • {faNum(points.length)} نقطه</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-[#4cc9f0]">شاخه داخلی</span>
-                  <span className="font-mono text-mute" dir="ltr">{splitInfo.innerDir > 0 ? "+X" : "−X"} • {faNum(innerPoints.length)} نقطه</span>
-                </div>
-              </div>
-            ) : (
-              <p className="rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[10px] leading-4 text-danger">
-                شاخه‌ای ساخته نشد — پروفیل زنجیره‌ای (حداقل ۳ نقطه) ترسیم کنید.
-              </p>
-            )}
-            {splitInfo && innerPoints.length < 2 && (
-              <p className="rounded-md border border-danger/40 bg-danger/10 px-2 py-1.5 text-[10px] leading-4 text-danger">
-                شاخه داخلی خالی است — نقطه Split را روی پروفیل (نزدیک لبه) بگذارید.
-              </p>
-            )}
-
             {/* نوع عملیات */}
             <div>
               <span className="mb-1 block text-[10.5px] font-semibold text-mute">نوع عملیات</span>
@@ -495,49 +450,35 @@ function ControlsPanel({
               </div>
             </div>
 
-            {/* هلدر دوم فقط پس از Split معتبر و با استراتژی کاسه داخل+خارج */}
-            {bowlActive && splitInfo && (
-            <div className="rounded-lg border border-[#4cc9f0]/30 bg-[#4cc9f0]/5 p-2">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="text-[11px] font-bold text-[#4cc9f0]">هلدر دوم (داخل‌تراش)</span>
-                <div className="flex items-center gap-1">
-                  {holder2IsDraft && (
-                    <span className="rounded-full border border-teal/50 bg-teal/10 px-2 py-0.5 text-[8.5px] font-bold text-teal">
-                      زنده · پیش‌نویس
-                    </span>
-                  )}
-                  <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
-                    ROT {HOLDER2_ROT}°
-                  </span>
-                </div>
-              </div>
-              <span className="mb-1 block text-[9.5px] font-bold text-mute">تنظیم مستقیم افست</span>
-              <div className="grid grid-cols-2 gap-2">
-                <Num label="X Offset (+X)" unit="mm" value={shownHolder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
-                <Num label="Y Offset (−Y)" unit="mm" value={shownHolder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
-              </div>
-
-              <Holder2CoordinateCalibration
-                current={shownHolder2}
-                onApply={onHolder2}
-              />
-
-              <p className="mt-1.5 rounded-md bg-bg/60 px-2 py-1 font-mono text-[9px] leading-4 text-mute" dir="ltr">
-                Xm = Xw + Xoff , Ym = Yw/2 − Yoff
-                <br />
-                ex: (80.0, 120.0) → ({h2example.u.toFixed(1)}, {h2example.v.toFixed(1)})
-              </p>
-              <p className="mt-1 text-[9px] leading-4 text-dim">
-                هر آفست مستقیم روی محور خودش اثر می‌گذارد: X مثبت به سمت ‎+X‎ و Y مثبت به سمت ‎−Y‎. چرخش ‎−۹۰°‎ مربوط به جهت ابزار است. تبدیل فقط در جی‌کد اعمال می‌شود؛ شبیه‌سازی در مختصات قطعه است.
-              </p>
-            </div>
-            )}
           </div>
         ) : (
           <p className="mt-1.5 rounded-md border border-dashed border-edge px-2 py-1.5 text-[10px] leading-5 text-dim">
             با فعال‌سازی، پروفیل در نقطه Split به دو شاخه داخل/خارج تقسیم می‌شود. نمونه آماده: <span className="font-bold text-brass2">«کاسه (داخل+خارج)»</span> از پیش‌تنظیم‌ها.
           </p>
         )}
+
+        {/* تنظیمات هلدر دوم مستقل از استراتژی و Split همیشه در دسترس است. */}
+        <div className="mt-2 rounded-lg border border-[#4cc9f0]/30 bg-[#4cc9f0]/5 p-2">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-[11px] font-bold text-[#4cc9f0]">هلدر دوم (داخل‌تراش)</span>
+            <div className="flex items-center gap-1">
+              {holder2IsDraft && (
+                <span className="rounded-full border border-teal/50 bg-teal/10 px-2 py-0.5 text-[8.5px] font-bold text-teal">
+                  زنده · پیش‌نویس
+                </span>
+              )}
+              <span className="rounded-full border border-edge px-2 py-0.5 font-mono text-[9px] font-bold text-mute" dir="ltr">
+                ROT {HOLDER2_ROT}°
+              </span>
+            </div>
+          </div>
+          <span className="mb-1 block text-[9.5px] font-bold text-mute">تنظیم مستقیم افست</span>
+          <div className="grid grid-cols-2 gap-2">
+            <Num label="X Offset (+X)" unit="mm" value={shownHolder2.xOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, xOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
+            <Num label="Y Offset (−Y)" unit="mm" value={shownHolder2.yOff} min={MIN_HOLDER2_OFFSET} step={0.5} onChange={(v) => onHolder2({ ...shownHolder2, yOff: Math.max(MIN_HOLDER2_OFFSET, v) })} />
+          </div>
+          <Holder2CoordinateCalibration current={shownHolder2} onApply={onHolder2} />
+        </div>
       </Section>
 
       {/* ابزار تراش */}
@@ -675,16 +616,30 @@ function ControlsPanel({
       {/* پارامترهای تراش */}
       <Section title="پارامترهای برداشت">
         <div className="grid grid-cols-2 gap-2">
-          <Num label="عمق بار / گام" unit="mm" value={params.doc} min={0.5} max={10} step={0.5} onChange={(v) => onParams({ doc: v })} />
+          <Num label="عمق بار / گام بیرونی" unit="mm" value={params.doc} min={0.5} max={10} step={0.5} onChange={(v) => onParams({ doc: v })} />
+          <Num label="عمق بار داخل‌تراشی" unit="mm" value={params.innerDoc} min={0.5} max={10} step={0.5} onChange={(v) => onParams({ innerDoc: Math.min(10, Math.max(0.5, v)) })} />
           <Num label="فاصله آفست" unit="mm" value={params.offsetDist} min={0} max={3} step={0.1} onChange={(v) => onParams({ offsetDist: v })} />
           <Num label="فاصله آفست داخل تراش" unit="mm" value={params.innerOffsetDist} min={0} max={3} step={0.1} onChange={(v) => onParams({ innerOffsetDist: v })} />
           <Num label="فاصله شروع داخل تراشی" unit="mm" value={params.innerStartClearance} min={0} max={20} step={0.5} onChange={(v) => onParams({ innerStartClearance: Math.min(20, Math.max(0, v)) })} />
           <Num label="فاصله پایان داخل تراشی" unit="mm" value={params.innerEndTravel} min={300} max={500} step={10} onChange={(v) => onParams({ innerEndTravel: Math.min(500, Math.max(300, v)) })} />
-          <Num label="همپوشانی خشن شعاعی و کف تراشی" unit="mm" value={params.bottomRoughOverlap} min={0} max={50} step={0.5} onChange={(v) => onParams({ bottomRoughOverlap: Math.min(50, Math.max(0, v)) })} />
-          <Num label="فیدر خشن" unit="mm/min" value={params.feedRough} min={20} max={1500} step={10} onChange={(v) => onParams({ feedRough: v })} />
-          <Num label="فیدر پرداخت" unit="mm/min" value={params.feedFinish} min={10} max={1000} step={10} onChange={(v) => onParams({ feedFinish: v })} />
-          <Num label="دور دوک" unit="rpm" value={params.rpm} min={200} max={4000} step={100} onChange={(v) => onParams({ rpm: v })} />
+          <Num label="همپوشانی خشن بیرون و کف تراشی" unit="mm" value={params.bottomRoughOverlap} min={0} max={50} step={0.5} onChange={(v) => onParams({ bottomRoughOverlap: Math.min(50, Math.max(0, v)) })} />
+          <Num label="فاصله کف تراشی از افست داخل" unit="mm" value={params.bottomOffsetClearance} min={0} max={100} step={0.5} onChange={(v) => onParams({ bottomOffsetClearance: Math.min(100, Math.max(0, v)) })} />
+          <Num label="برداشت اضافه از هر طرف" unit="mm" value={params.extraCutEachSide} min={0} max={10} step={0.5} onChange={(v) => onParams({ extraCutEachSide: Math.min(10, Math.max(0, v)) })} />
+
           <Num label="فاصله امن" unit="mm" value={params.safety} min={1} max={20} step={1} onChange={(v) => onParams({ safety: v })} />
+        </div>
+        <div className="mt-2 rounded-md border border-edge bg-panel2 p-2.5">
+          <label className="flex cursor-pointer items-center gap-2 text-[10.5px] font-semibold text-ink">
+            <input type="checkbox" checked={params.smartTransferEnabled} onChange={(e) => onParams({ smartTransferEnabled: e.target.checked })} className="accent-[#e3a94e]" />
+            حرکت انتقالی هوشمند برای خطوط زاویه‌دار
+          </label>
+          {params.smartTransferEnabled && (
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Num label="زاویه اول" unit="°" value={params.smartTransferAngleMin} min={0} max={90} step={1} onChange={(v) => onParams({ smartTransferAngleMin: Math.min(90, Math.max(0, v)) })} />
+              <Num label="زاویه دوم" unit="°" value={params.smartTransferAngleMax} min={0} max={90} step={1} onChange={(v) => onParams({ smartTransferAngleMax: Math.min(90, Math.max(0, v)) })} />
+            </div>
+          )}
+          <p className="mt-1.5 text-[9px] leading-4 text-dim">برای آفست و پرداخت داخل/خارج؛ بازه بدون توجه به ترتیب دو زاویه محاسبه می‌شود.</p>
         </div>
         <p className="mt-1.5 rounded-md bg-bg/50 px-2 py-1 text-[9.5px] leading-4 text-dim">
           فاصله امن، حداقل فاصله همه جابه‌جایی‌های سریع (G0) است: بیرون ‎+Y‎ از خط خارجی و بیرون ‎+X‎ از خط داخلی.
@@ -739,21 +694,6 @@ function ControlsPanel({
           </p>
         </div>
 
-        {params.roughMode === "zone" && (
-          <div className="anim-in mt-2">
-            <Toggle
-              label="اتصال پیوستهٔ مسیرها (بدون G0)"
-              on={params.ramp}
-              onChange={(v) => onParams({ ramp: v })}
-            />
-            <p className="mt-1 text-[9.5px] leading-4 text-dim">
-              {params.ramp
-                ? "ابزار بین لایه‌های درون هر ناحیه مستقیم و با حرکت برشی (Ramp) به خط بعد فرور می‌رود — هیچ جابه‌جایی سریع G0 در میان نیست"
-                : "بین لایه‌های درون هر ناحیه با جابه‌جایی سریع (G0) و حداقل فاصله امن به خط بعد می‌رود"}
-            </p>
-          </div>
-        )}
-
         {params.roughMode === "zigzag" && (
           <p className="anim-in mt-2 flex items-start gap-1.5 rounded-md border border-teal/30 bg-teal/10 px-2 py-1.5 text-[9.5px] leading-4 text-teal">
             <IconCheck className="mt-0.5 h-3 w-3 shrink-0" />
@@ -761,26 +701,16 @@ function ControlsPanel({
           </p>
         )}
 
-        <div className="anim-in mt-2">
-          <Toggle
-            label="فیدر بهینه (حذف F های تکراری)"
-            on={params.simpleFeed}
-            onChange={(v) => onParams({ simpleFeed: v })}
-          />
-          <p className="mt-1 text-[9.5px] leading-4 text-dim">
-            {params.simpleFeed
-              ? "همهٔ فیدرها به دو F اصلی ساده می‌شوند — F فیدر خشن و F فیدر پرداخت — و G1/F های اضافه حذف می‌شوند"
-              : "هر حرکت فیدر مخصوص خود را دارد (فرورفتن، خشن، پرداخت جدا)"}
-          </p>
-        </div>
-
         {params.roughMode === "zone" && (
           <div className="anim-in mt-2.5 border-t border-edge pt-2.5">
             <ZoneOrderEditor
               key={params.blankL + "|" + params.zoneBounds.join(",")}
               blankL={params.blankL}
               blankR={params.blankD / 2}
-              samples={zoneSamples}
+              /* شکل مرجع باید از خود پروفایل باشد، نه مسیر آفست؛ مسیر آفست
+                 در نوک Split باعث فاصله و خط اضافی روی تصویر می‌شد. */
+              samples={outerDisplaySamples}
+              innerSamples={innerZoneSamples}
               autoZones={autoZones}
               committedBounds={params.zoneBounds}
               committedOrder={params.zoneOrder}
@@ -794,11 +724,65 @@ function ControlsPanel({
             />
           </div>
         )}
+
+        <div className="mt-4 border-t border-edge pt-3">
+          <span className="mb-1 block text-[10.5px] font-semibold text-mute">روش خشن تراشی داخل</span>
+          <div className="flex overflow-hidden rounded-md border border-edge" dir="ltr">
+            {ROUGH_MODES.map((m,i)=><button key={m.id} onClick={()=>onParams({innerRoughMode:m.id})} className={cn("flex flex-1 flex-col items-center gap-1 px-1 py-2",i>0&&"border-l border-edge",params.innerRoughMode===m.id?m.id==="zone"?"bg-copper text-[#2a150a]":m.id==="zigzag"?"bg-teal text-[#0d201a]":"bg-brass text-[#241a0c]":"bg-panel2 text-mute")}>
+              <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={1.8}>{m.id==="classic"?<path d="M4 8h13l-3-3M20 16H7l3 3"/>:m.id==="zigzag"?<path d="M3 7h15l-2.5-2.5M21 12H6l2.5-2.5M3 17h15l-2.5-2.5"/>:<><rect x="3" y="6" width="7" height="12" rx="1"/><rect x="14" y="6" width="7" height="12" rx="1"/></>}</svg>
+              <span className="text-[9px] font-bold">{m.name}</span>
+            </button>)}
+          </div>
+          <p className="mt-1 text-[9.5px] leading-4 text-dim">{params.innerRoughMode==="classic"?"یک طرفه: همان روش فعلی داخل‌تراشی؛ ابزار پس از هر پاس به نقطه شروع برمی‌گردد.":params.innerRoughMode==="zigzag"?"دو طرفه: پاس‌های شعاعی رفت و برگشت هر دو باربرداری می‌کنند.":"ناحیه‌ای دو طرفه: هر ناحیه شعاعی با پاس‌های رفت و برگشت کامل و سپس ناحیه بعدی اجرا می‌شود."}</p>
+          {params.innerRoughMode==="zone"&&<InnerRadialZoneEditor key={`${params.blankD}|${params.innerZoneBounds.join(",")}|${innerZoneSamples.length}|${Math.max(0,...innerZoneSamples.map(s=>s.r)).toFixed(2)}`} blankR={params.blankD/2} samples={innerZoneSamples} outerSamples={outerDisplaySamples} bounds={params.innerZoneBounds} order={params.innerZoneOrder} onConfirm={(bounds,order)=>{onParams({innerZoneBounds:bounds,innerZoneOrder:order});onNotify("نواحی داخل‌تراشی اعمال شد — جی‌کد به‌روز شد");}}/>}
+        </div>
       </Section>
 
       <p className="px-1 pb-2 text-[10.5px] leading-5 text-dim">
         عملیات‌ها به ترتیبِ فهرست اجرا می‌شوند؛ با جابه‌جایی، حذف و افزودن آن‌ها استراتژی شخصی خود را بسازید. فلش‌ها روی مسیر، جهت حرکت ابزار را نشان می‌دهند.
       </p>
+
+      {compOp && (
+        <div className="fixed inset-0 z-[210] flex items-center justify-center bg-black/65 p-4" dir="rtl">
+          <div className="w-full max-w-[360px] rounded-xl border border-teal/50 bg-panel p-4 shadow-2xl">
+            <div className="mb-3 flex items-center justify-between"><b>جبران شعاع نوک ابزار — {OP_INFO[compOp.type].name}</b><button onClick={() => setCompOpId(null)}>×</button></div>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <label className="col-span-2 flex items-center justify-between rounded border border-edge p-2">فعال <input type="checkbox" checked={compOp.compensation?.enabled ?? false} onChange={e => setComp({ enabled:e.target.checked })}/></label>
+              <label>اینسرت<select className="input mt-1 w-full" value={compOp.compensation?.insert ?? "vnmg"} onChange={e => setComp({insert:e.target.value as ToolCompensationSpec["insert"]})}><option value="vnmg">VNMG</option><option value="snmg">SNMG</option><option value="rcmt">RCMT</option></select></label>
+              <label>جهت هلدر<select className="input mt-1 w-full" value={compOp.compensation?.hand ?? "right"} onChange={e => setComp({hand:e.target.value as ToolCompensationSpec["hand"]})}><option value="right">راست</option><option value="left">چپ</option></select></label>
+              <label>شعاع نوک<input className="input mt-1 w-full" type="number" min="0" step="0.01" value={compOp.compensation?.noseRadius ?? .4} onChange={e => setComp({noseRadius:Number(e.target.value)})}/></label>
+              <label>قطر اینسرت<input className="input mt-1 w-full" type="number" min=".01" step=".1" value={compOp.compensation?.diameter ?? 6} onChange={e => setComp({diameter:Number(e.target.value)})}/></label>
+              <label>طول لبه<input className="input mt-1 w-full" type="number" min=".01" step=".1" value={compOp.compensation?.sideLength ?? 6} onChange={e => setComp({sideLength:Number(e.target.value)})}/></label>
+              <label>زاویه نشیمن<input className="input mt-1 w-full" type="number" value={compOp.compensation?.seatingAngle ?? 93} onChange={e => setComp({seatingAngle:Number(e.target.value)})}/></label>
+            </div>
+            <p className="mt-3 text-[10px] leading-5 text-dim">مسیر با نرمال لحظه‌ای و اتصال خطوط انتقال‌یافته محاسبه می‌شود؛ خروجی از G41/G42 استفاده نمی‌کند.</p>
+          </div>
+        </div>
+      )}
+      {pendingStrategy && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/65 p-4 backdrop-blur-[2px]" dir="rtl" role="dialog" aria-modal="true">
+          <div className="w-full max-w-[390px] rounded-xl border border-brass/45 bg-panel p-4 shadow-[0_24px_80px_rgba(0,0,0,.75)]">
+            <p className="text-center text-[13px] font-bold leading-7 text-ink">
+              همه تغییرات بازنشانی می شود آیا از تغییرات ایجاد شده صرف نظر میکنید؟
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                className="btn justify-center py-2 text-[12px] font-bold"
+                onClick={() => {
+                  onStrategy(pendingStrategy.id, pendingStrategy.name, pendingStrategy.types);
+                  setPendingStrategy(null);
+                }}
+              >بله</button>
+              <button
+                type="button"
+                className="btn btn-brass justify-center py-2 text-[12px] font-bold"
+                onClick={() => setPendingStrategy(null)}
+              >خیر</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1050,8 +1034,8 @@ function BlankDims({
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-2 gap-2">
-        <Num label="قطر خام" unit="mm" value={d} min={10} max={200} step={2} onChange={setD} />
-        <Num label="طول خام" unit="mm" value={l} min={20} max={400} step={5} onChange={setL} />
+        <Num label="قطر خام" unit="mm" value={d} step={2} onChange={setD} />
+        <Num label="طول خام" unit="mm" value={l} step={5} onChange={setL} />
       </div>
       <button
         onClick={() => onApply(d, l)}
@@ -1421,11 +1405,56 @@ function zonesFromBounds(bounds: number[], blankL: number): { a: number; b: numb
   return zones.length ? zones : [{ a: 0, b: blankL }];
 }
 
+/* ویرایش نواحی داخل‌تراشی: مرزها شعاعی‌اند، بنابراین برخلاف خشن بیرونی
+   جداکننده‌ها به‌صورت افقی روی نمای قطعه نمایش داده می‌شوند. */
+function InnerRadialZoneEditor({blankR,samples,outerSamples,bounds:committed,order:committedOrder,onConfirm}:{blankR:number;samples:Sample[];outerSamples:Sample[];bounds:number[];order:number[];onConfirm:(b:number[],o:number[])=>void}){
+  const profileSamples=[...samples,...outerSamples];
+  const radialMax=samples.length?Math.max(.001,...samples.map(s=>s.r)):blankR;
+  const displayMaxR=profileSamples.length?Math.max(.001,...profileSamples.map(s=>s.r)):blankR;
+  /* نبود مرز دستی یعنی کل شعاع حفره یک ناحیه است؛ مرز پیش‌فرضِ وسط
+     فقط باعث دو نیم‌شدن ناخواستهٔ کار می‌شد. */
+  const initial=committed.length?[...committed]:[];
+  const [bounds,setBounds]=useState<number[]>(initial);
+  const [order,setOrder]=useState<number[]>([...committedOrder]);
+  const [drag,setDrag]=useState<number|null>(null),[hover,setHover]=useState<number|null>(null);
+  const svgRef=useRef<SVGSVGElement>(null),W=240,H=240,P=12;
+  const minZ=profileSamples.length?Math.min(...profileSamples.map(s=>s.z)):0,maxZ=profileSamples.length?Math.max(...profileSamples.map(s=>s.z)):1;
+  const zSpan=Math.max(.001,maxZ-minZ);
+  /* کادر همیشه مربع است، اما Scale هر دو محور دقیقاً یکسان می‌ماند. شکل مانند
+     پنجره طراحی با contain در مرکز کادر جا می‌شود و هیچ کشیدگی ندارد. */
+  const SCALE=Math.min((W-2*P)/zSpan,(H-2*P)/displayMaxR);
+  const DRAW_W=zSpan*SCALE,DRAW_H=displayMaxR*SCALE;
+  const LEFT=(W-DRAW_W)/2,BASE_Y=(H+DRAW_H)/2;
+  const X=(z:number)=>LEFT+(z-minZ)*SCALE;
+  const Y=(r:number)=>BASE_Y-r*SCALE;
+  const radial=(e:React.PointerEvent|React.MouseEvent)=>{const q=svgRef.current!.getBoundingClientRect();const py=((e.clientY-q.top)/q.height)*H;const shown=(BASE_Y-py)/SCALE;return Math.max(.5,Math.min(radialMax-.5,shown));};
+  const zones=useMemo(()=>{const e=[0,...bounds.filter(v=>v<radialMax).slice().sort((a,b)=>a-b),radialMax];return e.slice(0,-1).map((a,i)=>({a,b:e[i+1]}));},[bounds,radialMax]);
+  useEffect(()=>setOrder(o=>o.filter(i=>i<zones.length)),[zones.length]);
+  const toggle=(i:number)=>setOrder(o=>o.includes(i)?o.filter(x=>x!==i):[...o,i]);
+  const valid=order.length===zones.length&&new Set(order).size===zones.length;
+  const linePath=(src:Sample[])=>src.length?`M ${src.map(s=>`${X(s.z).toFixed(1)} ${Y(s.r).toFixed(1)}`).join(' L ')}`:'';
+  const innerPath=linePath(samples),outerPath=linePath(outerSamples);
+  /* فقط خود خطوط پروفایل نمایش داده می‌شوند؛ سطح بین شاخه داخلی و بیرونی
+     عمداً بدون Fill است تا نواحی قهوه‌ای اضافی روی شکل ایجاد نشود. */
+  const add=(e:React.MouseEvent<SVGSVGElement>)=>{if(drag!==null)return;const v=Math.round(radial(e));if(!bounds.some(x=>Math.abs(x-v)<2)){setBounds([...bounds,v].sort((a,b)=>a-b));setOrder([]);}};
+  return <div className="anim-in mt-2.5 border-t border-edge pt-2.5">
+    <div className="mb-1.5 flex items-center justify-between"><span className="text-[10.5px] font-semibold text-mute">نواحی + ترتیب (دستی)</span><span className="rounded-full border border-edge px-2 py-0.5 text-[9px] font-bold text-mute">{faNum(zones.length)} ناحیه</span></div>
+    <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} className="aspect-square w-full select-none touch-none rounded-md border border-edge bg-[#120e09]" style={{cursor:drag!==null?'ns-resize':'crosshair'}} onClick={add} onPointerMove={e=>{if(drag!==null){const raw=Math.round(radial(e));setBounds(bs=>{const lo=drag>0?bs[drag-1]+1:.5,hi=drag<bs.length-1?bs[drag+1]-1:radialMax-.5,v=Math.max(lo,Math.min(hi,raw));return bs.map((b,i)=>i===drag?v:b)});}}} onPointerUp={()=>{setBounds(bs=>[...bs].sort((a,b)=>a-b));setDrag(null)}} onPointerLeave={()=>{setDrag(null);setHover(null)}}>
+      {innerPath?<><path d={outerPath} fill="none" stroke="rgba(227,169,78,.7)" strokeWidth="1.2"/><path d={innerPath} fill="none" stroke="#45b394" strokeWidth="1.5"/></>:<text x={W/2} y={H/2} textAnchor="middle" fill="#8b7c5f" fontSize="10">خط داخل‌تراشی موجود نیست</text>}
+      {zones.map((z,i)=>{const pos=order.indexOf(i),cy=(Y(z.a)+Y(z.b))/2;return <g key={i}><rect x={P} y={Math.min(Y(z.a),Y(z.b))} width={W-2*P} height={Math.abs(Y(z.a)-Y(z.b))} fill={pos>=0?'rgba(69,179,148,.14)':'transparent'}/><g className="cursor-pointer" onClick={e=>{e.stopPropagation();toggle(i)}}><circle cx={W/2} cy={cy} r={pos>=0?9:8.5} fill={pos>=0?'#e0703c':'#120e09'} stroke={pos>=0?'#120e09':'#6f6047'} strokeDasharray={pos>=0?undefined:'2.5 2'}/><text x={W/2} y={cy+3.5} textAnchor="middle" fontSize="10" fontWeight="800" fill={pos>=0?'#fff7ec':'#8b7c5f'}>{faNum(pos>=0?pos+1:i+1)}</text></g></g>})}
+      {bounds.map((v,i)=>{const y=Y(v),on=drag===i||hover===i;return <g key={i} className="cursor-ns-resize" onPointerDown={e=>{e.stopPropagation();(e.target as Element).setPointerCapture?.(e.pointerId);setDrag(i)}} onPointerEnter={()=>setHover(i)} onPointerLeave={()=>setHover(null)}><rect x={P-2} y={y-6} width={W-2*P+4} height="12" fill="transparent"/><line x1={P} x2={W-P} y1={y} y2={y} stroke={on?'#f3c26b':'#45b394'} strokeWidth="1.6" strokeDasharray="4 3"/><circle cx={P} cy={y} r={on?5:4} fill={on?'#f3c26b':'#45b394'} stroke="#120e09" strokeWidth="1.5"/><text x={P+8} y={y-5} fontSize="8" fill={on?'#f3c26b':'#45b394'}>R{Math.round(v)}</text>{on&&<g className="cursor-pointer" onClick={e=>{e.stopPropagation();setBounds(bs=>bs.filter((_,j)=>j!==i));setOrder([])}}><circle cx={P+10} cy={y+7} r="5.5" fill="#d95848" stroke="#120e09"/><text x={P+10} y={y+10} textAnchor="middle" fontSize="9" fontWeight="900" fill="#fff">×</text></g>}</g>})}
+    </svg>
+    <p className="mt-1 text-[9.5px] leading-4 text-dim"><span className="text-teal">مرزهای افقی را بکشید یا روی پس‌زمینه کلیک کنید تا جداکننده جدید شود</span>؛ برای حذف روی مرز بروید و × را بزنید. سپس دایره‌های شماره را به ترتیب اجرا انتخاب کنید.</p>
+    <button onClick={()=>onConfirm([...bounds].sort((a,b)=>a-b),valid?order:zones.map((_,i)=>i))} className="btn btn-brass mt-2 w-full justify-center !py-2 text-[11px] font-bold"><IconCheck className="h-4 w-4"/>تأیید و ساخت جی‌کد</button>
+  </div>;
+}
+
 /* چیدمان کتروگرافی — ناحیهٔ محدود/محدود */
 function ZoneOrderEditor({
   blankL,
   blankR,
   samples,
+  innerSamples,
   autoZones,
   committedBounds,
   committedOrder,
@@ -1435,6 +1464,7 @@ function ZoneOrderEditor({
   blankL: number;
   blankR: number;
   samples: Sample[];
+  innerSamples: Sample[];
   autoZones: { a: number; b: number }[];
   committedBounds: number[];
   committedOrder: number[];
@@ -1443,8 +1473,10 @@ function ZoneOrderEditor({
 }) {
   /* مرزهای اولیه: از مرزهای کاربر یا از نوک قله‌های تقسیم خودکار (انتهای هر       */
   /* ناحیه = نوک قلهٔ آن؛ با این روش آخرین قله نیز به‌درستی مرز می‌شود)           */
+  /* نبود مرز دستی یعنی کل طول خام یک ناحیه است؛ تقسیم خودکار فقط با
+     دکمهٔ «خودکار» اعمال می‌شود و نباید هنگام بازشدن پنجره ظاهر شود. */
   const [bounds, setBounds] = useState<number[]>(
-    (committedBounds.length ? committedBounds : autoZones.slice(0, autoZones.length - 1).map((z) => z.b)).map((v) => clampZ(v, blankL))
+    committedBounds.map((v) => clampZ(v, blankL))
   );
 
   const svgRef = useRef<SVGSVGElement>(null);
@@ -1466,16 +1498,23 @@ function ZoneOrderEditor({
     setOrder((p) => p.filter((v) => v < n));
   }, [n]);
 
+  /* کادر مربعی و مقیاس واحد: محور Z و شعاع با یک ضریب رسم می‌شوند تا
+     قطعه در پنجرهٔ نواحی مثل خود قطعه کشیده نشود. */
   const W = 240;
-  const H = 92;
-  const PAD = 6;
-  const YC = 40;
-  const HALF = 28;
-  const DIV_TOP = 14;
-  const NUM_Y = H - 10;
-  const X = (z: number) => PAD + (z / Math.max(0.001, blankL)) * (W - 2 * PAD);
-  const Y = (r: number) => YC - (r / Math.max(0.001, blankR)) * HALF;
-  const zFromX = (px: number) => clampZ(((px - PAD) / (W - 2 * PAD)) * blankL, blankL);
+  const H = 240;
+  const PAD = 12;
+  const YC = H / 2;
+  const displayR = Math.max(blankR, ...samples.map((s) => s.r), ...innerSamples.map((s) => s.r), 0.001);
+  const SCALE = Math.min((W - 2 * PAD) / Math.max(0.001, blankL), (H - 2 * PAD) / (2 * displayR));
+  const DRAW_W = blankL * SCALE;
+  const DRAW_R = displayR * SCALE;
+  const LEFT = (W - DRAW_W) / 2;
+  const X = (z: number) => LEFT + (z / Math.max(0.001, blankL)) * DRAW_W;
+  const Y = (r: number) => YC - r * SCALE;
+  const zFromX = (px: number) => clampZ(((px - LEFT) / Math.max(0.001, DRAW_W)) * blankL, blankL);
+  const DIV_TOP = Math.max(PAD, YC - DRAW_R);
+  const DIV_BOTTOM = Math.min(H - PAD, YC + DRAW_R);
+  const NUM_Y = Math.min(H - 10, DIV_BOTTOM + 16);
 
   const pointerToZ = (e: React.PointerEvent | React.MouseEvent) => {
     const el = svgRef.current;
@@ -1484,14 +1523,37 @@ function ZoneOrderEditor({
     return zFromX(((e.clientX - rect.left) / Math.max(1, rect.width)) * W);
   };
 
-  const silhouette = useMemo(() => {
-    if (samples.length < 2) return "";
-    let d = `M ${X(samples[0].z).toFixed(1)} ${Y(samples[0].r).toFixed(1)}`;
-    for (const s of samples) d += ` L ${X(s.z).toFixed(1)} ${Y(s.r).toFixed(1)}`;
-    for (let i = samples.length - 1; i >= 0; i--) d += ` L ${X(samples[i].z).toFixed(1)} ${(2 * YC - Y(samples[i].r)).toFixed(1)}`;
+  const loopPath = (src: Sample[]) => {
+    if (src.length < 2) return "";
+    let d = `M ${X(src[0].z).toFixed(1)} ${Y(src[0].r).toFixed(1)}`;
+    for (let i = 1; i < src.length; i++) d += ` L ${X(src[i].z).toFixed(1)} ${Y(src[i].r).toFixed(1)}`;
+    for (let i = src.length - 1; i >= 0; i--) d += ` L ${X(src[i].z).toFixed(1)} ${(2 * YC - Y(src[i].r)).toFixed(1)}`;
     return d + " Z";
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [samples, blankL, blankR]);
+  };
+  const silhouette = useMemo(() => loopPath(samples), [samples, blankL, blankR, innerSamples]);
+  const innerSilhouette = useMemo(() => loopPath(innerSamples), [innerSamples, blankL, blankR]);
+  const openPath = (src: Sample[], mirrored: boolean) => {
+    if (src.length < 2) return "";
+    return `M ${X(src[0].z).toFixed(1)} ${(mirrored ? 2 * YC - Y(src[0].r) : Y(src[0].r)).toFixed(1)} ${src.slice(1).map((s) => `L ${X(s.z).toFixed(1)} ${(mirrored ? 2 * YC - Y(s.r) : Y(s.r)).toFixed(1)}`).join(" ")}`;
+  };
+  const outerTop = openPath(samples, false);
+  const outerBottom = openPath(samples, true);
+  const innerTop = openPath(innerSamples, false);
+  const innerBottom = openPath(innerSamples, true);
+  /* اتصال لبهٔ دهانه: دو شاخه ممکن است به‌دلیل آفست/نمونه‌برداری رأس‌های
+     جدا داشته باشند، اما باید در نوک Split با یک خط کوتاه بسته شوند. */
+  const tipPair = samples.length >= 2 && innerSamples.length >= 2
+    ? (() => {
+        const outerEnds = [samples[0], samples[samples.length - 1]];
+        const innerEnds = [innerSamples[0], innerSamples[innerSamples.length - 1]];
+        let best = { outerTip: outerEnds[0], innerTip: innerEnds[0], distance: Infinity };
+        for (const outerTip of outerEnds) for (const innerTip of innerEnds) {
+          const distance = Math.abs(outerTip.z - innerTip.z);
+          if (distance < best.distance) best = { outerTip, innerTip, distance };
+        }
+        return best.distance <= Math.max(1, blankL * 0.02) ? best : null;
+      })()
+    : null;
 
   const snapBound = (z: number, idx: number) => {
     const lo = idx > 0 ? bounds[idx - 1] + 2 : 0.5;
@@ -1532,7 +1594,7 @@ function ZoneOrderEditor({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        className="w-full select-none touch-none rounded-md border border-edge bg-[#120e09]"
+className="aspect-square w-full select-none touch-none rounded-md border border-edge bg-[#120e09]"
         style={{ cursor: dragIdx != null ? "ew-resize" : "crosshair" }}
         onPointerDown={(e) => {
           (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -1551,7 +1613,19 @@ function ZoneOrderEditor({
         onClick={onBgClick}
       >
         {/* سیلوئت قطعه */}
-        <path d={silhouette} fill="rgba(201,149,90,0.18)" stroke="rgba(227,169,78,0.5)" strokeWidth={1} />
+        {/* Fill بسته است، اما strokeهای پروفایل باز رسم می‌شوند تا خط بسته‌شدن
+            در انتهای قطعه از میان حفره داخلی به‌عنوان خط اضافه دیده نشود. */}
+        <path
+          d={`${silhouette}${innerSilhouette ? ` ${innerSilhouette}` : ""}`}
+          fill="rgba(201,149,90,0.18)"
+          fillRule="evenodd"
+        />
+        {[outerTop, outerBottom].map((d, i) => d && <path key={`outer-${i}`} d={d} fill="none" stroke="rgba(227,169,78,0.5)" strokeWidth={1} />)}
+        {[innerTop, innerBottom].map((d, i) => d && <path key={`inner-${i}`} d={d} fill="none" stroke="#45b394" strokeWidth={1.1} />)}
+        {tipPair && <>
+          <line x1={X(tipPair.outerTip.z)} y1={Y(tipPair.outerTip.r)} x2={X(tipPair.innerTip.z)} y2={Y(tipPair.innerTip.r)} stroke="rgba(227,169,78,0.5)" strokeWidth={1} />
+          <line x1={X(tipPair.outerTip.z)} y1={2 * YC - Y(tipPair.outerTip.r)} x2={X(tipPair.innerTip.z)} y2={2 * YC - Y(tipPair.innerTip.r)} stroke="rgba(227,169,78,0.5)" strokeWidth={1} />
+        </>}
 
         {/* نواحی */}
         {zones.map((z, i) => {
@@ -1566,7 +1640,7 @@ function ZoneOrderEditor({
                 x={xa}
                 y={DIV_TOP}
                 width={Math.max(0.5, xb - xa)}
-                height={2 * YC + 6 - DIV_TOP}
+                height={Math.max(1, DIV_BOTTOM - DIV_TOP)}
                 fill={selected ? "rgba(69,179,148,0.14)" : "transparent"}
               />
               {/* شماره اولویت */}
@@ -1608,8 +1682,8 @@ function ZoneOrderEditor({
               onPointerEnter={() => setHoverIdx(i)}
               onPointerLeave={() => setHoverIdx(null)}
             >
-              <rect x={x - 5} y={DIV_TOP - 4} width={10} height={2 * YC + 10} fill="transparent" />
-              <line x1={x} y1={DIV_TOP} x2={x} y2={2 * YC + 6} stroke={active || hov ? "#f3c26b" : "#45b394"} strokeWidth={1.6} strokeDasharray="4 3" />
+              <rect x={x - 5} y={DIV_TOP - 4} width={10} height={Math.max(12, DIV_BOTTOM - DIV_TOP + 8)} fill="transparent" />
+              <line x1={x} y1={DIV_TOP} x2={x} y2={DIV_BOTTOM} stroke={active || hov ? "#f3c26b" : "#45b394"} strokeWidth={1.6} strokeDasharray="4 3" />
               {/* دستگیره بالای مرز */}
               <circle cx={x} cy={DIV_TOP} r={active ? 5 : hov ? 4.5 : 4} fill={active || hov ? "#f3c26b" : "#45b394"} stroke="#120e09" strokeWidth={1.5} />
               <text x={x} y={DIV_TOP - 8} textAnchor="middle" fontSize={8} fontFamily="JetBrains Mono, monospace" fill={active || hov ? "#f3c26b" : "#45b394"} fontWeight={700}>

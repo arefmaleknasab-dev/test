@@ -75,6 +75,8 @@ export const IconCursor = (p: P) =>
   base(p, <><path d="m5 3 14 8-6.5 1.8L9.5 19z" /></>);
 export const IconLine = (p: P) =>
   base(p, <><path d="M5 19 19 5" /><circle cx="5" cy="19" r="2.2" /><circle cx="19" cy="5" r="2.2" /></>);
+export const IconPolyline = (p: P) =>
+  base(p, <><path d="M3 18 10 7l5 8 6-10" /><circle cx="3" cy="18" r="1.8" /><circle cx="10" cy="7" r="1.8" /><circle cx="15" cy="15" r="1.8" /><circle cx="21" cy="5" r="1.8" /></>);
 export const IconQuad = (p: P) =>
   base(p, <><path d="M4 19C4 9 14 5 20 5" /><circle cx="4" cy="19" r="2.2" /><circle cx="20" cy="5" r="2.2" /><path d="M4 19 4 7" strokeDasharray="2 2" /><circle cx="4" cy="6" r="1.6" /></>);
 export const IconCubic = (p: P) =>
@@ -89,3 +91,60 @@ export const IconBowl = (p: P) =>
   base(p, <><path d="M3 12h18" /><path d="M4 12a8 8 0 0 0 16 0" /><path d="M9 20h6" /></>);
 export const IconHand = (p: P) =>
   base(p, <><path d="M8 12V5.5a1.5 1.5 0 0 1 3 0V11m0-5.5v-1a1.5 1.5 0 0 1 3 0V11m0-4.5a1.5 1.5 0 0 1 3 0V12m0-2.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-1.8a6 6 0 0 1-4.7-2.3L4 14.6a1.6 1.6 0 0 1 2.4-2.1L8 14" /></>);
+
+export const IconMove = (p: P) =>
+  base(p, <><path d="M12 2v20M2 12h20" /><path d="m8.5 5.5 3.5-3.5 3.5 3.5M8.5 18.5 12 22l3.5-3.5M5.5 8.5 2 12l3.5 3.5M18.5 8.5 22 12l-3.5 3.5" /></>);
+export const IconMirror = (p: P) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-5 h-5"} viewBox="14 14 99 92" fill="none" aria-hidden>
+    {/* هندسه از SVG مرجع 130×121 گرفته شده؛ currentColor آن را با سایر ابزارها یک‌رنگ می‌کند. */}
+    <path
+      d="M53 39C46 29 40 25 33 25C25 25 20 30 20 39C20 46 24 50 30 56L41 67C36 72 31 77 31 80C31 89 36 94 41 94C49 94 53 88 53 81"
+      stroke="currentColor"
+      strokeWidth="8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M74 39C81 29 87 25 94 25C102 25 107 30 107 39C107 46 103 50 97 56L86 67C91 72 96 77 96 80C96 89 91 94 86 94C78 94 74 88 74 81"
+      stroke="currentColor"
+      strokeWidth="8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M63 20V28M63 38V46M63 55V63M63 73V81M63 91V99"
+      stroke="currentColor"
+      strokeWidth="8"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+export const IconSettings = (p: P) =>
+  base(p, <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.18.36.4.7.6 1 .28.4.66.4 1.1.4h.1v4h-.1c-.44 0-.82 0-1.1.4-.2.3-.42.64-.6 1Z" strokeWidth="1.5"/></>);
+
+export const IconArrowLeft = (p: P) =>
+  base(p, <><path d="M20 12H5"/><path d="m11 6-6 6 6 6"/></>);
+export const IconArrowRight = (p: P) =>
+  base(p, <><path d="M4 12h15"/><path d="m13 6 6 6-6 6"/></>);
+
+export const IconRotate = (p: P) =>
+  base(p, <g style={{ transform: "rotate(45deg)", transformOrigin: "12px 12px", transformBox: "view-box" }}><path d="M20.2 13A8.7 8.7 0 1 1 14 4.2" strokeWidth={2.8}/><path d="M13.7 .2 21 4.1 13.7 8Z" fill="currentColor" stroke="currentColor" strokeWidth={0.7}/></g>);
+
+export const IconReferenceScale = (p: P) =>
+  base(p, <>
+    <rect x="4" y="4" width="16" height="16" rx="0.6" strokeWidth="1.6" />
+    {[[4,4],[12,4],[20,4],[4,12],[20,12],[4,20],[12,20],[20,20],[12,12]].map(([x,y],i) =>
+      <rect key={i} x={x-2} y={y-2} width="4" height="4" rx="0.8" fill="currentColor" stroke="none" />
+    )}
+  </>);
+
+export const IconScale = (p: P) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className={p.className ?? "w-4 h-4"} viewBox="-1 -1 111 113" aria-hidden>
+    {/* فرم مرجع: قاب بزرگِ باز در پایین چپ و مربع کوچک مقیاس‌شده */}
+    <path d="M13 13H96V97H59V90H89V20H20V50H13V13ZM13 59H50V97H13V59ZM20 66V90H43V66H20Z" fill="currentColor" fillRule="evenodd" stroke="currentColor" strokeWidth="6" strokeLinejoin="round" />
+  </svg>
+);
+
+export const IconFillet = (p: P) =>
+  base(p, <><path d="M4 4v16h16" /><path d="M4 7.5A12.5 12.5 0 0 0 16.5 20" strokeWidth={2.4} /></>);

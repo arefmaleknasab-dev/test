@@ -6,6 +6,7 @@ import { cn } from "../utils/cn";
 interface Props {
   gen: GenResult;
   activeLine: number;
+  onLineClick?: (line: number) => void;
 }
 
 const TOKEN_RE = /(%|\(.*?\)|[NO]\d+|G\d+(?:\.\d+)?|M\d+|[XYZ]-?\d+(?:\.\d+)?|[FSP]\d+(?:\.\d+)?)/g;
@@ -36,11 +37,11 @@ function tokenize(line: string) {
 const ROW_H = 20; // ارتفاع ثابت هر سطر (px) — سطرها تک‌خط و یکدست‌اند
 const OVERSCAN = 8; // سطرهای اضافی بالا/پایین دید برای اسکرول نرم
 
-interface RowProps { ln: number; parts: { text: string; cls: string }[]; active: boolean; top: number }
+interface RowProps { ln: number; parts: { text: string; cls: string }[]; active: boolean; top: number; onClick?: (line: number) => void }
 /* سطر memo: هنگام پخش شبیه‌سازی فقط ۲ سطر (قبلی/فعلی) بازرندر می‌شوند نه ~۱۶۰۰ سطر */
-const GCodeLine = memo(function GCodeLine({ ln, parts, active, top }: RowProps) {
+const GCodeLine = memo(function GCodeLine({ ln, parts, active, top, onClick }: RowProps) {
   return (
-    <div data-ln={ln} className={cn("gc-line", active && "border-brass bg-brass/10")} style={{ textAlign: "left", position: "absolute", top, left: 0, right: 0, height: ROW_H, overflow: "hidden" }}>
+    <div data-ln={ln} onClick={() => onClick?.(ln)} className={cn("gc-line", onClick && "cursor-pointer", active && "border-brass bg-brass/10")} style={{ textAlign: "left", position: "absolute", top, left: 0, right: 0, height: ROW_H, overflow: "hidden" }}>
       <span className="mr-2 inline-block w-7 select-none text-right text-[10px] text-dim">{ln + 1}</span>
       {parts.map((t, j) => (
         <span key={j} className={t.cls}>
@@ -51,7 +52,7 @@ const GCodeLine = memo(function GCodeLine({ ln, parts, active, top }: RowProps) 
   );
 });
 
-export default function GCodePanel({ gen, activeLine }: Props) {
+export default function GCodePanel({ gen, activeLine, onLineClick }: Props) {
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const highlighted = useMemo(() => gen.lines.map((l) => tokenize(l)), [gen.lines]);
@@ -122,7 +123,7 @@ export default function GCodePanel({ gen, activeLine }: Props) {
       <div ref={bodyRef} onScroll={onScroll} onCopy={onCopyFull} className="min-h-0 flex-1 overflow-auto" dir="ltr">
         <div style={{ height: highlighted.length * ROW_H, position: "relative" }}>
           {highlighted.slice(start, end).map((parts, k) => (
-            <GCodeLine key={start + k} ln={start + k} parts={parts} active={start + k === activeLine} top={(start + k) * ROW_H} />
+            <GCodeLine key={start + k} ln={start + k} parts={parts} active={start + k === activeLine} top={(start + k) * ROW_H} onClick={onLineClick} />
           ))}
         </div>
       </div>

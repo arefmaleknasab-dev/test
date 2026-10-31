@@ -11,6 +11,7 @@ interface Props {
 }
 
 const GRID = 480;
+const CAV_R_GRID = 180; // شبکه شعاعی مستقل برای برداشت دوطرفه داخل
 const TIME_SCALE = 9; // سرعت نمایش نسبت به زمان واقعی
 
 interface Chip {
@@ -36,7 +37,7 @@ const initialRadius = (p: Params) => rotationalEnvelope(p.blankD, p.blankShape).
 const KIND_FA: Record<string, string> = {
   rapid: "حرکت سریع",
   round: "گرد کردن گوشه‌ها",
-  rough: "خشن شعاعی",
+  rough: "خشن بیرون",
   roughz: "خشن محوری",
   copy: "کپی‌تراشی",
   face: "پیشانی‌تراشی",
@@ -69,10 +70,16 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
   const [size, setSize] = useState({ w: 0, h: 0 });
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(2);
+  const [panning, setPanning] = useState(false);
 
+  const panRef = useRef<{ pointerId: number; x: number; y: number; ox: number; oy: number } | null>(null);
   const camRef = useRef({ s: 1, ox: 0, oy: 0 });
+  const fitScaleRef = useRef(1);
   const radiiRef = useRef<Float64Array>(new Float64Array(GRID + 1));
-  const cavRef = useRef<Float64Array>(new Float64Array(GRID + 1)); // شعاع حفره داخل کاسه
+  const cavRef = useRef<Float64Array>(new Float64Array(GRID + 1)); // پوشش نهایی/سازگاری
+  /* ماسک دوبعدی لازم است: مدل تک‌شعاعی، پاس از بیرون به محور را همان لحظه در
+     کل شعاع خالی نشان می‌داد و برای قله/دره شکل را خراب می‌کرد. */
+  const cavMaskRef = useRef<Uint8Array>(new Uint8Array((GRID + 1) * (CAV_R_GRID + 1)));
   const progRef = useRef(0);
   const cursorRef = useRef(0); // سگمنت‌هایی که کاملاً اعمال شده‌اند
   const appliedTRef = useRef(0); // پیشروی اعمال‌شده روی شعاع‌ها
@@ -150,6 +157,7 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
   useEffect(() => {
     radiiRef.current = new Float64Array(GRID + 1).fill(initialRadius(params));
     cavRef.current = new Float64Array(GRID + 1);
+    cavMaskRef.current = new Uint8Array((GRID + 1) * (CAV_R_GRID + 1));
     progRef.current = 0;
     cursorRef.current = 0;
     appliedTRef.current = 0;
@@ -171,11 +179,38 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
       /* دوربین طوری تنظیم می‌شود که پوشش دورانی (دورترین گوشه) نیز جا شود */
       const envD = rotationalEnvelope(params.blankD, params.blankShape).maxRotD;
       const s = Math.min((r.width - pad * 2) / params.blankL, (r.height - pad * 2) / envD);
+      fitScaleRef.current = Math.max(0.0001, s);
       camRef.current = { s, ox: (r.width - params.blankL * s) / 2, oy: r.height / 2 };
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, [params.blankL, params.blankD, params.blankShape]);
+
+  /* زوم شبیه‌سازی با چرخ ماوس، حول موقعیت نشانگر. تغییر دوربین مستقیماً در
+     camRef ثبت می‌شود تا حین پخش انیمیشن باعث بازسازی یا توقف شبیه‌سازی نشود. */
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const sx = event.clientX - rect.left;
+      const sy = event.clientY - rect.top;
+      const cam = camRef.current;
+      const worldZ = (sx - cam.ox) / cam.s;
+      const worldR = (cam.oy - sy) / cam.s;
+      const factor = Math.exp(-event.deltaY * 0.0015);
+      const fit = fitScaleRef.current;
+      const nextS = Math.max(fit * 0.5, Math.min(fit * 24, cam.s * factor));
+      camRef.current = {
+        s: nextS,
+        ox: sx - worldZ * nextS,
+        oy: sy + worldR * nextS,
+      };
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   useEffect(() => {
     const cv = canvasRef.current;
@@ -192,6 +227,7 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
       appliedTRef.current = 0;
       radiiRef.current.fill(initialRadius(paramsRef.current));
       cavRef.current.fill(0);
+      cavMaskRef.current.fill(0);
     }
     setPlaying(v);
     playingRef.current = v;
@@ -223,15 +259,21 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
        با پنجره‌ای به پهنای نصف گام، فضای بین دو گذر پلکانی هم پر می‌شود تا
        حفره پیوسته دیده شود (پرداخت نهایی مرز دقیق دیواره را می‌نشاند). */
     const stampCavity = (z: number, r: number) => {
-      const dzg = paramsRef.current.blankL / GRID;
-      const idx = Math.round(z / dzg);
-      const w = Math.max(1, Math.round((paramsRef.current.doc / 2 + 0.3) / dzg));
-      const cav = cavRef.current;
-      const rr = Math.min(r, paramsRef.current.blankD / 2);
-      for (let k = -w; k <= w; k++) {
-        const j = idx + k;
-        if (j < 0 || j > GRID) continue;
-        if (rr > cav[j]) cav[j] = rr;
+      const p=paramsRef.current, dzg=p.blankL/GRID, maxR=p.blankD/2, drg=maxR/CAV_R_GRID;
+      const zi=Math.round(z/dzg),ri=Math.round(Math.max(0,Math.min(maxR,r))/drg);
+      /* پهنای محوری هر برداشت، فاصله لایه‌های داخل را پر می‌کند؛ شعاعی فقط
+         رد واقعی نوک ابزار ثبت می‌شود تا جهت رفت و برگشت هر دو تدریجی باشند. */
+      const wz=Math.max(1,Math.ceil((p.innerDoc/2+0.3)/dzg));
+      const wr=Math.max(1,Math.ceil(Math.max(0.25,p.tool.nose)/drg));
+      const mask=cavMaskRef.current,cav=cavRef.current;
+      for(let zz=-wz;zz<=wz;zz++){
+        const iz=zi+zz;if(iz<0||iz>GRID)continue;
+        for(let rr=-wr;rr<=wr;rr++){
+          const ir=ri+rr;if(ir<0||ir>CAV_R_GRID)continue;
+          if((zz*zz)/(wz*wz)+(rr*rr)/(wr*wr)<=1.15)mask[iz*(CAV_R_GRID+1)+ir]=1;
+        }
+        /* فقط برای تشخیص سریع وجود حفره نگه داشته می‌شود، نه ترسیم شکل. */
+        if(r>cav[iz])cav[iz]=Math.min(r,maxR);
       }
     };
 
@@ -300,6 +342,7 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
     const replayTo = (t: number) => {
       radiiRef.current.fill(initialRadius(paramsRef.current));
       cavRef.current.fill(0);
+      cavMaskRef.current.fill(0);
       cursorRef.current = 0;
       appliedTRef.current = 0;
       if (t > 1e-9) advanceTo(t);
@@ -454,43 +497,35 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      /* حفره داخل کاسه */
-      const cav = cavRef.current;
-      let hasCav = false;
-      for (let i = 0; i <= GRID; i++) {
-        if (cav[i] > 0.05) {
-          hasCav = true;
-          break;
+      /* حفره داخل کاسه — ماسک دوبعدی، نه envelope تک‌شعاعی. به این ترتیب
+         پاس شعاعی از بیرون به محور دقیقاً به‌ترتیب حرکت ابزار آشکار می‌شود و
+         قله/دره‌های داخلی به فضای خالیِ کاذب تبدیل نمی‌شوند. */
+      const mask=cavMaskRef.current;
+      let hasCav=false;
+      ctx.beginPath();
+      const cellZ=p.blankL/GRID,cellR=(p.blankD/2)/CAV_R_GRID;
+      for(let iz=0;iz<=GRID;iz++){
+        let ir=0;
+        while(ir<=CAV_R_GRID){
+          while(ir<=CAV_R_GRID&&!mask[iz*(CAV_R_GRID+1)+ir])ir++;
+          if(ir>CAV_R_GRID)break;
+          const r0=ir;
+          while(ir<=CAV_R_GRID&&mask[iz*(CAV_R_GRID+1)+ir])ir++;
+          const r1=ir;
+          hasCav=true;
+          const x0=X(iz*cellZ),x1=X(Math.min(p.blankL,(iz+1)*cellZ));
+          const yTop=Y(r1*cellR),yBot=Y(-r1*cellR);
+          /* هر run از ماسک روی نیمه بالا و پایین قطعه قرینه می‌شود. */
+          const innerTop=Y(r0*cellR),innerBot=Y(-r0*cellR);
+          ctx.rect(x0,yTop,Math.max(1,x1-x0+.5),Math.max(.5,innerTop-yTop));
+          ctx.rect(x0,innerBot,Math.max(1,x1-x0+.5),Math.max(.5,yBot-innerBot));
         }
       }
-      if (hasCav) {
-        ctx.beginPath();
-        ctx.moveTo(X(0), Y(cav[0]));
-        for (let i = 1; i <= GRID; i++) ctx.lineTo(X((i / GRID) * p.blankL), Y(cav[i]));
-        for (let i = GRID; i >= 0; i--) ctx.lineTo(X((i / GRID) * p.blankL), Y(-cav[i]));
-        ctx.closePath();
-        ctx.fillStyle = "#120e09";
-        ctx.fill();
-        ctx.strokeStyle = "rgba(76,201,240,0.65)";
-        ctx.setLineDash([4, 3]);
-        ctx.lineWidth = 1.2;
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      if(hasCav){ctx.fillStyle="#120e09";ctx.fill();}
 
-      /* سیلوئت هدف دیواره داخلی */
-      if (g.innerSamples.length > 1) {
-        ctx.strokeStyle = "rgba(247,37,133,0.5)";
-        ctx.setLineDash([5, 4]);
-        ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        ctx.moveTo(X(g.innerSamples[0].z), Y(g.innerSamples[0].r));
-        for (const sm of g.innerSamples) ctx.lineTo(X(sm.z), Y(sm.r));
-        for (let i = g.innerSamples.length - 1; i >= 0; i--) ctx.lineTo(X(g.innerSamples[i].z), Y(-g.innerSamples[i].r));
-        ctx.closePath();
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+      /* خط‌چین صورتی قبلی innerSamples مسیر G-code نبود و روی پروفایل‌های
+         برگشتی به شکل خطوط متقاطع دیده می‌شد؛ حذف شد تا فقط حرکت واقعی ابزار
+         و برداشت متناظر با segmentهای برنامه نمایش داده شود. */
 
       /* ابزار و موقعیت */
       const tx = X(tool.z);
@@ -697,6 +732,32 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
     scrubbingRef.current = false;
     hideTip();
   };
+  /* پن دوربین شبیه‌سازی با Drag روی خود بوم. هر سه دکمه ماوس پذیرفته می‌شوند؛
+     کنترل‌های پخش روی لایه بالاتر هستند و این Drag با اسکرابر تداخل ندارد. */
+  const onCanvasPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const cam = camRef.current;
+    panRef.current = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, ox: cam.ox, oy: cam.oy };
+    setPanning(true);
+  };
+  const onCanvasPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== e.pointerId) return;
+    camRef.current = {
+      ...camRef.current,
+      ox: pan.ox + e.clientX - pan.x,
+      oy: pan.oy + e.clientY - pan.y,
+    };
+  };
+  const finishCanvasPan = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (panRef.current?.pointerId !== e.pointerId) return;
+    panRef.current = null;
+    setPanning(false);
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+  };
+
   const onTrackKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const totalL = totalRef.current;
     if (totalL <= 0) return;
@@ -714,8 +775,16 @@ function SimulationView({ gen, params, onActiveLine }: Props) {
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-lg border border-edge bg-[#120e09]">
-      <div ref={wrapRef} className="absolute inset-0">
-        <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} className="block" />
+      <div
+        ref={wrapRef}
+        className={cn("absolute inset-0 touch-none", panning ? "cursor-grabbing" : "cursor-grab")}
+        onPointerDown={onCanvasPointerDown}
+        onPointerMove={onCanvasPointerMove}
+        onPointerUp={finishCanvasPan}
+        onPointerCancel={finishCanvasPan}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <canvas ref={canvasRef} style={{ width: size.w, height: size.h }} className="pointer-events-none block" />
       </div>
 
       {/* DRO */}

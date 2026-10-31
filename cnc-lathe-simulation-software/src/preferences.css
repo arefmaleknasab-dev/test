@@ -1,0 +1,37 @@
+:root[data-theme="midnight"] {
+  --color-bg: #070c14;
+  --color-panel: #0c1420;
+  --color-panel2: #111d2b;
+  --color-panel3: #172536;
+  --color-edge: #22364b;
+  --color-edge2: #304b65;
+  --color-ink: #e6f0f8;
+  --color-mute: #91a8ba;
+  --color-dim: #60778a;
+  --color-brass: #4cc9f0;
+  --color-brass2: #86ddf7;
+}
+:root[data-theme="graphite"] {
+  --color-bg: #101112;
+  --color-panel: #181a1c;
+  --color-panel2: #202326;
+  --color-panel3: #292d31;
+  --color-edge: #363b40;
+  --color-edge2: #4a5158;
+  --color-ink: #eceeef;
+  --color-mute: #adb3b8;
+  --color-dim: #727980;
+  --color-brass: #c4a46b;
+  --color-brass2: #dfc28d;
+}
+
+.profile-tool-column {
+  width: calc(30px * var(--profile-toolbar-scale, 1));
+  gap: calc(6px * var(--profile-toolbar-scale, 1));
+}
+.profile-tool-column button {
+  height: calc(27px * var(--profile-toolbar-scale, 1));
+}
+.profile-tool-column button svg {
+  transform: scale(var(--profile-toolbar-scale, 1));
+}
